@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "dgSpecHash": "rxD9smw9anHTx0rmqKtCUSzLtoJYz7u+BfLNLGhLjRQGUU2ohF/tpJa7bB8JTQGiHfGWxEpw6oipY8eJgy5f5A==",
+  "success": true,
+  "projectFilePath": "C:\\Users\\hp\\Desktop\\TechHub\\TechHub.Core\\TechHub.Core.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\hp\\.nuget\\packages\\automapper\\14.0.0\\automapper.14.0.0.nupkg.sha512",
+    "C:\\Users\\hp\\.nuget\\packages\\dapper\\2.1.66\\dapper.2.1.66.nupkg.sha512",
+    "C:\\Users\\hp\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.0\\microsoft.extensions.dependencyinjection.abstractions.8.0.0.nupkg.sha512",
+    "C:\\Users\\hp\\.nuget\\packages\\microsoft.extensions.options\\8.0.0\\microsoft.extensions.options.8.0.0.nupkg.sha512",
+    "C:\\Users\\hp\\.nuget\\packages\\microsoft.extensions.primitives\\8.0.0\\microsoft.extensions.primitives.8.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}
