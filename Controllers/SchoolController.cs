@@ -20,6 +20,18 @@ namespace TechhubMS.Controllers
 			var result = await _schoolService.CreateSchool(schoolViewModel);
 			return Ok(result);
 		}
-		
+		[HttpPost("getState")]
+
+		public async Task<ActionResult<BaseResponse>> GetStates(int countryId)
+		{
+			var result = await _schoolService.GetAllStates(countryId);
+			return Ok(result);
+		}
+		[HttpPost("updateSchoolCode")]
+		public async Task<ActionResult<BaseResponse>> UpdateSchoolCode(SchoolCodeViewModel schCodeViewModel)
+		{
+			var result = await _schoolService.UpdateSchoolCode(schCodeViewModel);
+			return Ok(result);
+		}
 	}
 }

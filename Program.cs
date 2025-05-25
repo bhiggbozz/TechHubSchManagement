@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using TechHub.Core.Profiles;
 using TechHub.Service.Interface;
 using TechHub.Service.Service;
+using TechHub.Service.Service.DatabaseService;
 using TechhubMS.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,8 +15,15 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddScoped(typeof(ICommandRespository<>), typeof(CommandRepositoryService<>));
+builder.Services.AddScoped(typeof(IQueryRepository<>), typeof(QueryRepositoryService<>));
+
 builder.Services.AddScoped<ISchoolService, SchoolService>();
+builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<IDbTransactionScopeFactory, DbTransactionScopeFactory>();
+
 builder.Services.AddAutoMapper(typeof(AutoMapperProfile));
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
