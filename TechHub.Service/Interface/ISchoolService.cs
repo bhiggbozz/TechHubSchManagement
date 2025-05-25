@@ -11,5 +11,7 @@ namespace TechHub.Service.Interface
 	public interface ISchoolService
 	{
 		Task<BaseResponse> CreateSchool(SchoolViewModel schoolViewModel);
+		Task<BaseResponse> GetAllStates(int countryId);
+		Task<BaseResponse> UpdateSchoolCode(SchoolCodeViewModel schoolCode);
 	}
 }

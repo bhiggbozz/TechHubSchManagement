@@ -11,5 +11,6 @@ namespace TechHub.Service.Interface
 		Task<TEntity?> Get(Guid id);
 		Task<TEntity?> Get(string query);
 		Task<TEntity?> GetByPropertyName(string propertyName, string value);
+		Task<IEnumerable<TEntity?>> GetByQuery(string query);
 	}
 }

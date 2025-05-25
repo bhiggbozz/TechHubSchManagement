@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -41,6 +42,15 @@ namespace TechHub.Core.Helper
 			return $"Update {tableName} Set {columns} where {keyColumn} = @{keyColumn}";
 		}
 
+		public static string GenerateUpdateQuery<TEntity>(string tableName, object columnToUpdateName, string keyColumnName)
+		{
+			//var properties = typeof(TEntity).GetProperties().Select(p => p.Name)
+			//										  .Where(p => !p.Equals(keyColumn, StringComparison.OrdinalIgnoreCase)).ToList();
+			//string columns = string.Join(", ", properties.Select(p => "{p} = @{p}"));
+			string query = $"Update {tableName} Set {columnToUpdateName} = @{columnToUpdateName} where {keyColumnName} = @{keyColumnName}";
+			return query;
+		}
+
 		public static string GenerateGetbyIdQuery()
 		{
 			var tableName = typeof(TEntity).Name;
@@ -76,6 +86,163 @@ namespace TechHub.Core.Helper
 			}
 
 			return parameters;
+		}
+
+		public static string InsertQueryWithReturnedID(Dictionary<string, object> data, string tableName)
+		{
+			var queries = new StringBuilder();
+			var sb = new StringBuilder($"insert into {tableName} (  ");
+			int count = data.Count;
+
+			foreach (var item in data.Keys)
+			{
+				count -= 1;
+				sb.Append($"{item}");
+				if (count == 0)
+				{
+					sb.Append(" )");
+				}
+				else
+				{
+					sb.Append(",");
+				}
+
+
+			}
+			sb.Append(" values ( ");
+			int count2 = data.Count;
+
+			foreach (var item in data.Keys)
+			{
+				count2 -= 1;
+				sb.Append($"'{data[item]}'");
+				if (count2 == 0)
+				{
+					sb.Append(" )");
+				}
+				else
+				{
+					sb.Append(",");
+				}
+
+			}
+			sb.Append(" \nSELECT SCOPE_IDENTITY();");
+			var query = sb.ToString();
+			return query;
+
+
+		}
+
+		public static string InsertQuery(Dictionary<string, object> data, string tableName)
+		{
+			var queries = new StringBuilder();
+			var sb = new StringBuilder($"insert into {tableName} (  ");
+			int count = data.Count;
+
+			foreach (var item in data.Keys)
+			{
+				count -= 1;
+				sb.Append($"{item}");
+				if (count == 0)
+				{
+					sb.Append(" )");
+				}
+				else
+				{
+					sb.Append(",");
+				}
+
+
+			}
+			sb.Append(" values ( ");
+			int count2 = data.Count;
+
+			foreach (var item in data.Keys)
+			{
+				count2 -= 1;
+				sb.Append($"'{data[item]}'");
+				if (count2 == 0)
+				{
+					sb.Append(" )");
+				}
+				else
+				{
+					sb.Append(",");
+				}
+
+			}
+			//sb.Append(" \nSELECT SCOPE_IDENTITY();");
+			var query = sb.ToString();
+			return query;
+
+
+		}
+
+		public static string InsertQueryV2(Dictionary<string, object> data, string tableName)
+		{
+			var queries = new StringBuilder();
+			var sb = new StringBuilder($"insert into {tableName} (  ");
+			int count = data.Count;
+
+			foreach (var item in data.Keys)
+			{
+				count -= 1;
+				sb.Append($"{item}");
+				if (count == 0)
+				{
+					sb.Append(" )");
+				}
+				else
+				{
+					sb.Append(",");
+				}
+
+
+			}
+			sb.Append(" values ( ");
+			int count2 = data.Count;
+
+			foreach (var item in data.Keys)
+			{
+				count2 -= 1;
+				sb.Append($"@{item}");
+				if (count2 == 0)
+				{
+					sb.Append(" )");
+				}
+				else
+				{
+					sb.Append(",");
+				}
+
+			}
+			//sb.Append(" \nSELECT SCOPE_IDENTITY();");
+			var query = sb.ToString();
+			return query;
+
+
+		}
+
+		public static string UpdateQueryWithSingleColumnName(Dictionary<string , object> obj, string keyId, string tableName)
+		{
+			var queries = new StringBuilder();
+			var sb = new StringBuilder($"update {tableName} set ");
+			int count = obj.Count;
+			foreach(var item in obj.Keys)
+			{
+				
+				count -= 1;
+				sb.Append($"{item} = @{item}");
+                if(count > 0)
+				{
+					sb.Append(", ");
+				}
+
+
+			}
+			sb.Append($" where {keyId} = @{keyId}");
+			return sb.ToString();
+
 		}
 	}
 }

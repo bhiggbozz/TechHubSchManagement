@@ -19,7 +19,8 @@ namespace TechHub.Core.Model
 		public bool IsActive { get; set; }
 		public bool HasAccess { get; set; }	
 		public string? UserName {  get; set; }
-		public int SchoolId { get; set; }
+		public string? SchoolCode { get; set; }
+		public Guid SchoolId { get; set; }
 		public int RoleId { get; set; }
 		public Guid CreatedBy { get; set; }
 

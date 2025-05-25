@@ -44,6 +44,17 @@ namespace TechHub.Service.Service
 			var result = await conn.QueryFirstOrDefaultAsync<TEntity>(query);
 			return result;
 		}
+
+		public async Task<IEnumerable<TEntity?>> GetByQuery(string query)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			//var query = QueryBuilder<TEntity>.GenerateGetbyIdQuery();
+			//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(id);
+			var result = await conn.QueryAsync<TEntity>(query);
+			return result;
+		}
 		public async Task<TEntity?> GetByPropertyName(string propertyName, string value)
 		{
 			using var conn = new SqlConnection(_config);
