@@ -14,12 +14,13 @@ namespace TechHub.Core.ResponseModel
 		public bool IsActive { get; set; }
 		public Guid Id { get; set; }
 		public int RoleId { get; set; }
+		public bool FirstTimeLogin { get; set; }
 
-		public SchoolResponseModel SchoolInfo { get; set; }
+		public SchoolResponseModel? SchoolInfo { get; set; }
 	}
 	public class SchoolResponseModel
 	{		
-		public Guid Id { get; set; } = Guid.NewGuid();
+		public Guid Id { get; set; }
 		public string SchoolName { get; set; }
 		public string Location { get; set; }
 		public int CountryId { get; set; }

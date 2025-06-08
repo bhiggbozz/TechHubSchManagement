@@ -13,5 +13,8 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> CreateSchool(SchoolViewModel schoolViewModel);
 		Task<BaseResponse> GetAllStates(int countryId);
 		Task<BaseResponse> UpdateSchoolCode(SchoolCodeViewModel schoolCode);
+		Task<BaseResponse> CreateStudentClass(CreateStudentClassViewModel createStudentClassViewModel);
+		Task<BaseResponse> CreateSchoolSubjects(CreateSubjectViewModel createSubjectModel);
+		Task<BaseResponse> GetAllSubjects(Guid schoolid);
 	}
 }

@@ -12,5 +12,6 @@ namespace TechHub.Service.Interface
 	{
 		Task<BaseResponse> LoginUser(LoginViewModel loginViewModel);
 		Task<BaseResponse> CreateUser(UserViewModel userViewModel);
+		Task<BaseResponse> updatePassword(UpdatePasswordViewModel updatePasswordViewModel);
 	}
 }

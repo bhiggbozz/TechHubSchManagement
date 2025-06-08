@@ -6,17 +6,16 @@ using System.Threading.Tasks;
 
 namespace TechHub.Core.Entities
 {
-	public class LoginHistory
+	public class StudentClass
 	{
-		public Guid Id { get; set; } = Guid.NewGuid();
 		public string CreationDate { get; set; } = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 		public string ModifiedDate { get; set; } = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-		public Guid? UserId { get; set; }
-		public int RoleId { get; set; }
-		public bool PasswordFailed { get; set; }
-		public string? DeviceType { get; set; }
-		public string? DeviceIp { get; set; }
-
-
+		public Guid Id { get; set; } = Guid.NewGuid();
+		public string Name { get; set; }
+		public string TeacherName { get; set; }
+		public int NoOfStudents { get; set; }
+		public Guid CreatedBy { get; set; }
+		public Guid SchoolId { get; set; }
+		
 	}
 }

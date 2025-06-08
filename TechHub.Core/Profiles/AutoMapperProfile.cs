@@ -18,8 +18,13 @@ namespace TechHub.Core.Profiles
 			CreateMap<SchoolViewModel, School>();
 			CreateMap<LoginViewModel, LoginHistory>();
 			CreateMap<StateResponse, State>();
-			CreateMap<SchoolResponseModel, School>();
-			CreateMap<UserViewModel, User>();
+			//CreateMap<StudentClass, CreateStudentClassViewModel>();
+			CreateMap< School, SchoolResponseModel>();
+			CreateMap<UserViewModel, Users>();
+			CreateMap<CreateStudentClassViewModel, StudentClass>();
+			CreateMap<CreateSubjectViewModel, Subjects>();
+			CreateMap<Subjects, SubjectResponseModel>();
+
 		}
 	}
 }

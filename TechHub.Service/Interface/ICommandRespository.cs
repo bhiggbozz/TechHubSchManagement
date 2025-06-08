@@ -15,5 +15,7 @@ namespace TechHub.Service.Interface
 		Task<Guid> CreateWithReturnedID(SqlTransaction transaction, SqlConnection connection, Dictionary<string, object> obj);
 		Task UpdateTableColumnById(Dictionary<string, object> obj, KeyValuePair<string, object> keyValue);
 		Task Create(SqlTransaction transaction, SqlConnection connection, Dictionary<string, object> obj);
+		Task UpdateAsync(string query, Dictionary<string, object> values);
+		Task UpdateAsync(SqlTransaction transaction, SqlConnection connection, string query, Dictionary<string, object> values);
 	}
 }

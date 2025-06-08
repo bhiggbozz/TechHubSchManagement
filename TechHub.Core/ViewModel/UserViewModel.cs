@@ -12,12 +12,13 @@ namespace TechHub.Core.ViewModel
 		public string? FirstName { get; set; }
 		public string? LastName { get; set; }
 		public string? EmailAddress { get; set; }
-		public string? Password { get; set; }
+		public string? HashPassword { get; set; }
 		public bool IsActive { get; set; }
 		public bool HasAccess { get; set; }
 		public string? UserName { get; set; }
-		public int SchoolId { get; set; }
+		public Guid SchoolId { get; set; }
 		public int RoleId { get; set; }
+		public string SchoolCode { get; set; }
 
 	}
 }

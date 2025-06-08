@@ -12,5 +12,9 @@ namespace TechHub.Service.Interface
 		Task<TEntity?> Get(string query);
 		Task<TEntity?> GetByPropertyName(string propertyName, string value);
 		Task<IEnumerable<TEntity?>> GetByQuery(string query);
+		Task<TEntity?> GetBy(Dictionary<string, object> inputValues);
+		Task<TEntity?> SelectByColumns(string query, Dictionary<string, object> values);
+		Task<IEnumerable<TEntity?>> SelectByColumn(string query, KeyValuePair<string, object> values);
+		Task<IEnumerable<TEntity?>> SelectAllBySingleColumn(KeyValuePair<string, object> values);
 	}
 }

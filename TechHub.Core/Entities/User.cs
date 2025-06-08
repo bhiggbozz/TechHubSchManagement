@@ -7,7 +7,7 @@ using TechHub.Core.Entities;
 
 namespace TechHub.Core.Model
 {
-	public class User
+	public class Users
 	{
 		public Guid Id { get; set; } = Guid.NewGuid();
 		public string CreationDate { get; set; } = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");

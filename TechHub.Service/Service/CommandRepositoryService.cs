@@ -141,5 +141,36 @@ namespace TechHub.Service.Service
 			parameter.Add($"@{keyValue.Key}", keyValue.Value);
 			await conn.ExecuteAsync(query, parameter);
 		}
+
+		public async Task UpdateAsync(string query, Dictionary<string, object> values)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			//var query = QueryBuilder<TEntity>.UpdateQueryWithSingleColumnName(obj, keyValue.Key, tableName);
+			var parameter = new DynamicParameters();
+			foreach (var key in values.Keys)
+			{
+				parameter.Add($"@{key}", values[key]);
+			}
+
+			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
+			await conn.ExecuteAsync(query, parameter);
+		}
+		public async Task UpdateAsync(SqlTransaction transaction, SqlConnection connection, string query, Dictionary<string, object> values)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			//var query = QueryBuilder<TEntity>.UpdateQueryWithSingleColumnName(obj, keyValue.Key, tableName);
+			var parameter = new DynamicParameters();
+			foreach (var key in values.Keys)
+			{
+				parameter.Add($"@{key}", values[key]);
+			}
+
+			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
+			await conn.ExecuteAsync(query, parameter);
+		}
 	}
 }

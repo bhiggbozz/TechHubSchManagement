@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,12 +8,14 @@ using System.Security.Cryptography.Pkcs;
 using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core;
+using TechHub.Core.Constant;
 using TechHub.Core.Entities;
 using TechHub.Core.Helper;
 using TechHub.Core.Model;
 using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Service.Interface;
+using TechHub.Service.Service.DatabaseService;
 using TechhubMS.util;
 
 namespace TechHub.Service.Service
@@ -20,20 +23,21 @@ namespace TechHub.Service.Service
 	public class UserService : IUserService
 	{
 		private readonly IQueryRepository<LoginHistory> _queryrepositoryLoginHistory;
-		private readonly IQueryRepository<User> _queryrepositoryUser;
+		private readonly IQueryRepository<Users> _queryrepositoryUser;
 		private readonly ICommandRespository<LoginHistory> _commandRepositoryLoginHistory;
-		private readonly ICommandRespository<User> _commandRepositoryUser;
+		private readonly ICommandRespository<Users> _commandRepositoryUser;
 		private readonly IQueryRepository<School> _queryrepositorySchool;
 		private readonly IQueryRepository<SchoolCode> _schCodeQueryRespository;
-
-
-
-
+		private readonly IConfiguration _configuration;
 		private readonly IMapper _mapper;
+		private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
+		private readonly string? _connString;
 
-		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<User> queryrepositoryUser, 
-			ICommandRespository<LoginHistory> commandRepositoryLoginHistory, ICommandRespository<User> commandRepositoryUser,
-			IQueryRepository<School> queryrepositorySchool, IQueryRepository<SchoolCode> schCodeQueryRespository, IMapper mapper)
+		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<Users> queryrepositoryUser, 
+			ICommandRespository<LoginHistory> commandRepositoryLoginHistory, ICommandRespository<Users> commandRepositoryUser,
+			IQueryRepository<School> queryrepositorySchool, IQueryRepository<SchoolCode> schCodeQueryRespository, 
+			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration,
+			IMapper mapper)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
@@ -41,9 +45,12 @@ namespace TechHub.Service.Service
 			_commandRepositoryUser = commandRepositoryUser;
 			_queryrepositorySchool = queryrepositorySchool;
 			_schCodeQueryRespository = schCodeQueryRespository;
+			_dbTransactionScopeFactory = dbTransactionScopeFactory;
 			_mapper = mapper;
+			_connString = _configuration.GetConnectionString("DbConnectionString") ?? null;
+
 		}
-		
+
 
 		public async Task<BaseResponse> LoginUser(LoginViewModel loginViewModel)
 		{
@@ -54,37 +61,48 @@ namespace TechHub.Service.Service
 				{
 					throw new ArgumentNullException(nameof(loginViewModel));
 				}
-				var nullProp = HelperUtil.GetNullPorpertiesName(loginViewModel);
-				if (string.IsNullOrEmpty(nullProp))
-				{
-					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "one of object properties is null or empty", Status = "failed" };
-				}
-				string schQuery = $"select * from SchoolCode where Code = {loginViewModel.Inst}";
+				//var nullProp = HelperUtil.GetNullPorpertiesName(loginViewModel);
+				//if (string.IsNullOrEmpty(nullProp))
+				//{
+				//	return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "one of object properties is null or empty", Status = "failed" };
+				//}
+				string schQuery = $"select * from SchoolCode where Code = '{loginViewModel.Inst}'";
 				var schoolId = await _schCodeQueryRespository.Get(schQuery);
 				if(schQuery == null)
 				{
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "wrong Inst Code ", Status = "failed" };
 				}
-				var user = await _queryrepositoryUser.GetByPropertyName(nameof(loginViewModel.Username), loginViewModel.Username);
+				var loginUserInput = new Dictionary<string, object> { { "UserName", loginViewModel.Username }, { "SchoolCode", loginViewModel.Inst } };
+				var user = await _queryrepositoryUser.GetBy(loginUserInput);
+				//var user = await _queryrepositoryUser.GetByPropertyName(nameof(loginViewModel.Username), loginViewModel.Username);
 				if (user is null)
 				{
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "incorrect credentials", Status = "failed" };
 				}
+				var loginUser = _mapper.Map<LoginHistory>(loginViewModel);
+				loginUser.UserId = user.Id;
+				loginUser.RoleId = user.RoleId;
 				var lastThreeLogins = await LastLoginHistorys(user.Id);
-				var lstThreeLoginsFailed = lastThreeLogins.Select(c => c.PasswordFailed == true).ToList();
+				if (!lastThreeLogins.Any())
+				{
+					loginUser.PasswordFailed = false;
+					await _commandRepositoryLoginHistory.Create(loginUser);
+					var schoolResponse = new SchoolResponseModel
+					{
+						Id = user.SchoolId
+					};
+					return new UserLoginResponse {SchoolInfo = schoolResponse,FirstTimeLogin=true, ResponseCode = ResponseCode.successful, ResponseMessage = "first time login", Status = "successful" };
+				}
+				var lstThreeLoginsFailed = lastThreeLogins.Where(c => c.PasswordFailed == true).ToList();
 				if(lstThreeLoginsFailed.Count() == 3)
 				{
 					await _commandRepositoryUser.UpdateTableColumnById(nameof(user.IsActive), nameof(user.Id), false, user.Id);
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This Account is Locked, contact your Administrator", Status = "failed" };
-
 				}
-				var loginUser = _mapper.Map<LoginHistory>(loginViewModel);
-				loginUser.UserId = user.Id;
-				loginUser.RoleId = user.RoleId;
+				
 				if (!user.IsActive)
 				{
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This Account is Locked, contact your Administrator", Status = "failed" };
-
 				}
 				if (loginViewModel.HashPassword != user.HashPassword)
 				{
@@ -96,7 +114,7 @@ namespace TechHub.Service.Service
 				await _commandRepositoryLoginHistory.Create(loginUser);
 				var schInfo = await _queryrepositorySchool.Get(schoolId.SchoolId);
 				var mappedSchInfo = _mapper.Map<SchoolResponseModel>(schInfo);
-				return new UserLoginResponse { FirstName = user.FirstName, LastName = user.LastName, RoleId = user.RoleId, Id = user.Id, EmailAddress = user.EmailAddress,
+				return new UserLoginResponse { FirstName = user.FirstName, LastName = user.LastName, RoleId = user.RoleId, Id = user.Id, EmailAddress = user.EmailAddress,IsActive=user.IsActive,
 					SchoolInfo = mappedSchInfo, ResponseCode = ResponseCode.successful, ResponseMessage = "successful", Status = "successful" };
 			}
 			
@@ -115,17 +133,23 @@ namespace TechHub.Service.Service
 				{
 					throw new ArgumentNullException(nameof(userViewModel));
 				}
-				var nullProp = HelperUtil.GetNullPorpertiesName(userViewModel);
-				if (string.IsNullOrEmpty(nullProp))
-				{
-					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "one of object properties is null or empty", Status = "failed" };
-				}
-				var createdByUser = await _queryrepositoryUser.Get(userViewModel.Createdby);
-				if(createdByUser == null)
-				{
-					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "The Admin user doesn't exist", Status = "failed" };
-				}
-				var mappedUser = _mapper.Map<User>(userViewModel);
+				//var user = _queryrepositoryUser.Get(userViewModel.Createdby);
+				//if(user is null)
+				//{
+				//	return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = Response.UserCannotCreateUser, Status = "failed" };
+				//}
+				//var nullProp = HelperUtil.GetNullPorpertiesName(userViewModel);
+				//if (string.IsNullOrEmpty(nullProp))
+				//{
+				//	return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "one of object properties is null or empty", Status = "failed" };
+				//}
+				//var createdByUser = await _queryrepositoryUser.Get(userViewModel.Createdby);
+				//if(createdByUser == null)
+				//{
+				//	return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "The Admin user doesn't exist", Status = "failed" };
+				//}
+
+				var mappedUser = _mapper.Map<Users>(userViewModel);
 				await _commandRepositoryUser.Create(mappedUser);
 				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "object created successfully", Status = "successful" };
 			}
@@ -145,10 +169,56 @@ namespace TechHub.Service.Service
 			}
 
 		}
+
+		public async Task<BaseResponse> updatePassword(UpdatePasswordViewModel updatePasswordViewModel)
+		{
+			try
+			{
+				if(updatePasswordViewModel is null)
+				{
+					throw new ArgumentNullException(nameof(updatePasswordViewModel));
+				}
+				var selectQuery = $"select * from Users where SchoolId = @{nameof(updatePasswordViewModel.SchoolId)} and UserName = @{nameof(updatePasswordViewModel.username)}";
+				var inputValue = new Dictionary<string, object> { { "SchoolId", updatePasswordViewModel.SchoolId }, { "UserName", updatePasswordViewModel.username } };
+				var updateQuery = $"Update Users set HashPassword = @{nameof(updatePasswordViewModel.HashPassword)} where UserName = @{updatePasswordViewModel.username} " +
+					$"and SchoolId = @{nameof(updatePasswordViewModel.SchoolId)}";
+
+				var updateQueryValue = new Dictionary<string, object> { { "SchoolId", updatePasswordViewModel.SchoolId }, { "UserName", updatePasswordViewModel.username },
+					{ "HashPassword", updatePasswordViewModel.HashPassword  }}; 
+
+				var user = _queryrepositoryUser.SelectByColumns(selectQuery, inputValue);
+				if(user is null)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.BadCredential, Status = "failed" };
+				}
+				var loginHistory = _mapper.Map<LoginHistory>(user);
+				loginHistory.DeviceIp = updatePasswordViewModel.DeviceIp;
+				loginHistory.DeviceType = updatePasswordViewModel.DeviceType;
+
+				var loginHistoryDict = new Dictionary<string, object> { { "Id", loginHistory.Id }, { "CreationDate", loginHistory.CreationDate }, { "ModifiedDate", loginHistory.ModifiedDate},
+					{"UserId", loginHistory.UserId },{ "RoleId", loginHistory.RoleId},{ "PasswordFailed",true },{"DeviceType", loginHistory.DeviceType }, {"DeviceIp" , loginHistory.DeviceIp} };
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+
+				await _commandRepositoryUser.UpdateAsync(scope.Transaction, scope.Connection,updateQuery, updateQueryValue);
+				await _commandRepositoryLoginHistory.Create(scope.Transaction, scope.Connection,loginHistoryDict);
+				await scope.CommitAsync();
+				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "Password Changed Successfully", Status = "successful" };
+
+			}
+			catch (ArgumentNullException ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage =ex.Message , Status = "falied" };
+			}
+			catch (Exception ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
+
+			}
+		}
 		private async Task<IEnumerable<LoginHistory?>> LastLoginHistorys(Guid userId)
 		{
 			//string tableName
-			string query = $"select top 3 from LoginHistory where userId = '{userId}'";
+			string query = $"select top 3 * from LoginHistory where UserId = '{userId}'";
 			var lastLoginHistory = await _queryrepositoryLoginHistory.GetByQuery(query);
 			return lastLoginHistory;
 		}
