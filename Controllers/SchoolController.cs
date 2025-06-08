@@ -33,5 +33,27 @@ namespace TechhubMS.Controllers
 			var result = await _schoolService.UpdateSchoolCode(schCodeViewModel);
 			return Ok(result);
 		}
+
+		[HttpPost("createstudentclass")]
+		public async Task<ActionResult<BaseResponse>> CreateStudentClass(CreateStudentClassViewModel createStudentClassViewModel)
+		{
+			var result = await _schoolService.CreateStudentClass(createStudentClassViewModel);
+			return Ok(result);
+		}
+
+		[HttpPost("registersubject")]
+		public async Task<ActionResult<BaseResponse>> CreateStudentClass(CreateSubjectViewModel createSubjectViewModel)
+		{
+			var result = await _schoolService.CreateSchoolSubjects(createSubjectViewModel);
+			return Ok(result);
+		}
+
+		[HttpPost("getAllSchoolSubjects")]
+		public async Task<ActionResult<BaseResponse>> GetAllSchoolSubjects(Guid schoolId)
+		{
+			var result = await _schoolService.GetAllSubjects(schoolId);
+			return Ok(result);
+		}
+
 	}
 }

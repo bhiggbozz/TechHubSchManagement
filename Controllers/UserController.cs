@@ -27,5 +27,11 @@ namespace TechhubMS.Controllers
 			var result = await _userService.CreateUser(userViewModel);
 			return Ok(result);
 		}
+		[HttpPost("updatePassword")]
+		public async Task<ActionResult<BaseResponse>> UpdatePassword(UpdatePasswordViewModel updatePasswordViewModel)
+		{
+			var result = await _userService.updatePassword(updatePasswordViewModel);
+			return Ok(result);
+		}
 	}
 }

@@ -1,6 +1,7 @@
 
 using Microsoft.AspNetCore.Builder;
 using TechHub.Core.Profiles;
+using TechHub.Core.Utilities;
 using TechHub.Service.Interface;
 using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
@@ -18,12 +19,22 @@ builder.Services.AddScoped(typeof(ICommandRespository<>), typeof(CommandReposito
 builder.Services.AddScoped(typeof(IQueryRepository<>), typeof(QueryRepositoryService<>));
 
 builder.Services.AddScoped<ISchoolService, SchoolService>();
+builder.Services.AddScoped<IUtilities, Utilities>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IDbTransactionScopeFactory, DbTransactionScopeFactory>();
 
 builder.Services.AddAutoMapper(typeof(AutoMapperProfile));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddCors(options =>
+{
+	options.AddPolicy("AllowAllOrigins",
+		builder => builder
+			.AllowAnyOrigin()
+			.AllowAnyHeader()
+			.AllowAnyMethod());
+});
 
 var app = builder.Build();
 
@@ -37,6 +48,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseAuthorization();
+app.UseCors("AllowAllOrigins");
 //app.MapControllerRoute();
 
 app.MapControllers();
