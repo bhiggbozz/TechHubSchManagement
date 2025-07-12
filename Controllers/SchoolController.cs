@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using TechHub.Core;
+using TechHub.Core.Entities;
 using TechHub.Core.ViewModel;
 using TechHub.Service.Interface;
 
@@ -42,7 +43,7 @@ namespace TechhubMS.Controllers
 		}
 
 		[HttpPost("registersubject")]
-		public async Task<ActionResult<BaseResponse>> CreateStudentClass(CreateSubjectViewModel createSubjectViewModel)
+		public async Task<ActionResult<BaseResponse>> CreateSchoolSubjects(CreateSubjectViewModel createSubjectViewModel)
 		{
 			var result = await _schoolService.CreateSchoolSubjects(createSubjectViewModel);
 			return Ok(result);
@@ -55,5 +56,11 @@ namespace TechhubMS.Controllers
 			return Ok(result);
 		}
 
+		[HttpPost("[action]")]
+		public async Task<ActionResult<BaseResponse>> RegisterClassroomSubect(CreateClassroomViewModel createClassroomSubject)
+		{
+			var result = await _schoolService.RegisterClassroomSubjects(createClassroomSubject);
+			return Ok(result);
+		}
 	}
 }
