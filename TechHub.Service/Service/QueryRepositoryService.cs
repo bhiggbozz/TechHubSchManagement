@@ -129,6 +129,18 @@ namespace TechHub.Service.Service
 			return result;
 		}
 
+		//public async Task<TEntity?> SelectAllBySingleColumn(KeyValuePair<string, object> values)
+		//{
+		//	using var conn = new SqlConnection(_config);
+		//	conn.Open();
+		//	var tableName = typeof(TEntity).Name;
+		//	var query = _utilities.SelectAllBySingleColumn(values, tableName);
+		//	var parameter = new DynamicParameters();
+		//	parameter.Add($"@{values.Key}", values.Value);
+
+		//	var result = await conn.QueryAsync<TEntity>(query, parameter);
+		//	return result;
+		//}
 
 	}
 }

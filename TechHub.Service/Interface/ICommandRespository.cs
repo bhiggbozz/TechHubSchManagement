@@ -16,6 +16,8 @@ namespace TechHub.Service.Interface
 		Task UpdateTableColumnById(Dictionary<string, object> obj, KeyValuePair<string, object> keyValue);
 		Task Create(SqlTransaction transaction, SqlConnection connection, Dictionary<string, object> obj);
 		Task UpdateAsync(string query, Dictionary<string, object> values);
-		Task UpdateAsync(SqlTransaction transaction, SqlConnection connection, string query, Dictionary<string, object> values);
+		//Task UpdateAsync(SqlTransaction transaction, SqlConnection connection, string query, Dictionary<string, object> values);
+		Task UpdateAsync(SqlTransaction transaction, SqlConnection connection, string query, Dictionary<string, object> values, KeyValuePair<string, object> keyValuePair);
+		Task CreateBatchAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues);
 	}
 }

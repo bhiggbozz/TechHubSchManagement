@@ -14,5 +14,6 @@ namespace TechHub.Core.ResponseModel
 	{
 		public string Subject { get; set; }
 		public Guid SchoolId { get; set; }
+		public string Category { get; set; }
 	}
 }

@@ -16,6 +16,8 @@ namespace TechHub.Core.Constant
 		public static string BadCredential = "incorrect credentials";
 		public static string UserDoesNotExist = "User does not exist";
 		public static string UserCannotCreateUser = "User cannot create user";
+		public static string UserNotActive = "User is not active";
+		public static string CreatedSuccessfully = "object created successfully";
 
 
 

@@ -244,5 +244,57 @@ namespace TechHub.Core.Helper
 			return sb.ToString();
 
 		}
+
+
+		public static string BatchInsertQuery(List<Dictionary<string, object>> batchData, string tableName)
+		{
+			var queries = new StringBuilder();
+			int batchCount = batchData.Count;
+			foreach (var items in batchData)
+			{
+				var sb = new StringBuilder($"insert into {tableName} (  ");
+
+				int count = items.Count;
+
+				foreach(var item in items.Keys)
+				{
+					count -= 1;
+					sb.Append($"{item}");
+					if (count == 0)
+					{
+						sb.Append(" )");
+					}
+					else
+					{
+						sb.Append(",");
+					}
+
+
+				}
+				sb.Append(" values ( ");
+				int count2 = items.Count;
+
+				foreach (var item in items.Keys)
+				{
+					count2 -= 1;
+					sb.Append($"@{item}_{count2}_{batchCount}");
+					if (count2 == 0)
+					{
+						sb.Append(" )");
+					}
+					else
+					{
+						sb.Append(",");
+					}
+
+				}
+				var query = sb.ToString() + "\n";
+				queries.Append(query);
+				batchCount--;
+
+			}
+
+			return queries.ToString();
+		}
 	}
 }

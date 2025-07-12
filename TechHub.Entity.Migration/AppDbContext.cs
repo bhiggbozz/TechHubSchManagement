@@ -13,11 +13,13 @@ namespace TechHub.Entity.Migration
 	{
 		public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 		
-		public DbSet<StudentClass> StudentClass {  get; set; }
+		public DbSet<Classroom> StudentClass {  get; set; }
 		public  DbSet<Users> Users { get; set; }
 		public  DbSet<Role> Roles { get; set; }
 		public  DbSet<School> School { get; set; }
 		public DbSet<SchoolCode> SchoolCode { get; set;}
+		public DbSet<Subjects> Subjects { get; set; }
+
 		public DbSet<LoginHistory> LoginHistory { get; set; }
 
 		protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -90,7 +92,7 @@ namespace TechHub.Entity.Migration
 					  .HasDatabaseName("UQ_School_information");
 			});
 
-			modelBuilder.Entity<StudentClass>(entity =>
+			modelBuilder.Entity<Classroom>(entity =>
 			{
 				// Composite Primary Key
 				entity.HasKey(sc => new { sc.Id, sc.CreationDate });
@@ -145,6 +147,10 @@ namespace TechHub.Entity.Migration
 
 				entity.Property(e => e.Subject)
 					  .HasMaxLength(255)
+					  .IsRequired();
+				entity.Property(e => e.Category)
+					  .IsRequired();
+				entity.Property(e => e.IsActive)
 					  .IsRequired();
 
 				entity.Property(e => e.SchoolId)

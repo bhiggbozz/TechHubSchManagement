@@ -28,7 +28,7 @@ namespace TechHub.Service.Service
 	{
 		private readonly ICommandRespository<School> _schCommandRespository;
 		private readonly ICommandRespository<SchoolCode> _schCodeCommandRespository;
-		private readonly ICommandRespository<StudentClass> _studentClassCommandRespository;
+		private readonly ICommandRespository<Classroom> _studentClassCommandRespository;
 		private readonly ICommandRespository<Subjects> _subjectCommandRespository;
 		private readonly IQueryRepository<State> _queryrepositoryState;
 		private readonly IQueryRepository<Subjects> _queryrepositorySubject;
@@ -39,7 +39,7 @@ namespace TechHub.Service.Service
 
 		private readonly IMapper _mapper;
 		public SchoolService(ICommandRespository<School> schCommandRespository, IQueryRepository<State> queryRepositoryState , 
-			IMapper mapper, ICommandRespository<SchoolCode> schCodeCommandRespository, ICommandRespository<StudentClass> studentClassCommandRespository,
+			IMapper mapper, ICommandRespository<SchoolCode> schCodeCommandRespository, ICommandRespository<Classroom> studentClassCommandRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IQueryRepository<Users> queryrepositoryUser, ICommandRespository<Subjects> subjectCommandRespository,
 			IQueryRepository<Subjects> queryrepositorySubject,IConfiguration configuration)
 		{
@@ -173,7 +173,7 @@ namespace TechHub.Service.Service
 				{
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user does not exist", Status = "successful" };
 				}
-				var mappedSchClass = _mapper.Map<StudentClass>(createStudentClassViewModel);
+				var mappedSchClass = _mapper.Map<Classroom>(createStudentClassViewModel);
 				var inputValue = new Dictionary<string, object> { { "Id", mappedSchClass.Id}, {"Name", mappedSchClass.Name },{ "TeacherName", mappedSchClass.TeacherName },
 				{"CreationDate", mappedSchClass.CreationDate }, {"ModifiedDate", mappedSchClass.ModifiedDate }, {"CreatedBy", mappedSchClass.CreatedBy },
 				{ "SchoolId", mappedSchClass.SchoolId}, {"NoOfStudents", mappedSchClass.NoOfStudents } };
@@ -196,7 +196,6 @@ namespace TechHub.Service.Service
 			catch (Exception ex)
 			{
 				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
-
 			}
 
 
@@ -214,13 +213,31 @@ namespace TechHub.Service.Service
 				var user = await _queryrepositoryUser.SelectByColumns(query, columnInput);
 				if (user == null)
 				{
-					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user does not exist", Status = "successful" };
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user does not exist", Status = "failed" };
 				}
+				if (!user.IsActive)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user is not active", Status = "failed" };
+				}
+				if(!createSubjectModel.Subjects.Any())
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "Subject List cannot be empty", Status = "failed" };
+				}
+
 				var mappedSubjectObj = _mapper.Map<Subjects>(createSubjectModel);
-				//var inputValue = new Dictionary<string, object> { { "Id",mappedSubjectObj.Id}, {"Subject",mappedSubjectObj.Subject},
-				//{"CreationDate", mappedSubjectObj.CreationDate }, {"ModifiedDate", mappedSubjectObj.ModifiedDate }, {"CreatedBy", mappedSubjectObj.CreatedBy },
-				//{ "SchoolId", mappedSubjectObj.SchoolId} };
-				await _subjectCommandRespository.Create(mappedSubjectObj);
+				var inputValuesLIst = new List<Dictionary<string, object>>();
+				foreach(var subject in createSubjectModel.Subjects)
+				{
+					var inputValue = new Dictionary<string, object> { { "Id",Guid.NewGuid()}, {"Subject", subject.Subject},
+					{"CreationDate", mappedSubjectObj.CreationDate }, {"ModifiedDate", mappedSubjectObj.ModifiedDate }, {"CreatedBy", mappedSubjectObj.CreatedBy },
+					{ "SchoolId", mappedSubjectObj.SchoolId},{ "Category", subject.Category}, { "IsActive", subject.status} };
+					inputValuesLIst.Add(inputValue);
+				}
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				//await _schCommandRespository.Create(school);
+				//await _schCommandRespository.Create(scope.Transaction, scope.Connection, insertDict);
+				await _subjectCommandRespository.CreateBatchAsync(scope.Transaction, scope.Connection, inputValuesLIst);
+				await scope.CommitAsync();
 				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "object updated successfully", Status = "successful" };
 
 			}
@@ -239,7 +256,6 @@ namespace TechHub.Service.Service
 			catch (Exception ex)
 			{
 				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
-
 			}
 
 		}
@@ -247,7 +263,9 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				var keyValue = new KeyValuePair<string, object> ("schoolId",  schoolid );
+				//var keyValue = new KeyValuePair<string, object> ("schoolId",  Guid.Parse(schoolid) );
+				var keyValue = new KeyValuePair<string, object>("schoolId", schoolid);
+
 				var subjects = await _queryrepositorySubject.SelectAllBySingleColumn(keyValue);
 				if(!subjects.Any())
 				{
@@ -267,5 +285,60 @@ namespace TechHub.Service.Service
 
 			}
 		}
+
+		public async Task<BaseResponse> RegisterClassroomSubjects(CreateClassroomViewModel createClassroomViewModel)
+		{
+			try
+			{
+				if (createClassroomViewModel == null)
+				{
+					throw new ArgumentNullException(nameof(createClassroomViewModel));
+				};
+
+				var mappedClassroom = _mapper.Map<Classroom>(createClassroomViewModel);
+				var inputValues = new List<Dictionary<string, object>>();
+				if (!createClassroomViewModel.SubjectId.Any())
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "No Subject selected", Status = "failed" };
+
+				}
+				var userInputValues = new Dictionary<string, object> { { "SchoolId", createClassroomViewModel.SchoolId }, { "Id", createClassroomViewModel.CreatedBy } };
+				var user = await _queryrepositoryUser.GetBy(userInputValues);
+				if (user == null)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.UserDoesNotExist, Status = "failed" };
+				}
+				if (!user.IsActive)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.UserNotActive, Status = "failed" };
+				}
+				foreach (var subjectId in createClassroomViewModel.SubjectId)
+				{
+					var classroomSubject = new ClassroomSubjects();
+					var rowInputValue = new Dictionary<string, object> { { "id", classroomSubject.Id}, { "CreationDate", classroomSubject.CreationDate}, { "ModifiedDate", classroomSubject.ModifiedDate},
+					{ "ClassroomId",createClassroomViewModel.ClassroomId },{ "SubjectId", subjectId }, { "SchoolId", createClassroomViewModel.SchoolId}, { "CreatedBy", createClassroomViewModel.CreatedBy} };
+					inputValues.Add(rowInputValue);
+				}
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				//await _schCommandRespository.Create(school);
+				await _schCommandRespository.CreateBatchAsync(scope.Transaction, scope.Connection, inputValues);
+				await scope.CommitAsync();
+				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.ResponseSucessful, Status = "successful" };
+			}
+			catch (ArgumentNullException ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = ex.Message, Status = "falied" };
+			}
+			catch (Exception ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
+
+			}
+
+
+		}
+		//public async Task<BaseResponse> 
+		
 	}
 }

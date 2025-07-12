@@ -157,17 +157,46 @@ namespace TechHub.Service.Service
 			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
 			await conn.ExecuteAsync(query, parameter);
 		}
-		public async Task UpdateAsync(SqlTransaction transaction, SqlConnection connection, string query, Dictionary<string, object> values)
+		public async Task UpdateAsync(SqlTransaction transaction, SqlConnection connection, string query, Dictionary<string, object> values, KeyValuePair<string, object> keyValuePair)
 		{
 			using var conn = new SqlConnection(_config);
 			conn.Open();
 			var tableName = typeof(TEntity).Name;
-			//var query = QueryBuilder<TEntity>.UpdateQueryWithSingleColumnName(obj, keyValue.Key, tableName);
+			var query2 = QueryBuilder<TEntity>.UpdateQueryWithSingleColumnName(values, keyValuePair.Key,tableName);
 			var parameter = new DynamicParameters();
 			foreach (var key in values.Keys)
 			{
 				parameter.Add($"@{key}", values[key]);
 			}
+			parameter.Add($"@{keyValuePair.Key}", keyValuePair.Value);
+			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
+			await conn.ExecuteAsync(query2, parameter);
+		}
+
+		public async Task CreateBatchAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var query = QueryBuilder<TEntity>.BatchInsertQuery(batchValues, tableName);
+			var parameter = new DynamicParameters();
+			int batchCount = batchValues.Count;
+			foreach (var items in batchValues)
+			{
+				int count2 = items.Count;
+				foreach (var item in items.Keys)
+				{
+					 count2 -= 1;
+					 parameter.Add($"@{item}_{count2}_{batchCount}", items[item]);
+
+
+				}
+				batchCount -= 1;
+			}
+			//	foreach (var key in values.Keys)
+			//{
+			//	parameter.Add($"@{key}", values[key]);
+			//}
 
 			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
 			await conn.ExecuteAsync(query, parameter);

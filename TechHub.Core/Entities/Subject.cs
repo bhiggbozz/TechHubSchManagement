@@ -12,8 +12,11 @@ namespace TechHub.Core.Entities
 		public DateTime CreationDate { get; set; } = DateTime.Now;
 		public DateTime ModifiedDate { get; set; } = DateTime.Now;
 		public string Subject {  get; set; }
+		public string Category { get; set; }
 		public Guid SchoolId { get; set; }
 		public Guid CreatedBy { get; set; }
+		public bool IsActive { get; set; }
+		
 
 	}
 }

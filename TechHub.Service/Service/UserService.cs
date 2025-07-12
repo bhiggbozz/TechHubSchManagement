@@ -26,6 +26,7 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<Users> _queryrepositoryUser;
 		private readonly ICommandRespository<LoginHistory> _commandRepositoryLoginHistory;
 		private readonly ICommandRespository<Users> _commandRepositoryUser;
+		private readonly ICommandRespository<StudentCourses> _studentCourseCommandRepository;
 		private readonly IQueryRepository<School> _queryrepositorySchool;
 		private readonly IQueryRepository<SchoolCode> _schCodeQueryRespository;
 		private readonly IConfiguration _configuration;
@@ -35,7 +36,7 @@ namespace TechHub.Service.Service
 
 		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<Users> queryrepositoryUser, 
 			ICommandRespository<LoginHistory> commandRepositoryLoginHistory, ICommandRespository<Users> commandRepositoryUser,
-			IQueryRepository<School> queryrepositorySchool, IQueryRepository<SchoolCode> schCodeQueryRespository, 
+			IQueryRepository<School> queryrepositorySchool, IQueryRepository<SchoolCode> schCodeQueryRespository, ICommandRespository<StudentCourses> studentCourseCommandRepository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration,
 			IMapper mapper)
 		{
@@ -43,6 +44,7 @@ namespace TechHub.Service.Service
 			_queryrepositoryUser = queryrepositoryUser;
 			_commandRepositoryLoginHistory = commandRepositoryLoginHistory;
 			_commandRepositoryUser = commandRepositoryUser;
+			_studentCourseCommandRepository = studentCourseCommandRepository;
 			_queryrepositorySchool = queryrepositorySchool;
 			_schCodeQueryRespository = schCodeQueryRespository;
 			_dbTransactionScopeFactory = dbTransactionScopeFactory;
@@ -183,15 +185,22 @@ namespace TechHub.Service.Service
 				var updateQuery = $"Update Users set HashPassword = @{nameof(updatePasswordViewModel.HashPassword)} where UserName = @{updatePasswordViewModel.username} " +
 					$"and SchoolId = @{nameof(updatePasswordViewModel.SchoolId)}";
 
-				var updateQueryValue = new Dictionary<string, object> { { "SchoolId", updatePasswordViewModel.SchoolId }, { "UserName", updatePasswordViewModel.username },
-					{ "HashPassword", updatePasswordViewModel.HashPassword  }}; 
 
-				var user = _queryrepositoryUser.SelectByColumns(selectQuery, inputValue);
+				var user = await _queryrepositoryUser.SelectByColumns(selectQuery, inputValue);
 				if(user is null)
 				{
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.BadCredential, Status = "failed" };
 				}
-				var loginHistory = _mapper.Map<LoginHistory>(user);
+
+
+				var updateQueryValue = new Dictionary<string, object> { { "SchoolId", updatePasswordViewModel.SchoolId }, { "UserName", updatePasswordViewModel.username },
+					{ "HashPassword", updatePasswordViewModel.HashPassword  }};
+				var updateQueryKeyValue = new KeyValuePair<string, object> ("Id", user.Id );
+				//var loginHistory = _mapper.Map<LoginHistory>(user);
+				var loginHistory = new LoginHistory();
+				loginHistory.UserId = user.Id;
+				loginHistory.RoleId = user.RoleId;
+				loginHistory.PasswordFailed = false;
 				loginHistory.DeviceIp = updatePasswordViewModel.DeviceIp;
 				loginHistory.DeviceType = updatePasswordViewModel.DeviceType;
 
@@ -199,7 +208,7 @@ namespace TechHub.Service.Service
 					{"UserId", loginHistory.UserId },{ "RoleId", loginHistory.RoleId},{ "PasswordFailed",true },{"DeviceType", loginHistory.DeviceType }, {"DeviceIp" , loginHistory.DeviceIp} };
 				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
 
-				await _commandRepositoryUser.UpdateAsync(scope.Transaction, scope.Connection,updateQuery, updateQueryValue);
+				await _commandRepositoryUser.UpdateAsync(scope.Transaction, scope.Connection,updateQuery, updateQueryValue, updateQueryKeyValue);
 				await _commandRepositoryLoginHistory.Create(scope.Transaction, scope.Connection,loginHistoryDict);
 				await scope.CommitAsync();
 				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "Password Changed Successfully", Status = "successful" };
@@ -221,6 +230,47 @@ namespace TechHub.Service.Service
 			string query = $"select top 3 * from LoginHistory where UserId = '{userId}'";
 			var lastLoginHistory = await _queryrepositoryLoginHistory.GetByQuery(query);
 			return lastLoginHistory;
+		}
+		private async Task<BaseResponse> RegisterToClass(RegisterStudentClassViewModel registerStudentClassViewModel)
+		{
+			try
+			{
+				if (registerStudentClassViewModel is null)
+				{
+					throw new ArgumentNullException(nameof(registerStudentClassViewModel));
+				}
+				var userInputValues = new Dictionary<string, object> { { "SchoolId", registerStudentClassViewModel.SchoolId }, { "Id", registerStudentClassViewModel.StudentId } };
+				var user = await _queryrepositoryUser.GetBy(userInputValues);
+				if (user == null)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.UserDoesNotExist, Status = "failed" };
+				}
+				if (!user.IsActive)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.UserNotActive, Status = "failed" };
+				}
+				var mappedstudentCourse = _mapper.Map<StudentCourses>(registerStudentClassViewModel);
+				await _studentCourseCommandRepository.Create(mappedstudentCourse);
+				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.CreatedSuccessfully, Status = "successful" };
+			}
+			catch (ArgumentNullException ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = ex.Message, Status = "falied" };
+			}
+			catch (SqlException ex)
+			{
+				if (ex.Message.ToLower().Contains("duplicate"))
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "Student already registered", Status = "failed" };
+				}
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
+			}
+			catch (Exception ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
+
+			}
+
 		}
 	}
 }
