@@ -7,16 +7,17 @@ using System.Threading.Tasks;
 
 namespace TechHub.Core.ViewModel
 {
-	public class CreateStudentClassViewModel
+	public class CreateStudentClassViewModel : CreateBaseViewModel
+	{
+		
+		public List<StudentClassView> classrooms { get; set; } = new List<StudentClassView>();
+	}
+	public class StudentClassView
 	{
 		[Required]
 		public string Name { get; set; }
 		[Required]
-		public string TeacherName {  get; set; }
+		public string TeacherName { get; set; }
 		public int NoOfStudents { get; set; }
-		[Required]
-		public Guid CreatedBy { get; set; }
-		[Required]
-		public Guid SchoolId { get; set; }
 	}
 }

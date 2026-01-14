@@ -17,9 +17,11 @@ using TechHub.Core.Helper;
 using TechHub.Core.Model;
 using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.school;
 using TechHub.Service.Interface;
 using TechHub.Service.Service.DatabaseService;
 using TechhubMS.util;
+using static System.Formats.Asn1.AsnWriter;
 
 
 namespace TechHub.Service.Service
@@ -158,7 +160,7 @@ namespace TechHub.Service.Service
 			return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "object updated successfully", Status = "successful" };
 
 		}
-		public async Task<BaseResponse> CreateStudentClass(CreateStudentClassViewModel createStudentClassViewModel)
+		public async Task<BaseResponse> CreateStudentClassV2(CreateStudentClassViewModel createStudentClassViewModel)
 		{
 			try
 			{
@@ -174,11 +176,69 @@ namespace TechHub.Service.Service
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user does not exist", Status = "successful" };
 				}
 				var mappedSchClass = _mapper.Map<Classroom>(createStudentClassViewModel);
-				var inputValue = new Dictionary<string, object> { { "Id", mappedSchClass.Id}, {"Name", mappedSchClass.Name },{ "TeacherName", mappedSchClass.TeacherName },
+				var inputValue = new Dictionary<string, object> { { "Id", mappedSchClass.Id}, {"Name", mappedSchClass.Name },
 				{"CreationDate", mappedSchClass.CreationDate }, {"ModifiedDate", mappedSchClass.ModifiedDate }, {"CreatedBy", mappedSchClass.CreatedBy },
 				{ "SchoolId", mappedSchClass.SchoolId}, {"NoOfStudents", mappedSchClass.NoOfStudents } };
 				await _studentClassCommandRespository.Create(mappedSchClass);
 				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "object updated successfully", Status = "successful" };
+
+			}
+			catch (ArgumentNullException ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = ex.Message, Status = "falied" };
+			}
+			catch (SqlException ex)
+			{
+				if (ex.Message.ToLower().Contains("duplicate"))
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "class exists", Status = "failed" };
+				}
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
+			}
+			catch (Exception ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
+			}
+
+
+		}
+
+		public async Task<BaseResponse> CreateStudentClass(CreateStudentClassViewModel createStudentClassViewModel)
+		{
+			try
+			{
+				if (createStudentClassViewModel.classrooms.Count == 0)
+				{
+					throw new ArgumentNullException(nameof(createStudentClassViewModel));
+				}
+				var columnInput = new Dictionary<string, object> { { "Id", createStudentClassViewModel.CreatedBy }, { "SchoolId", createStudentClassViewModel.SchoolId } };
+				string query = "select * from Users  where Id = @Id and SchoolId = @SchoolId";
+				var user = await _queryrepositoryUser.SelectByColumns(query, columnInput);
+				if (user == null)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user does not exist", Status = "successful" };
+				}
+				if (!user.IsActive)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user is not active", Status = "failed" };
+				}
+				var inputValueList = new List<Dictionary<string, object>>();
+				foreach(var classroom in createStudentClassViewModel.classrooms)
+				{
+					var mappedSchClass = _mapper.Map<Classroom>(classroom);
+					var inputValue = new Dictionary<string, object> { { "Id", mappedSchClass.Id}, {"Name", mappedSchClass.Name },
+				{"CreationDate", mappedSchClass.CreationDate }, {"ModifiedDate", mappedSchClass.ModifiedDate }, {"CreatedBy", mappedSchClass.CreatedBy },
+				{ "SchoolId", mappedSchClass.SchoolId}, {"NoOfStudents", mappedSchClass.NoOfStudents }, { "IsActive", mappedSchClass.IsActive} };
+					inputValueList.Add(inputValue);
+				}
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				//await _schCommandRespository.Create(school);
+				//await _schCommandRespository.Create(scope.Transaction, scope.Connection, insertDict);
+				await _studentClassCommandRespository.CreateBatchAsync(scope.Transaction, scope.Connection, inputValueList);
+				await scope.CommitAsync();
+				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "object updated successfully", Status = "successful" };
+				//await _studentClassCommandRespository.Create(mappedSchClass);
+				//return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "object updated successfully", Status = "successful" };
 
 			}
 			catch (ArgumentNullException ex)
@@ -338,7 +398,99 @@ namespace TechHub.Service.Service
 
 
 		}
-		//public async Task<BaseResponse> 
+		public async Task<BaseResponse> UpdateSchoolId(updateSchoolSubject updateSchoolSubjects)
+		{
+			try
+			{
+				if (updateSchoolSubjects.subjectUpdates.Count == 0)
+				{
+					throw new ArgumentNullException(nameof(updateSchoolSubject));
+				};
+				var columnInput = new Dictionary<string, object> { { "Id", updateSchoolSubjects.CreatedBy }, { "SchoolId", updateSchoolSubjects.SchoolId } };
+				string query = "select * from Users  where Id = @Id and SchoolId = @SchoolId";
+				var user = await _queryrepositoryUser.SelectByColumns(query, columnInput);
+				if (user == null)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user does not exist", Status = "failed" };
+				}
+				if (!user.IsActive)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user is not active", Status = "failed" };
+				}
+				var inputValueList = new List<Dictionary<string, object>>();
+				foreach (var subject in updateSchoolSubjects.subjectUpdates)
+				{
+					var values = new Dictionary<string, object> { { "Subject", subject.Subject }, { "IsActive", subject.isDeleted },
+					{ "ModifiedDate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")},{"CreatedBy",updateSchoolSubjects.CreatedBy },{ "Id", subject.subjectId}  };
+					inputValueList.Add(values);
+				}
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				await _subjectCommandRespository.UpdateBatchByIdAsync(scope.Transaction, scope.Connection, inputValueList);
+				await scope.CommitAsync();
+				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.ResponseSucessful, Status = "successful" };
+
+			}
+
+			catch (ArgumentNullException ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = ex.Message, Status = "falied" };
+			}
+			catch (Exception ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
+
+			}
+
+
+		}	
 		
+		public async Task<BaseResponse> UpdateSchoolClassroom(UpdateClassroomView updateClassroomView)
+		{
+			try
+			{
+				if (updateClassroomView?.classroomUpdateViews.Count == 0)
+				{
+					throw new ArgumentNullException(nameof(UpdateClassroomView));
+				}
+				var columnInput = new Dictionary<string, object> { { "Id", updateClassroomView.CreatedBy }, { "SchoolId", updateClassroomView.SchoolId } };
+				string query = "select * from Users  where Id = @Id and SchoolId = @SchoolId";
+				var user = await _queryrepositoryUser.SelectByColumns(query, columnInput);
+				if (user == null)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user does not exist", Status = "failed" };
+				}
+				if (!user.IsActive)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This user is not active", Status = "failed" };
+				}
+				var inputValueList = new List<Dictionary<string, object>>();
+				foreach (var classroom in updateClassroomView?.classroomUpdateViews)
+				{
+					var values = new Dictionary<string, object> { { "Name", classroom.Name }, { "IsActive", classroom.IsActive },
+					{ "ModifiedDate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")},{"CreatedBy",updateClassroomView.CreatedBy },{ "Id", classroom.Id}  };
+					inputValueList.Add(values);
+				}
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				await _studentClassCommandRespository.UpdateBatchByIdAsync(scope.Transaction, scope.Connection, inputValueList);
+				await scope.CommitAsync();
+				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = ResponseMessage.ResponseSucessful, Status = "successful" };
+			}
+			
+			catch (ArgumentNullException ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = ex.Message, Status = "falied" };
+			}
+			catch (Exception ex)
+			{
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
+
+			}
+
+
+
+		}
+
+
+
 	}
 }

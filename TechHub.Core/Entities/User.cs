@@ -23,6 +23,7 @@ namespace TechHub.Core.Model
 		public Guid SchoolId { get; set; }
 		public int RoleId { get; set; }
 		public Guid CreatedBy { get; set; }
+		public string? ProfileImage { get; set; }	
 
 	}
 }

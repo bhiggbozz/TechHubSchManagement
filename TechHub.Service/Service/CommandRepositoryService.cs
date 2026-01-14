@@ -114,7 +114,37 @@ namespace TechHub.Service.Service
 
 		}
 
-		public async Task UpdateTableColumnById( string columnToUpdateName, string keyColumnName, object columnToUpdateValue, object KeyColumnValue)
+        public async Task Create(SqlTransaction transaction, SqlConnection connection, TEntity entity)
+        {
+            ArgumentNullException.ThrowIfNull(nameof(_config));
+            try
+            {
+
+                using var conn = new SqlConnection(_config);
+                conn.Open();
+                var tableName = typeof(TEntity).Name;
+                var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
+                var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+                await conn.ExecuteAsync(query, sqlParameter, transaction);
+                //using var conn = new SqlConnection(_config);
+                //conn.Open();
+                //var tableName = typeof(TEntity).Name;
+                //var query = QueryBuilder<TEntity>.InsertQuery(obj, tableName);
+                //using var command = new SqlCommand(query, connection, transaction)
+                //var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+               // await connection.ExecuteAsync(query, null, transaction);
+                // await command.ExecuteScalarAsync();
+            }
+            catch (Exception ex)
+            {
+                throw;
+            }
+
+            //var sqlQuery =  
+
+        }
+
+        public async Task UpdateTableColumnById( string columnToUpdateName, string keyColumnName, object columnToUpdateValue, object KeyColumnValue)
 		{
 			using var conn = new SqlConnection(_config);
 			conn.Open();
@@ -190,6 +220,33 @@ namespace TechHub.Service.Service
 					 parameter.Add($"@{item}_{count2}_{batchCount}", items[item]);
 
 
+				}
+				batchCount -= 1;
+			}
+			//	foreach (var key in values.Keys)
+			//{
+			//	parameter.Add($"@{key}", values[key]);
+			//}
+
+			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
+			await conn.ExecuteAsync(query, parameter);
+		}
+
+		public async Task UpdateBatchByIdAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var query = QueryBuilder<TEntity>.UpdateBatchWithId(batchValues, tableName);
+			var parameter = new DynamicParameters();
+			int batchCount = batchValues.Count;
+			foreach (var items in batchValues)
+			{
+				int count2 = items.Count;
+				foreach (var item in items.Keys)
+				{
+					count2 -= 1;
+					parameter.Add($"@{item}_{count2}_{batchCount}", items[item]);
 				}
 				batchCount -= 1;
 			}

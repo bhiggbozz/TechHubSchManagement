@@ -7,9 +7,11 @@ using System.Linq;
 using System.Security.Cryptography.Pkcs;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using TechHub.Core;
 using TechHub.Core.Constant;
 using TechHub.Core.Entities;
+using TechHub.Core.Enum;
 using TechHub.Core.Helper;
 using TechHub.Core.Model;
 using TechHub.Core.ResponseModel;
@@ -26,19 +28,24 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<Users> _queryrepositoryUser;
 		private readonly ICommandRespository<LoginHistory> _commandRepositoryLoginHistory;
 		private readonly ICommandRespository<Users> _commandRepositoryUser;
-		private readonly ICommandRespository<StudentCourses> _studentCourseCommandRepository;
+		private readonly ICommandRespository<StudentClassroom> _commandRepositoryStudentClassroom;
+        private readonly ICommandRespository<TeacherClassroom> _commandRepositoryTeacherClassroom;
+        private readonly ICommandRespository<TeacherSubject> _commandRepositoryTeacherSubject;
+        private readonly ICommandRespository<StudentMinorSubject> _commandRepositoryMinorSubject;
+        private readonly ICommandRespository<StudentCourses> _studentCourseCommandRepository;
 		private readonly IQueryRepository<School> _queryrepositorySchool;
 		private readonly IQueryRepository<SchoolCode> _schCodeQueryRespository;
 		private readonly IConfiguration _configuration;
 		private readonly IMapper _mapper;
 		private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
+		//private readonly ILogger _logger;
 		private readonly string? _connString;
 
-		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<Users> queryrepositoryUser, 
+		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<Users> queryrepositoryUser,
 			ICommandRespository<LoginHistory> commandRepositoryLoginHistory, ICommandRespository<Users> commandRepositoryUser,
 			IQueryRepository<School> queryrepositorySchool, IQueryRepository<SchoolCode> schCodeQueryRespository, ICommandRespository<StudentCourses> studentCourseCommandRepository,
-			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration,
-			IMapper mapper)
+			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration, ICommandRespository<StudentClassroom> commandRepositoryStudentClassroom, ICommandRespository<TeacherClassroom> commandRepositoryTeacherClassroom,
+            ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, IMapper mapper)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
@@ -48,6 +55,10 @@ namespace TechHub.Service.Service
 			_queryrepositorySchool = queryrepositorySchool;
 			_schCodeQueryRespository = schCodeQueryRespository;
 			_dbTransactionScopeFactory = dbTransactionScopeFactory;
+			_commandRepositoryStudentClassroom = commandRepositoryStudentClassroom;
+			_commandRepositoryTeacherClassroom = commandRepositoryTeacherClassroom;
+			_commandRepositoryTeacherSubject = commandRepositoryTeacherSubject;
+			_commandRepositoryMinorSubject = commandRepositoryMinorSubject;
 			_mapper = mapper;
 			_connString = _configuration.GetConnectionString("DbConnectionString") ?? null;
 
@@ -70,7 +81,7 @@ namespace TechHub.Service.Service
 				//}
 				string schQuery = $"select * from SchoolCode where Code = '{loginViewModel.Inst}'";
 				var schoolId = await _schCodeQueryRespository.Get(schQuery);
-				if(schQuery == null)
+				if (schQuery == null)
 				{
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "wrong Inst Code ", Status = "failed" };
 				}
@@ -93,15 +104,15 @@ namespace TechHub.Service.Service
 					{
 						Id = user.SchoolId
 					};
-					return new UserLoginResponse {SchoolInfo = schoolResponse,FirstTimeLogin=true, ResponseCode = ResponseCode.successful, ResponseMessage = "first time login", Status = "successful" };
+					return new UserLoginResponse { SchoolInfo = schoolResponse, FirstTimeLogin = true, ResponseCode = ResponseCode.successful, ResponseMessage = "first time login", Status = "successful" };
 				}
 				var lstThreeLoginsFailed = lastThreeLogins.Where(c => c.PasswordFailed == true).ToList();
-				if(lstThreeLoginsFailed.Count() == 3)
+				if (lstThreeLoginsFailed.Count() == 3)
 				{
 					await _commandRepositoryUser.UpdateTableColumnById(nameof(user.IsActive), nameof(user.Id), false, user.Id);
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This Account is Locked, contact your Administrator", Status = "failed" };
 				}
-				
+
 				if (!user.IsActive)
 				{
 					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "This Account is Locked, contact your Administrator", Status = "failed" };
@@ -116,11 +127,11 @@ namespace TechHub.Service.Service
 				await _commandRepositoryLoginHistory.Create(loginUser);
 				var schInfo = await _queryrepositorySchool.Get(schoolId.SchoolId);
 				var mappedSchInfo = _mapper.Map<SchoolResponseModel>(schInfo);
-				return new UserLoginResponse { FirstName = user.FirstName, LastName = user.LastName, RoleId = user.RoleId, Id = user.Id, EmailAddress = user.EmailAddress,IsActive=user.IsActive,
+				return new UserLoginResponse { FirstName = user.FirstName, LastName = user.LastName, RoleId = user.RoleId, Id = user.Id, EmailAddress = user.EmailAddress, IsActive = user.IsActive,
 					SchoolInfo = mappedSchInfo, ResponseCode = ResponseCode.successful, ResponseMessage = "successful", Status = "successful" };
 			}
-			
-			catch(Exception ex)
+
+			catch (Exception ex)
 			{
 				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "Server Error", Status = "failed" };
 			}
@@ -135,11 +146,23 @@ namespace TechHub.Service.Service
 				{
 					throw new ArgumentNullException(nameof(userViewModel));
 				}
-				//var user = _queryrepositoryUser.Get(userViewModel.Createdby);
-				//if(user is null)
-				//{
-				//	return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = Response.UserCannotCreateUser, Status = "failed" };
-				//}
+				var user = await _queryrepositoryUser.Get(userViewModel.Createdby);
+				if (user is null)
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "user does not exist", Status = "failed" };
+				}
+				if (!(user.RoleId == (int)UserRole.Administrator) || !(user.RoleId == (int)UserRole.SuperAdministrator))
+				{
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "Unauthorised", Status = "failed" };
+				}
+				if(userViewModel.Role == UserRole.Student && userViewModel.UserClassroomsId.Count > 1)
+				{
+                    return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "student cannot be register to more than one classroom", Status = "failed" };
+                }
+                var mappedUser = _mapper.Map<Users>(user);
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+
+				await _commandRepositoryUser.Create(scope.Transaction, scope.Connection, user);
 				//var nullProp = HelperUtil.GetNullPorpertiesName(userViewModel);
 				//if (string.IsNullOrEmpty(nullProp))
 				//{
@@ -150,16 +173,101 @@ namespace TechHub.Service.Service
 				//{
 				//	return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "The Admin user doesn't exist", Status = "failed" };
 				//}
+				var InsertDIct = new Dictionary<string, object>();
+                var listDictSubject = new List<Dictionary<string, object>>();
+                switch (userViewModel.Role)
+				{
+                    case UserRole.Student:
+						var studentClassRoom = new StudentClassroom
+						{
+							StudentId = mappedUser.Id,
+							ClassroomId = userViewModel.UserClassroomsId[0],
+							CreatedBy = userViewModel.Createdby,
+							IsActive = true,
+							SchoolId = userViewModel.SchoolId
+						};
+						var InsertDIct2 = new Dictionary<string, object>{{"Id",studentClassRoom.Id },{ "CreationDate", studentClassRoom.CreationDate}, { "ModiFiedDate", studentClassRoom.ModifiedDate},
+						{"StudentId", mappedUser.Id }, { "ClassroomId", studentClassRoom.ClassroomId}, { "SchoolId", studentClassRoom.SchoolId}, {"IsActive", studentClassRoom.IsActive}, { "CreatedBy", studentClassRoom.CreatedBy } };
 
-				var mappedUser = _mapper.Map<Users>(userViewModel);
-				await _commandRepositoryUser.Create(mappedUser);
-				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "object created successfully", Status = "successful" };
+						await _commandRepositoryStudentClassroom.Create(scope.Transaction, scope.Connection, InsertDIct2);
+						foreach(var studentMinorSubject in userViewModel.UserSubjects)
+						{
+                            var subjects = new StudentMinorSubject
+                            {
+                                StudentId = mappedUser.Id,
+                                SubjectId = studentMinorSubject,
+                                CreatedBy = userViewModel.Createdby,
+                                IsActive = true,
+                                SchoolId = userViewModel.SchoolId
+                            };
+                            var InsertDictSubj = new Dictionary<string, object>{{"Id",subjects.Id },{ "CreationDate", subjects.CreationDate}, { "ModiFiedDate",subjects.ModifiedDate},
+							 {"StudentId", mappedUser.Id }, { "SubjectId", subjects.SubjectId}, { "SchoolId", subjects.SchoolId}, {"IsActive", subjects.IsActive}, { "CreatedBy", subjects.CreatedBy } };
+							listDictSubject.Add(InsertDictSubj);
+                        }
+                        if (listDictSubject.Count > 0)
+                        {
+                            await _commandRepositoryMinorSubject.CreateBatchAsync(scope.Transaction, scope.Connection, listDictSubject);
+                        }
+						break;
+                    case UserRole.SubjectTeacher:
+					case UserRole.HeadTeacher:
+					case UserRole.Administrator:
+					case UserRole.SuperAdministrator:
+						var listDict = new List<Dictionary<string, object>>();
+
+                        foreach (var classroom in userViewModel.UserClassroomsId)
+						{
+
+                            var teacherClassRoom = new TeacherClassroom
+                            {
+                                TeacherId = user.Id,
+                                ClassroomId = classroom,
+                                CreatedBy = userViewModel.Createdby,
+                                IsActive = true,
+                                SchoolId = userViewModel.SchoolId
+                            };
+                            var InsertDict = new Dictionary<string, object>{{"Id",teacherClassRoom.Id },{ "CreationDate", teacherClassRoom.CreationDate}, { "ModiFiedDate", teacherClassRoom.ModifiedDate},
+                                {"TeacherId", mappedUser.Id }, { "ClassroomId", teacherClassRoom.ClassroomId}, { "SchoolId", teacherClassRoom.SchoolId}, {"IsActive", teacherClassRoom.IsActive}, { "CreatedBy", teacherClassRoom.CreatedBy } };
+							listDict.Add(InsertDict);
+                        }
+						if(listDict.Count > 0)
+						{
+                            await _commandRepositoryTeacherClassroom.CreateBatchAsync(scope.Transaction, scope.Connection, listDict);
+                        }
+                        foreach (var subject in userViewModel.UserSubjects)
+						{
+                            var teacherSubject = new TeacherSubject
+                            {
+                                TeacherId = mappedUser.Id,
+                                SubjectId = subject,
+                                CreatedBy = userViewModel.Createdby,
+                                IsActive = true,
+                                SchoolId = userViewModel.SchoolId
+                            };
+                            var InsertDict = new Dictionary<string, object>{{"Id",teacherSubject.Id },{ "CreationDate", teacherSubject.CreationDate}, { "ModiFiedDate", teacherSubject.ModifiedDate},
+                                {"TeacherId", mappedUser.Id }, { "SubjectId", teacherSubject.SubjectId}, { "SchoolId", teacherSubject.SchoolId}, {"IsActive", teacherSubject.IsActive}, { "CreatedBy", teacherSubject.CreatedBy } };
+                            listDictSubject.Add(InsertDict);
+                        }
+						if(listDictSubject.Count > 0)
+						{
+                            await _commandRepositoryTeacherSubject.CreateBatchAsync(scope.Transaction, scope.Connection, listDictSubject);
+                        }
+						break;
+					default:
+                        Console.WriteLine($"Unexpected role encountered: {userViewModel.Role}");
+                        break;
+                }
+                await scope.CommitAsync();
+
+                //            var mappedUser = _mapper.Map<Users>(userViewModel);
+                //await _commandRepositoryUser.Create(mappedUser);
+                return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "object created successfully", Status = "successful" };
 			}
 			catch (SqlException ex)
 			{
 				if (ex.Message.ToLower().Contains("duplicate"))
 				{
-					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "username exists", Status = "failed" };
+					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "some user details exists", Status = "failed" };
 				}
 				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
 
@@ -171,6 +279,14 @@ namespace TechHub.Service.Service
 			}
 
 		}
+
+
+		//public async Task<BaseResponse> SaveClassTeacherUser(UserViewModel userViewModel)
+		//{
+
+		//}
+
+		//public async Task ValidateIfUserHasAccessToRemovedClasses(List<Guid> classes, )
 
 		public async Task<BaseResponse> updatePassword(UpdatePasswordViewModel updatePasswordViewModel)
 		{

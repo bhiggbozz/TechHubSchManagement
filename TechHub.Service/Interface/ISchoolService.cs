@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core.ViewModel;
 using TechHub.Core;
+using TechHub.Core.ViewModel.school;
 
 namespace TechHub.Service.Interface
 {
@@ -17,5 +18,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> CreateSchoolSubjects(CreateSubjectViewModel createSubjectModel);
 		Task<BaseResponse> GetAllSubjects(Guid schoolid);
 		Task<BaseResponse> RegisterClassroomSubjects(CreateClassroomViewModel createClassroomViewModel);
+		Task<BaseResponse> UpdateSchoolId(updateSchoolSubject updateSchoolSubject);
+		Task<BaseResponse> UpdateSchoolClassroom(UpdateClassroomView updateClassroomView);
 	}
 }

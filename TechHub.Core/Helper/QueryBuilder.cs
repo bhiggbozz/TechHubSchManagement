@@ -296,5 +296,37 @@ namespace TechHub.Core.Helper
 
 			return queries.ToString();
 		}
+
+		public static string UpdateBatchWithId(List<Dictionary<string, object>> data, string tableName)
+		{
+			var queries = new StringBuilder();
+			int batchCount = data.Count;
+			foreach (var item in data)
+			{
+				var sb = new StringBuilder($"update {tableName} set ");
+
+				int count = item.Count;
+				foreach (var column in item.Keys)
+				{
+					count -= 1;
+					sb.Append($"{column} = @{column}_{batchCount}_{count}");
+					if (count != 0)
+					{
+						sb.Append(", ");
+					}
+
+
+				}
+				sb.Append($" where Id = @Id_{batchCount}_{count}");
+				queries.Append(sb.ToString());
+				queries.Append("\n");
+				batchCount--;
+			}
+			var query = queries.ToString();
+			return query;
+
+
+		}
+
 	}
 }

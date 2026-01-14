@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core.Entities;
 using TechHub.Core.Model;
+using TechHub.Core.Models;
 
 namespace TechHub.Entity.Migration
 {
@@ -21,6 +22,9 @@ namespace TechHub.Entity.Migration
 		public DbSet<Subjects> Subjects { get; set; }
 
 		public DbSet<LoginHistory> LoginHistory { get; set; }
+		public DbSet<TenantInfo> TenantInfo { get; set; }
+
+		
 
 		protected override void OnModelCreating(ModelBuilder modelBuilder)
 		{
