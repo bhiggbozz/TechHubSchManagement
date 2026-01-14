@@ -2,6 +2,7 @@
 using TechHub.Core;
 using TechHub.Core.Entities;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.school;
 using TechHub.Service.Interface;
 
 namespace TechhubMS.Controllers
@@ -35,7 +36,7 @@ namespace TechhubMS.Controllers
 			return Ok(result);
 		}
 
-		[HttpPost("createstudentclass")]
+		[HttpPost("createschoolclassroom")]
 		public async Task<ActionResult<BaseResponse>> CreateStudentClass(CreateStudentClassViewModel createStudentClassViewModel)
 		{
 			var result = await _schoolService.CreateStudentClass(createStudentClassViewModel);
@@ -60,6 +61,19 @@ namespace TechhubMS.Controllers
 		public async Task<ActionResult<BaseResponse>> RegisterClassroomSubect(CreateClassroomViewModel createClassroomSubject)
 		{
 			var result = await _schoolService.RegisterClassroomSubjects(createClassroomSubject);
+			return Ok(result);
+		}
+
+		[HttpPost("updatesubject")]
+		public async Task<ActionResult<BaseResponse>> UpdateSchoolSubjects(updateSchoolSubject updateSchoolSubject)
+		{
+			var result = await _schoolService.UpdateSchoolId(updateSchoolSubject);
+			return Ok(result);
+		}
+		[HttpPost("updateclassroom")]
+		public async Task<ActionResult<BaseResponse>> UpdateClassroom(UpdateClassroomView updateClassroom)
+		{
+			var result = await _schoolService.UpdateSchoolClassroom(updateClassroom);
 			return Ok(result);
 		}
 	}

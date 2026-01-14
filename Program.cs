@@ -5,6 +5,7 @@ using TechHub.Core.Utilities;
 using TechHub.Service.Interface;
 using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
+using TechhubMS;
 using TechhubMS.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -17,6 +18,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddScoped(typeof(ICommandRespository<>), typeof(CommandRepositoryService<>));
 builder.Services.AddScoped(typeof(IQueryRepository<>), typeof(QueryRepositoryService<>));
+builder.Services.AddScoped<ITenantService, TenantService>();
 
 builder.Services.AddScoped<ISchoolService, SchoolService>();
 builder.Services.AddScoped<IUtilities, Utilities>();
@@ -25,7 +27,7 @@ builder.Services.AddScoped<IDbTransactionScopeFactory, DbTransactionScopeFactory
 
 builder.Services.AddAutoMapper(typeof(AutoMapperProfile));
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddCors(options =>
 {
@@ -53,6 +55,10 @@ app.UseCors("AllowAllOrigins");
 
 app.MapControllers();
 app.UseMiddleware<ResponseCodeMiddleware>();
+app.UseMiddleware<MultiTenantMiddleware>();
+
+app.UseAuthentication();
+
 //app.UseEndpoints(endpoint =>
 // endpoint.MapControllers();
 //endpoint
