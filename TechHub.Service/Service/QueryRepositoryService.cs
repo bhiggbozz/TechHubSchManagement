@@ -104,6 +104,21 @@ namespace TechHub.Service.Service
 			return result;
 			//await conn.ExecuteAsync(query, parameter);
 		}
+
+		public async Task<int> CountAsync(string query, Dictionary<string, object> values)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var parameter = new DynamicParameters();
+			foreach (var key in values.Keys)
+			{
+				parameter.Add($"@{key}", values[key]);
+			}
+
+			var result = await conn.QueryFirstOrDefaultAsync<int>(query, parameter);
+			return result;
+		}
 		public async Task<IEnumerable<TEntity?>> SelectByColumn(string query, KeyValuePair<string, object> values)
 		{
 			using var conn = new SqlConnection(_config);

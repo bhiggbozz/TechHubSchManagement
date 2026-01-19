@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TechHub.Core.Enum;
 
 namespace TechHub.Core.Entities
 {
@@ -12,11 +13,11 @@ namespace TechHub.Core.Entities
 		public DateTime CreationDate { get; set; } = DateTime.Now;
 		public DateTime ModifiedDate { get; set; } = DateTime.Now;
 		public string Subject {  get; set; }
-		public string Category { get; set; }
+		public SubjectCategory Category { get; set; }
+		public ClassCategory ClassCategory { get; set; } 
 		public Guid SchoolId { get; set; }
 		public Guid CreatedBy { get; set; }
-		public bool IsActive { get; set; }
-		
+		public bool IsActive { get; set; }		
 
 	}
 }

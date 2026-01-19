@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TechHub.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+136f9480f5ff9d74ee021fdd7a70be40250a9f83")]
 [assembly: System.Reflection.AssemblyProductAttribute("TechHub.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TechHub.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

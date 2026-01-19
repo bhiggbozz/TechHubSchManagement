@@ -24,6 +24,7 @@ namespace TechHub.Core.Model
 		public int RoleId { get; set; }
 		public Guid CreatedBy { get; set; }
 		public string? ProfileImage { get; set; }	
+		public string? GuardianName { get; set; }
 
 	}
 }

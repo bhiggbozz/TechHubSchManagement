@@ -9,14 +9,17 @@ namespace TechHub.Core.ViewModel
 {
 	public class CreateStudentClassViewModel : CreateBaseViewModel
 	{
-		
+		[Required]
+		[MinLength(1, ErrorMessage = "At least one classroom is required")]
 		public List<StudentClassView> classrooms { get; set; } = new List<StudentClassView>();
 	}
 	public class StudentClassView
 	{
-		[Required]
+		[Required(ErrorMessage = "Classroom name is required")]
+		[StringLength(100, ErrorMessage = "Name cannot exceed 100 characters")]
 		public string Name { get; set; }
-		[Required]
+		[Required(ErrorMessage = "Teacher name is required")]
+		[StringLength(100, ErrorMessage = "Teacher name cannot exceed 100 characters")]
 		public string TeacherName { get; set; }
 		public int NoOfStudents { get; set; }
 	}

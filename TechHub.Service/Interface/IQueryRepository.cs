@@ -16,5 +16,6 @@ namespace TechHub.Service.Interface
 		Task<TEntity?> SelectByColumns(string query, Dictionary<string, object> values);
 		Task<IEnumerable<TEntity?>> SelectByColumn(string query, KeyValuePair<string, object> values);
 		Task<IEnumerable<TEntity?>> SelectAllBySingleColumn(KeyValuePair<string, object> values);
+		Task<int> CountAsync(string query, Dictionary<string, object> values);
 	}
 }

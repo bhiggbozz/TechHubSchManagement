@@ -16,3 +16,28 @@
 );
 
 ------------------------------------------------------------------------------------------------------------------------------------
+
+CREATE TABLE Subjects
+(
+    Id UNIQUEIDENTIFIER NOT NULL
+        CONSTRAINT PK_Subjects PRIMARY KEY
+        DEFAULT NEWID(),
+
+    CreationDate DATETIME2 NOT NULL
+        CONSTRAINT DF_Subjects_CreationDate DEFAULT SYSUTCDATETIME(),
+
+    ModifiedDate DATETIME2 NOT NULL
+        CONSTRAINT DF_Subjects_ModifiedDate DEFAULT SYSUTCDATETIME(),
+
+    Subject NVARCHAR(255) NOT NULL,
+
+    Category INT NOT NULL,         -- SubjectCategory enum
+    ClassCategory INT NOT NULL,    -- ClassCategory enum
+
+    SchoolId UNIQUEIDENTIFIER NOT NULL,
+
+    CreatedBy UNIQUEIDENTIFIER NOT NULL,
+
+    IsActive BIT NOT NULL
+        CONSTRAINT DF_Subjects_IsActive DEFAULT (1)
+);

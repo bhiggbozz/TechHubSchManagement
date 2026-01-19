@@ -8,7 +8,7 @@ namespace TechHub.Core.ViewModel
 {
 	public class CreateClassroomViewModel :CreateBaseViewModel
 	{
-		public List<Guid> SubjectId { get; set; }
+		public List<Guid> SubjectIds { get; set; }
 		public Guid ClassroomId { get; set; }
 	}
 }

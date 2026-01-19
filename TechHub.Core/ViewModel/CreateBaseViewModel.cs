@@ -11,7 +11,7 @@ namespace TechHub.Core.ViewModel
 	{
 		[Required]
 		public Guid CreatedBy { get; set; }
-		[Required]
-		public Guid SchoolId { get; set; }
+		//[Required]
+		//public Guid SchoolId { get; set; }
 	}
 }

@@ -15,6 +15,7 @@ namespace TechHub.Core.Entities
 		public Guid SubjectId { get; set; }
 		public Guid SchoolId { get; set; }
 		public Guid Createdby { get; set; }
+		public bool IsActive { get; set; }
 
 	}
 }
