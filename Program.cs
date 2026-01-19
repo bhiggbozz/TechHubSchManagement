@@ -1,5 +1,8 @@
 
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 using TechHub.Core.Profiles;
 using TechHub.Core.Utilities;
 using TechHub.Service.Interface;
@@ -36,6 +39,28 @@ builder.Services.AddCors(options =>
 			.AllowAnyOrigin()
 			.AllowAnyHeader()
 			.AllowAnyMethod());
+});
+
+var jwtSettings = builder.Configuration.GetSection("Jwt");
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+.AddJwtBearer(options =>
+{
+	options.TokenValidationParameters = new TokenValidationParameters
+	{
+		ValidateIssuerSigningKey = true,
+		IssuerSigningKey = new SymmetricSecurityKey(
+			Encoding.UTF8.GetBytes(jwtSettings["SecretKey"])),
+
+		ValidateIssuer = true,
+		ValidIssuer = jwtSettings["Issuer"],
+
+		ValidateAudience = true,
+		ValidAudience = jwtSettings["Audience"],
+
+		ValidateLifetime = true, 
+		ClockSkew = TimeSpan.Zero
+	};
 });
 
 var app = builder.Build();

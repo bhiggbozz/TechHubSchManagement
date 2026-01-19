@@ -3,6 +3,7 @@ using TechHub.Core;
 using TechHub.Core.Entities;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.school;
+using TechHub.Service.Extension;
 using TechHub.Service.Interface;
 
 namespace TechhubMS.Controllers
@@ -19,6 +20,7 @@ namespace TechhubMS.Controllers
 		[HttpPost("createschool")]
 		public async Task<ActionResult<BaseResponse>> CreateSchool(SchoolViewModel schoolViewModel)
 		{
+			var schoolIdClaim = User.GetAuthenticatedUserClaims();
 			var result = await _schoolService.CreateSchool(schoolViewModel);
 			return Ok(result);
 		}
@@ -39,14 +41,16 @@ namespace TechhubMS.Controllers
 		[HttpPost("createschoolclassroom")]
 		public async Task<ActionResult<BaseResponse>> CreateStudentClass(CreateStudentClassViewModel createStudentClassViewModel)
 		{
-			var result = await _schoolService.CreateStudentClass(createStudentClassViewModel);
+			var schoolIdClaim = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.CreateStudentClassV2(createStudentClassViewModel, schoolIdClaim);
 			return Ok(result);
 		}
 
 		[HttpPost("registersubject")]
 		public async Task<ActionResult<BaseResponse>> CreateSchoolSubjects(CreateSubjectViewModel createSubjectViewModel)
 		{
-			var result = await _schoolService.CreateSchoolSubjects(createSubjectViewModel);
+			var schoolIdClaim = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.CreateSchoolSubjects(createSubjectViewModel, schoolIdClaim);
 			return Ok(result);
 		}
 
@@ -73,6 +77,8 @@ namespace TechhubMS.Controllers
 		[HttpPost("updateclassroom")]
 		public async Task<ActionResult<BaseResponse>> UpdateClassroom(UpdateClassroomView updateClassroom)
 		{
+			var schoolIdClaim = User.GetAuthenticatedUserClaims();
+
 			var result = await _schoolService.UpdateSchoolClassroom(updateClassroom);
 			return Ok(result);
 		}
