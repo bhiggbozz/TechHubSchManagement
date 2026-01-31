@@ -34,15 +34,17 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<LoginHistory> _commandRepositoryLoginHistory;
 		private readonly ICommandRespository<Users> _commandRepositoryUser;
 		private readonly ICommandRespository<StudentClassroom> _commandRepositoryStudentClassroom;
-        private readonly ICommandRespository<TeacherClassroom> _commandRepositoryTeacherClassroom;
-        private readonly ICommandRespository<TeacherSubject> _commandRepositoryTeacherSubject;
-        private readonly ICommandRespository<StudentMinorSubject> _commandRepositoryMinorSubject;
-        private readonly ICommandRespository<StudentCourses> _studentCourseCommandRepository;
+		private readonly ICommandRespository<TeacherClassroom> _commandRepositoryTeacherClassroom;
+		private readonly ICommandRespository<TeacherSubject> _commandRepositoryTeacherSubject;
+		private readonly ICommandRespository<StudentMinorSubject> _commandRepositoryMinorSubject;
+		private readonly ICommandRespository<StudentCourses> _studentCourseCommandRepository;
 		private readonly ICommandRespository<Classroom> _classroomCommandRespository;
 
 		private readonly IQueryRepository<School> _queryrepositorySchool;
 		private readonly IQueryRepository<SchoolCode> _schCodeQueryRespository;
 		private readonly IQueryRepository<Classroom> _classroomQueryRespository;
+		private readonly IQueryRepository<StudentCourses> _studentCoursesQueryRespository;
+
 
 		private readonly IConfiguration _configuration;
 		private readonly IMapper _mapper;
@@ -55,7 +57,7 @@ namespace TechHub.Service.Service
 			IQueryRepository<School> queryrepositorySchool, IQueryRepository<SchoolCode> schCodeQueryRespository, ICommandRespository<StudentCourses> studentCourseCommandRepository,
 			ICommandRespository<Classroom> classroomCommandRespository, IQueryRepository<Classroom> classroomQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration, ICommandRespository<StudentClassroom> commandRepositoryStudentClassroom, ICommandRespository<TeacherClassroom> commandRepositoryTeacherClassroom,
-            ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, IMapper mapper)
+			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, IMapper mapper)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
@@ -214,8 +216,8 @@ namespace TechHub.Service.Service
 					EmailAddress = user.EmailAddress,
 					IsActive = user.IsActive,
 					SchoolInfo = mappedSchInfo,
-					Token = token, 
-					TokenExpiresIn = 3600, 
+					Token = token,
+					TokenExpiresIn = 3600,
 					ResponseCode = ResponseCode.successful,
 					ResponseMessage = "Login successful",
 					Status = "successful"
@@ -361,7 +363,7 @@ namespace TechHub.Service.Service
 					SchoolId = schoolId,
 					CreatedBy = createdBy,
 					IsActive = true
-					
+
 				};
 
 				var userDict = new Dictionary<string, object>
@@ -507,7 +509,7 @@ namespace TechHub.Service.Service
 				var selectQuery = $"SELECT * FROM Users WHERE SchoolId = @SchoolId AND UserName = @UserName";
 				var selectParams = new Dictionary<string, object>
 				{
-					{ "SchoolId", schoolId },  
+					{ "SchoolId", schoolId },
 					{ "UserName", updatePasswordViewModel.username }
 				};
 
@@ -559,7 +561,7 @@ namespace TechHub.Service.Service
 					Id = Guid.NewGuid(),
 					UserId = user.Id,
 					RoleId = user.RoleId,
-					PasswordFailed = false, 
+					PasswordFailed = false,
 					DeviceType = updatePasswordViewModel.DeviceType,
 					DeviceIp = updatePasswordViewModel.DeviceIp
 				};
@@ -874,7 +876,7 @@ namespace TechHub.Service.Service
 			{ "Status", (int)StudentClassroomStatus.Active }
 		};
 
-				var count = await _studentCourseQueryRespository.Count(query, parameters);
+				var count = await _studentCoursesQueryRespository.CountAsync(query, parameters);
 				return count > 0;
 			}
 			catch
@@ -897,7 +899,7 @@ namespace TechHub.Service.Service
 			{ "Status", (int)StudentClassroomStatus.Active }
 		};
 
-				var registration = await _studentCourseQueryRepository.SelectByColumns(query, parameters);
+				var registration = await _studentCoursesQueryRespository.SelectByColumns(query, parameters);
 				return registration?.ClassroomId;
 			}
 			catch
@@ -945,12 +947,14 @@ namespace TechHub.Service.Service
 
 			return new JwtSecurityTokenHandler().WriteToken(token);
 		}
-	}
 
-	/// <summary>
-/// Validate role-specific requirements
-/// </summary>
-private (bool IsValid, string ErrorMessage) ValidateUserRoleRequirements(UserViewModel userViewModel)
+
+
+
+		/// <summary>
+		/// Validate role-specific requirements
+		/// </summary>
+		private (bool IsValid, string ErrorMessage) ValidateUserRoleRequirements(UserViewModel userViewModel)
 		{
 			switch (userViewModel.Role)
 			{
@@ -1005,7 +1009,7 @@ private (bool IsValid, string ErrorMessage) ValidateUserRoleRequirements(UserVie
 					{ "SchoolId", schoolId }
 				};
 
-				var count = await _queryrepositoryUser.Count(query, parameters);
+				var count = await _queryrepositoryUser.CountAsync(query, parameters);
 
 				if (count > 0)
 				{
@@ -1075,13 +1079,13 @@ private (bool IsValid, string ErrorMessage) ValidateUserRoleRequirements(UserVie
 			UserViewModel userViewModel,
 			Guid schoolId,
 			Guid createdBy)
-			{
-				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+		{
+			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
-				// Create teacher-classroom associations
-				if (userViewModel.UserClassroomsId.Any())
-				{
-					var teacherClassrooms = userViewModel.UserClassroomsId.Select(classroomId => new Dictionary<string, object>
+			// Create teacher-classroom associations
+			if (userViewModel.UserClassroomsId.Any())
+			{
+				var teacherClassrooms = userViewModel.UserClassroomsId.Select(classroomId => new Dictionary<string, object>
 					{
 						{ "Id", Guid.NewGuid() },
 						{ "CreationDate", now },
@@ -1093,13 +1097,13 @@ private (bool IsValid, string ErrorMessage) ValidateUserRoleRequirements(UserVie
 						{ "CreatedBy", createdBy }
 					}).ToList();
 
-					await _commandRepositoryTeacherClassroom.CreateBatchAsync(scope.Transaction, scope.Connection, teacherClassrooms);
-				}
+				await _commandRepositoryTeacherClassroom.CreateBatchAsync(scope.Transaction, scope.Connection, teacherClassrooms);
+			}
 
-				// Create teacher-subject associations
-				if (userViewModel.UserSubjects.Any())
-				{
-					var teacherSubjects = userViewModel.UserSubjects.Select(subjectId => new Dictionary<string, object>
+			// Create teacher-subject associations
+			if (userViewModel.UserSubjects.Any())
+			{
+				var teacherSubjects = userViewModel.UserSubjects.Select(subjectId => new Dictionary<string, object>
 					{
 						{ "Id", Guid.NewGuid() },
 						{ "CreationDate", now },
@@ -1111,7 +1115,7 @@ private (bool IsValid, string ErrorMessage) ValidateUserRoleRequirements(UserVie
 						{ "CreatedBy", createdBy }
 					}).ToList();
 
-						await _commandRepositoryTeacherSubject.CreateBatchAsync(scope.Transaction, scope.Connection, teacherSubjects);
+				await _commandRepositoryTeacherSubject.CreateBatchAsync(scope.Transaction, scope.Connection, teacherSubjects);
 			}
 		}
 
@@ -1123,3 +1127,4 @@ private (bool IsValid, string ErrorMessage) ValidateUserRoleRequirements(UserVie
 		//	return BCrypt.Net.BCrypt.HashPassword(password);
 		//}
 	}
+}

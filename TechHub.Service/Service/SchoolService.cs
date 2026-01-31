@@ -927,7 +927,7 @@ namespace TechHub.Service.Service
 				{
 					throw new ArgumentNullException(nameof(updateSchoolSubject));
 				};
-				var columnInput = new Dictionary<string, object> { { "Id", updateSchoolSubjects.CreatedBy }, { "SchoolId", updateSchoolSubjects.SchoolId } };
+				var columnInput = new Dictionary<string, object> { { "Id", updateSchoolSubjects.CreatedBy }, { "SchoolId", "" } };
 				string query = "select * from Users where Id = @Id and SchoolId = @SchoolId";
 				var user = await _queryrepositoryUser.SelectByColumns(query, columnInput);
 				if (user == null)

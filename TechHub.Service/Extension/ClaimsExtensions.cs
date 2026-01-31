@@ -30,7 +30,7 @@ public static class ClaimsExtensions
 		return user.FindFirst(ClaimTypes.Role)?.Value;
 	}
 
-	public static AuthenticatedUserClaims GetAuthenticatedUserClaims(this ClaimsPrincipal user)
+	public static AuthenticatedUserClaims? GetAuthenticatedUserClaims(this ClaimsPrincipal user)
 	{
 		return new AuthenticatedUserClaims
 		{
