@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TechHub.Core.Model;
 
 namespace TechHub.Service.Interface
 {
@@ -17,5 +18,10 @@ namespace TechHub.Service.Interface
 		Task<IEnumerable<TEntity?>> SelectByColumn(string query, KeyValuePair<string, object> values);
 		Task<IEnumerable<TEntity?>> SelectAllBySingleColumn(KeyValuePair<string, object> values);
 		Task<int> CountAsync(string query, Dictionary<string, object> values);
+
+		Task<List<Users>> GetUsersBySchoolAndRole(Guid schoolId, int? roleId);
+		Task<List<Users>> GetTeachersBySchool(Guid schoolId);
+		Task<List<Users>> GetAdministratorsBySchool(Guid schoolId);
+		Task<bool> EmailExistsInSchool(string email, Guid schoolId, Guid? excludeUserId = null);
 	}
 }

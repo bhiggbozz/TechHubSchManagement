@@ -2,6 +2,8 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
+using Serilog;
+using Serilog.Context;
 using System;
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
@@ -49,7 +51,7 @@ namespace TechHub.Service.Service
 		private readonly IConfiguration _configuration;
 		private readonly IMapper _mapper;
 		private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
-		//private readonly ILogger _logger;
+		private readonly ILogger _logger;
 		private readonly string? _connString;
 
 		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<Users> queryrepositoryUser,
@@ -57,7 +59,7 @@ namespace TechHub.Service.Service
 			IQueryRepository<School> queryrepositorySchool, IQueryRepository<SchoolCode> schCodeQueryRespository, ICommandRespository<StudentCourses> studentCourseCommandRepository,
 			ICommandRespository<Classroom> classroomCommandRespository, IQueryRepository<Classroom> classroomQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration, ICommandRespository<StudentClassroom> commandRepositoryStudentClassroom, ICommandRespository<TeacherClassroom> commandRepositoryTeacherClassroom,
-			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, IMapper mapper)
+			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, IMapper mapper, ILogger logger)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
@@ -73,6 +75,7 @@ namespace TechHub.Service.Service
 			_commandRepositoryMinorSubject = commandRepositoryMinorSubject;
 			_classroomCommandRespository = classroomCommandRespository;
 			_classroomQueryRespository = classroomQueryRespository;
+			_logger = logger;
 
 			_mapper = mapper;
 			_connString = _configuration.GetConnectionString("DbConnectionString") ?? null;
@@ -792,6 +795,820 @@ namespace TechHub.Service.Service
 			}
 		}
 
+
+		public async Task<BaseResponse> EditUser(UpdateUserView updateUserViewModel, AuthenticatedUserClaims? userClaims)
+		{
+			try
+			{
+				if (updateUserViewModel is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "User data cannot be empty",
+						Status = "failed"
+					};
+				}
+
+				if (string.IsNullOrEmpty(userClaims?.SchoolId) || string.IsNullOrEmpty(userClaims?.UserId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "User authentication information is missing",
+						Status = "failed"
+					};
+				}
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var claimSchoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId format in token",
+						Status = "failed"
+					};
+				}
+
+				if (!Guid.TryParse(userClaims.UserId, out var modifiedBy))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid UserId format in token",
+						Status = "failed"
+					};
+				}
+
+				if (!int.TryParse(userClaims.Role, out int userRole))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid role format in token",
+						Status = "failed"
+					};
+				}
+
+				var modifier = await _queryrepositoryUser.Get(modifiedBy);
+				if (modifier is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Modifier user does not exist",
+						Status = "failed"
+					};
+				}
+
+				if (!modifier.IsActive)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "Your account is not active",
+						Status = "failed"
+					};
+				}
+
+
+				var existingUser = await _queryrepositoryUser.Get(updateUserViewModel.Id);
+				if (existingUser is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "User not found",
+						Status = "failed"
+					};
+				}
+
+				// Validation 6: Multi-tenancy check - ensure user belongs to same school
+				if (existingUser.SchoolId != claimSchoolId)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You cannot update users from a different school",
+						Status = "failed"
+					};
+				}
+
+				// Validation 7: Role-based authorization
+				// Only Admin and SuperAdmin can update users
+				if (userRole != (int)UserRole.Administrator && userRole != (int)UserRole.SuperAdministrator)
+				{
+					// Allow users to update their own profile (limited fields)
+					if (updateUserViewModel.Id != modifiedBy)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You are not authorized to update other users",
+							Status = "failed"
+						};
+					}
+
+					// Users can only update their own limited fields
+					//return await UpdateOwnProfile(updateUserViewModel, existingUser, modifiedBy);
+				}
+
+				// Validation 8: SuperAdmin restrictions
+				// Only SuperAdmin can update other SuperAdmins
+				if (existingUser.RoleId == (int)UserRole.SuperAdministrator &&
+					userRole != (int)UserRole.SuperAdministrator)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "Only SuperAdministrator can update SuperAdministrator accounts",
+						Status = "failed"
+					};
+				}
+
+				// Validation 9: Check if email is being changed and if it already exists
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.EmailAddress) &&
+					updateUserViewModel.EmailAddress.Trim().ToLower() != existingUser.EmailAddress?.ToLower())
+				{
+					var emailExists = await CheckEmailExists(
+						updateUserViewModel.EmailAddress,
+						claimSchoolId,
+						updateUserViewModel.Id);
+
+					if (emailExists)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Conflict,
+							ResponseMessage = "Email address is already in use by another user",
+							Status = "failed"
+						};
+					}
+				}
+
+				// ✅ Build update dictionary with ONLY provided values
+				var updateDict = new Dictionary<string, object>
+				{
+					{ "ModifiedDate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }
+				};
+
+				var updatedFields = new List<string>();
+
+				// ✅ Check each field individually
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.FirstName))
+				{
+					updateDict["FirstName"] = updateUserViewModel.FirstName.Trim();
+					updatedFields.Add("FirstName");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.LastName))
+				{
+					updateDict["LastName"] = updateUserViewModel.LastName.Trim();
+					updatedFields.Add("LastName");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.EmailAddress))
+				{
+					updateDict["EmailAddress"] = updateUserViewModel.EmailAddress.Trim().ToLower();
+					updatedFields.Add("EmailAddress");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.HashPassword))
+				{
+					// TODO: Hash password before storing (use BCrypt)
+					// var hashedPassword = BCrypt.Net.BCrypt.HashPassword(updateUserViewModel.HashPassword);
+					updateDict["HashPassword"] = updateUserViewModel.HashPassword;
+					updatedFields.Add("Password");
+				}
+
+				// ✅ Use .HasValue for nullable bool
+				if (updateUserViewModel.IsActive.HasValue)
+				{
+					updateDict["IsActive"] = updateUserViewModel.IsActive.Value;
+					updatedFields.Add("IsActive");
+				}
+
+				if (updateUserViewModel.HasAccess.HasValue)
+				{
+					updateDict["HasAccess"] = updateUserViewModel.HasAccess.Value;
+					updatedFields.Add("HasAccess");
+				}
+
+				if (updateUserViewModel.RoleId.HasValue &&
+					updateUserViewModel.RoleId.Value != existingUser.RoleId)
+				{
+					// Validate role change permissions
+					if (updateUserViewModel.RoleId.Value == (int)UserRole.SuperAdministrator &&
+						userRole != (int)UserRole.SuperAdministrator)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Only SuperAdministrator can promote to SuperAdministrator role",
+							Status = "failed"
+						};
+					}
+
+					updateDict["RoleId"] = updateUserViewModel.RoleId.Value;
+					updatedFields.Add("Role");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.ProfileImage))
+				{
+					updateDict["ProfileImage"] = updateUserViewModel.ProfileImage;
+					updatedFields.Add("ProfileImage");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.GuardianName))
+				{
+					updateDict["GuardianName"] = updateUserViewModel.GuardianName.Trim();
+					updatedFields.Add("GuardianName");
+				}
+
+				if (updateDict.Count == 1) // Only ModifiedDate
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "No fields to update",
+						Status = "failed"
+					};
+				}
+				var whereClause = new KeyValuePair<string, object>("Id", updateUserViewModel.Id);
+				await _commandRepositoryUser.UpdateTableColumnById(updateDict, whereClause);
+
+
+				//await scope.CommitAsync();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "User updated successfully",
+					Status = "successful",
+					Data = new
+					{
+						UserId = updateUserViewModel.Id,
+						UpdatedFields = updatedFields.ToArray(),
+						UpdatedBy = modifiedBy,
+						UpdatedAt = updateDict["ModifiedDate"]
+					}
+				};
+			}
+			catch (SqlException ex)
+			{
+				if (ex.Message.ToLower().Contains("duplicate"))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Conflict,
+						ResponseMessage = "Email address is already in use",
+						Status = "failed"
+					};
+				}
+
+				// Log exception
+				// _logger.LogError(ex, "SQL error occurred while updating user: {UserId}", updateUserViewModel.Id);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "Database error occurred while updating user",
+					Status = "failed"
+				};
+			}
+			catch (Exception ex)
+			{
+				// Log exception
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred while updating user",
+					Status = "failed"
+				};
+			}
+		}
+
+		/// <summary>
+		/// Allow users to update their own profile with limited fields
+		/// </summary>
+		private async Task<BaseResponse> UpdateOwnProfile(UpdateUserView updateUserViewModel, Users existingUser, Guid userId)
+		{
+			try
+			{
+				// Users can only update: FirstName, LastName, ProfileImage, Password
+				var updateDict = new Dictionary<string, object>
+				{
+					{ "ModifiedDate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }
+				};
+
+				var updatedFields = new List<string>();
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.FirstName))
+				{
+					updateDict["FirstName"] = updateUserViewModel.FirstName.Trim();
+					updatedFields.Add("FirstName");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.LastName))
+				{
+					updateDict["LastName"] = updateUserViewModel.LastName.Trim();
+					updatedFields.Add("LastName");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.ProfileImage))
+				{
+					updateDict["ProfileImage"] = updateUserViewModel.ProfileImage;
+					updatedFields.Add("ProfileImage");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.HashPassword))
+				{
+					// TODO: Hash password before storing
+					updateDict["HashPassword"] = updateUserViewModel.HashPassword;
+					updatedFields.Add("Password");
+				}
+
+				// Users CANNOT update: Email, Role, IsActive, HasAccess, GuardianName
+
+				// Check if anything was updated
+				if (updateDict.Count == 1) // Only ModifiedDate
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "No fields to update",
+						Status = "failed"
+					};
+				}
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				var whereClause = new KeyValuePair<string, object>("Id", updateUserViewModel.Id);
+				await _commandRepositoryUser.UpdateTableColumnById(updateDict, whereClause);
+
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Profile updated successfully",
+					Status = "successful",
+					Data = new
+					{
+						UserId = updateUserViewModel.Id,
+						UpdatedFields = updatedFields.ToArray(),
+						UpdatedAt = updateDict["ModifiedDate"]
+					}
+				};
+			}
+			catch (SqlException ex)
+			{
+				// Log exception
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "Database error occurred while updating profile",
+					Status = "failed"
+				};
+			}
+			catch (Exception ex)
+			{
+				// Log exception
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while updating profile",
+					Status = "failed"
+				};
+			}
+		}
+
+		/// <summary>
+		/// Check if email already exists for another user
+		/// </summary>
+		private async Task<bool> CheckEmailExists(string email, Guid schoolId, Guid excludeUserId)
+		{
+			try
+			{
+				// Assuming you have a method to get user by email
+				//var users = await _queryrepositoryUser.GetAll(schoolId);
+				var query = "SELECT * FROM Users WHERE EmailAddress = @EmailAddress";
+				var parameters = new Dictionary<string, object>
+					{
+						{ "EmailAddress", email }
+					};
+
+				var user = await _queryrepositoryUser.SelectByColumns(query, parameters);
+
+				//var existingUser = users.FirstOrDefault(u =>
+				//	u.EmailAddress?.ToLower() == email.Trim().ToLower() &&
+				//	u.Id != excludeUserId);
+
+				return user != null;
+			}
+			catch (Exception ex)
+			{
+				// Log exception
+				// _logger.LogError(ex, "Error checking email existence: {Email}", email);
+
+				// Return true to be safe (prevent duplicate)
+				return true;
+			}
+		}
+
+		public async Task<BaseResponse> GetUsersByRole(AuthenticatedUserClaims userClaims,int? roleId,int pageNumber,int pageSize)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId format",
+						Status = "failed"
+					};
+				}
+
+				if (pageNumber < 1) pageNumber = 1;
+				if (pageSize < 1 || pageSize > 100) pageSize = 50;
+
+				string query;
+				if (roleId.HasValue && roleId.Value >= 0)
+				{
+					query = $@"
+                    SELECT * FROM Users 
+                    WHERE SchoolId = '{schoolId}' 
+                    AND RoleId = {roleId.Value} 
+                    ORDER BY FirstName, LastName";
+				}
+				else
+				{
+					query = $@"
+                    SELECT * FROM Users 
+                    WHERE SchoolId = '{schoolId}' 
+                    ORDER BY FirstName, LastName";
+				}
+
+				var allUsers = await _queryrepositoryUser.GetByQuery(query);
+				var usersList = allUsers.Where(u => u != null).ToList();
+
+				// Pagination
+				var totalCount = usersList.Count;
+				var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+				var paginatedUsers = usersList
+					.Skip((pageNumber - 1) * pageSize)
+					.Take(pageSize)
+					.ToList();
+
+				var userDtos = paginatedUsers.Select(u => new UserDto
+				{
+					Id = u!.Id,
+					FirstName = u.FirstName,
+					LastName = u.LastName,
+					UserName = u.UserName,
+					EmailAddress = u.EmailAddress,
+					RoleId = u.RoleId,
+					RoleName = ((UserRole)u.RoleId).ToString(),
+					IsActive = u.IsActive,
+					HasAccess = u.HasAccess,
+					ProfileImage = u.ProfileImage,
+					GuardianName = u.GuardianName,
+					CreatedDate = u.CreationDate,
+					ModifiedDate = u.ModifiedDate
+				}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Users retrieved successfully",
+					Status = "successful",
+					Data = new UsersListData
+					{
+						Users = userDtos,
+						TotalCount = totalCount,
+						PageNumber = pageNumber,
+						PageSize = pageSize,
+						TotalPages = totalPages,
+						HasPreviousPage = pageNumber > 1,
+						HasNextPage = pageNumber < totalPages,
+						RoleFilter = roleId.HasValue ? ((UserRole)roleId.Value).ToString() : "All"
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching users by role");
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching users",
+					Status = "failed"
+				};
+			}
+		}
+
+		public async Task<BaseResponse> GetTeachers(AuthenticatedUserClaims userClaims,int pageNumber,int pageSize)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId",
+						Status = "failed"
+					};
+				}
+
+				if (pageNumber < 1) pageNumber = 1;
+				if (pageSize < 1 || pageSize > 100) pageSize = 50;
+
+				// ✅ Use GetByQuery with IN clause
+				var query = $@"
+                SELECT * FROM Users 
+                WHERE SchoolId = '{schoolId}' 
+                AND RoleId IN (1, 4)
+                ORDER BY FirstName, LastName";
+
+				var allTeachers = await _queryrepositoryUser.GetByQuery(query);
+				var teachersList = allTeachers.Where(u => u != null).ToList();
+
+				var totalCount = teachersList.Count;
+				var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+				var paginatedTeachers = teachersList
+					.Skip((pageNumber - 1) * pageSize)
+					.Take(pageSize)
+					.ToList();
+
+				var teacherDtos = paginatedTeachers.Select(u => new UserDto
+				{
+					Id = u!.Id,
+					FirstName = u.FirstName,
+					LastName = u.LastName,
+					UserName = u.UserName,
+					EmailAddress = u.EmailAddress,
+					RoleId = u.RoleId,
+					RoleName = ((UserRole)u.RoleId).ToString(),
+					IsActive = u.IsActive,
+					HasAccess = u.HasAccess,
+					ProfileImage = u.ProfileImage,
+					CreatedDate = u.CreationDate,
+					ModifiedDate = u.ModifiedDate
+				}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Teachers retrieved successfully",
+					Status = "successful",
+					Data = new UsersListData
+					{
+						Users = teacherDtos,
+						TotalCount = totalCount,
+						PageNumber = pageNumber,
+						PageSize = pageSize,
+						TotalPages = totalPages,
+						HasPreviousPage = pageNumber > 1,
+						HasNextPage = pageNumber < totalPages,
+						RoleFilter = "Teachers"
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching teachers");
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching teachers",
+					Status = "failed"
+				};
+			}
+		}
+
+		public async Task<BaseResponse> GetAdministrators(
+			AuthenticatedUserClaims userClaims,
+			int pageNumber,
+			int pageSize)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId",
+						Status = "failed"
+					};
+				}
+
+				if (pageNumber < 1) pageNumber = 1;
+				if (pageSize < 1 || pageSize > 100) pageSize = 50;
+
+				// ✅ Use GetByQuery
+				var query = $@"
+                SELECT * FROM Users 
+                WHERE SchoolId = '{schoolId}' 
+                AND RoleId IN (2, 3)
+                ORDER BY FirstName, LastName";
+
+				var allAdmins = await _queryrepositoryUser.GetByQuery(query);
+				var adminsList = allAdmins.Where(u => u != null).ToList();
+
+				var totalCount = adminsList.Count;
+				var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+				var paginatedAdmins = adminsList
+					.Skip((pageNumber - 1) * pageSize)
+					.Take(pageSize)
+					.ToList();
+
+				var adminDtos = paginatedAdmins.Select(u => new UserDto
+				{
+					Id = u!.Id,
+					FirstName = u.FirstName,
+					LastName = u.LastName,
+					UserName = u.UserName,
+					EmailAddress = u.EmailAddress,
+					RoleId = u.RoleId,
+					RoleName = ((UserRole)u.RoleId).ToString(),
+					IsActive = u.IsActive,
+					HasAccess = u.HasAccess,
+					ProfileImage = u.ProfileImage,
+					CreatedDate = u.CreationDate,
+					ModifiedDate = u.ModifiedDate
+				}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Administrators retrieved successfully",
+					Status = "successful",
+					Data = new UsersListData
+					{
+						Users = adminDtos,
+						TotalCount = totalCount,
+						PageNumber = pageNumber,
+						PageSize = pageSize,
+						TotalPages = totalPages,
+						HasPreviousPage = pageNumber > 1,
+						HasNextPage = pageNumber < totalPages,
+						RoleFilter = "Administrators"
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching administrators");
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching administrators",
+					Status = "failed"
+				};
+			}
+		}
+
+		// TechHub.Service.Service/UserService.cs
+
+		public async Task<BaseResponse> GetUserById(Guid userId, AuthenticatedUserClaims userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
+			{
+				try
+				{
+					// Validation 1: Check if user claims are valid
+					if (string.IsNullOrEmpty(userClaims?.SchoolId) || string.IsNullOrEmpty(userClaims?.UserId))
+					{
+						_logger.Warning("Get user request with invalid claims");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "User authentication information is missing",
+							Status = "failed"
+						};
+					}
+
+					// Validation 2: Parse SchoolId
+					if (!Guid.TryParse(userClaims.SchoolId, out var claimSchoolId))
+					{
+						_logger.Warning("Invalid SchoolId format in token - SchoolId: {SchoolId}", userClaims.SchoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format in token",
+							Status = "failed"
+						};
+					}
+
+					_logger.Information("Fetching user by ID - TargetUserId: {TargetUserId}", userId);
+
+					// Get user from repository
+					var user = await _queryrepositoryUser.Get(userId);
+
+					if (user == null)
+					{
+						_logger.Warning("User not found - TargetUserId: {TargetUserId}", userId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "User not found",
+							Status = "failed"
+						};
+					}
+
+					// Validation 3: Multi-tenancy check - Ensure user belongs to same school
+					if (user.SchoolId != claimSchoolId)
+					{
+						_logger.Warning(
+							"Unauthorized access attempt - User {RequestedBy} tried to access user {TargetUserId} from different school",
+							userClaims.UserId,
+							userId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You cannot access users from a different school",
+							Status = "failed"
+						};
+					}
+
+					_logger.Information(
+						"User retrieved successfully - TargetUserId: {TargetUserId}, Email: {Email}",
+						user.Id,
+						user.EmailAddress);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "User retrieved successfully",
+						Status = "successful",
+						Data = new UserDto
+						{
+							Id = user.Id,
+							FirstName = user.FirstName,
+							LastName = user.LastName,
+							UserName = user.UserName,
+							EmailAddress = user.EmailAddress,
+							RoleId = user.RoleId,
+							RoleName = ((UserRole)user.RoleId).ToString(),
+							IsActive = user.IsActive,
+							HasAccess = user.HasAccess,
+							ProfileImage = user.ProfileImage,
+							GuardianName = user.GuardianName,
+							CreatedDate = user.CreationDate,
+							ModifiedDate = user.ModifiedDate
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error fetching user by ID - TargetUserId: {TargetUserId}", userId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching user",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		// ✅ Email exists check using generic methods
+		//private async Task<bool> CheckEmailExists(string email, Guid schoolId, Guid excludeUserId)
+		//{
+		//	try
+		//	{
+		//		var query = $@"
+		//              SELECT COUNT(1) 
+		//              FROM Users 
+		//              WHERE LOWER(EmailAddress) = '{email.ToLower()}' 
+		//              AND SchoolId = '{schoolId}' 
+		//              AND Id != '{excludeUserId}'";
+
+		//		var count = await _queryRepository.CountAsync(query, new Dictionary<string, object>());
+		//		return count > 0;
+		//	}
+		//	catch (Exception ex)
+		//	{
+		//		_logger.LogError(ex, "Error checking email existence");
+		//		return true; // Safe default
+		//	}
+		//}
+
+
 		/// <summary>
 		/// Validate student exists, belongs to school, and is active
 		/// </summary>
@@ -1051,7 +1868,6 @@ namespace TechHub.Service.Service
 
 			await _commandRepositoryStudentClassroom.Create(scope.Transaction, scope.Connection, studentClassroom);
 
-			// Create student minor subjects (if any)
 			if (userViewModel.UserSubjects.Any())
 			{
 				var studentSubjects = userViewModel.UserSubjects.Select(subjectId => new Dictionary<string, object>
@@ -1119,6 +1935,11 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public Task<BaseResponse> GetStudents(AuthenticatedUserClaims? claims, int pageNumber, int pageSize)
+		{
+			throw new NotImplementedException();
+		}
+
 		/// <summary>
 		/// Hash password using BCrypt
 		/// </summary>
@@ -1126,5 +1947,34 @@ namespace TechHub.Service.Service
 		//{
 		//	return BCrypt.Net.BCrypt.HashPassword(password);
 		//}
+	}
+
+	internal class UsersListData
+	{
+		public object Users { get; set; }
+		public object TotalCount { get; set; }
+		public int PageNumber { get; set; }
+		public int PageSize { get; set; }
+		public int TotalPages { get; set; }
+		public bool HasPreviousPage { get; set; }
+		public bool HasNextPage { get; set; }
+		public string RoleFilter { get; set; }
+	}
+
+	internal class UserDto
+	{
+		public object Id { get; set; }
+		public object FirstName { get; set; }
+		public object LastName { get; set; }
+		public object UserName { get; set; }
+		public object EmailAddress { get; set; }
+		public object RoleId { get; set; }
+		public string RoleName { get; set; }
+		public object IsActive { get; set; }
+		public object HasAccess { get; set; }
+		public object ProfileImage { get; set; }
+		public object GuardianName { get; set; }
+		public object CreatedDate { get; set; }
+		public object ModifiedDate { get; set; }
 	}
 }
