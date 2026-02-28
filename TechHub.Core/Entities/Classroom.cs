@@ -13,6 +13,7 @@ namespace TechHub.Core.Entities
 		public Guid Id { get; set; } = Guid.NewGuid();
 		public string Name { get; set; }
 		public string TeacherName { get; set; }
+		public Guid TeacherId { get; set; }	
 		public int NoOfStudents { get; set; }
 		public Guid CreatedBy { get; set; }
 		public Guid SchoolId { get; set; }

@@ -21,6 +21,8 @@ namespace TechHub.Service.Interface
 		Task CreateBatchAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues);
 		Task UpdateBatchByIdAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues);
 		Task Create(SqlTransaction transaction, SqlConnection connection, T entity);
+		Task UpdateBatchByIdAsyncV2(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues);
 
-    }
+
+	}
 }

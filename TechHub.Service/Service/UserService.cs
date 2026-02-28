@@ -33,6 +33,7 @@ namespace TechHub.Service.Service
 	{
 		private readonly IQueryRepository<LoginHistory> _queryrepositoryLoginHistory;
 		private readonly IQueryRepository<Users> _queryrepositoryUser;
+
 		private readonly ICommandRespository<LoginHistory> _commandRepositoryLoginHistory;
 		private readonly ICommandRespository<Users> _commandRepositoryUser;
 		private readonly ICommandRespository<StudentClassroom> _commandRepositoryStudentClassroom;
@@ -76,9 +77,10 @@ namespace TechHub.Service.Service
 			_classroomCommandRespository = classroomCommandRespository;
 			_classroomQueryRespository = classroomQueryRespository;
 			_logger = logger;
+			_configuration = configuration;
 
 			_mapper = mapper;
-			_connString = _configuration.GetConnectionString("DbConnectionString") ?? null;
+			_connString = _configuration.GetConnectionString("DbConnectionString") ?? throw new ArgumentNullException("Db COnfig is null");
 
 		}
 
@@ -1750,7 +1752,7 @@ namespace TechHub.Service.Service
 				claims.Add(new Claim(ClaimTypes.Surname, user.LastName));
 			}
 
-			var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
+			var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:SecretKey"]));
 			var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 			var expires = DateTime.UtcNow.AddHours(1); // Token valid for 1 hour
 

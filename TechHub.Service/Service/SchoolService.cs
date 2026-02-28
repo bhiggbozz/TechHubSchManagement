@@ -2,6 +2,8 @@
 using Azure;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using Serilog;
+using Serilog.Context;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -18,6 +20,7 @@ using TechHub.Core.Helper;
 using TechHub.Core.Model;
 using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.classroom;
 using TechHub.Core.ViewModel.school;
 using TechHub.Service.Interface;
 using TechHub.Service.Service.DatabaseService;
@@ -34,14 +37,19 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<Classroom> _studentClassCommandRespository;
 		private readonly ICommandRespository<Subjects> _subjectCommandRespository;
 		private readonly ICommandRespository<ClassroomSubjects> _classroomSubjectCommandRespository;
+		private readonly ICommandRespository<ClassroomTeacher> _classroomTeacherCommandRepository;
+
+
 		private readonly IQueryRepository<State> _queryrepositoryState;
 		private readonly IQueryRepository<Subjects> _queryrepositorySubject;
 		private readonly IQueryRepository<Users> _queryrepositoryUser;
 		private readonly IQueryRepository<Classroom> _studentClassQueryRespository;
 		private readonly IQueryRepository<ClassroomSubjects> _classroomSubjectQueryRespository;
+		private readonly IQueryRepository<ClassroomTeacher> _classroomTeacherQueryRespository;
 
 
 		private readonly IConfiguration _configuration;
+		private readonly ILogger _logger;
 		private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
 		private readonly string? _connString;
 
@@ -50,8 +58,8 @@ namespace TechHub.Service.Service
 			IMapper mapper, ICommandRespository<SchoolCode> schCodeCommandRespository, ICommandRespository<Classroom> studentClassCommandRespository,
 			ICommandRespository<ClassroomSubjects> classroomSubjectCommandRespository, IQueryRepository<ClassroomSubjects> classroomSubjectQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IQueryRepository<Users> queryrepositoryUser, IQueryRepository<Classroom> studentClassQueryRespository,
-		ICommandRespository<Subjects> subjectCommandRespository,
-			IQueryRepository<Subjects> queryrepositorySubject,IConfiguration configuration)
+		ICommandRespository<Subjects> subjectCommandRespository, IQueryRepository<ClassroomTeacher> classroomTeacherQueryRespository, ICommandRespository<ClassroomTeacher> classroomTeacherCommandRepository,
+			IQueryRepository<Subjects> queryrepositorySubject,IConfiguration configuration, ILogger logger)
 		{
 			_schCommandRespository = schCommandRespository;
 			_queryrepositoryState = queryRepositoryState;
@@ -60,8 +68,11 @@ namespace TechHub.Service.Service
 			_subjectCommandRespository = subjectCommandRespository;
 			_queryrepositorySubject = queryrepositorySubject;
 			_studentClassQueryRespository = studentClassQueryRespository;
+
 			_classroomSubjectCommandRespository = classroomSubjectCommandRespository;
 			_classroomSubjectQueryRespository = classroomSubjectQueryRespository;
+			_classroomTeacherCommandRepository = classroomTeacherCommandRepository;
+			_classroomTeacherQueryRespository = classroomTeacherQueryRespository;
 
 			_configuration = configuration;
 			_dbTransactionScopeFactory = dbTransactionScopeFactory;
@@ -174,172 +185,297 @@ namespace TechHub.Service.Service
 		}
 		public async Task<BaseResponse> CreateStudentClassV2(CreateStudentClassViewModel createStudentClassViewModel, AuthenticatedUserClaims userInfo)
 		{
-			try
+			using (LogContext.PushProperty("RequestedBy", userInfo.UserId))
+			//using (LogContext.PushProperty("TenantId", userInfo.TenantIdentifier))
 			{
-				if (createStudentClassViewModel is null)
+				try
 				{
-					return new BaseResponse
+					// Validation 1: Check if model is null
+					if (createStudentClassViewModel is null)
 					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Classroom data cannot be empty",
-						Status = "failed"
-					};
-				}
+						_logger.Warning("Create classroom request with null data");
 
-				if (!createStudentClassViewModel.classrooms.Any())
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "At least one classroom is required",
-						Status = "failed"
-					};
-				}
-
-				if (string.IsNullOrEmpty(userInfo.SchoolId))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Unauthorized,
-						ResponseMessage = "SchoolId not found in authentication token",
-						Status = "failed"
-					};
-				}
-
-				if (string.IsNullOrEmpty(userInfo.UserId))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Unauthorized,
-						ResponseMessage = "UserId not found in authentication token",
-						Status = "failed"
-					};
-				}
-
-				if (!Guid.TryParse(userInfo.SchoolId, out var schoolId))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid SchoolId format in token",
-						Status = "failed"
-					};
-				}
-
-				if (!Guid.TryParse(userInfo.UserId, out var createdBy))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid UserId format in token",
-						Status = "failed"
-					};
-				}
-
-				var classroomsToCreate = new List<Dictionary<string, object>>();
-				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-
-				foreach (var classroomView in createStudentClassViewModel.classrooms)
-				{
-					if (string.IsNullOrWhiteSpace(classroomView.Name))
-					{
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = "Classroom name cannot be empty",
+							ResponseMessage = "Classroom data cannot be empty",
 							Status = "failed"
 						};
 					}
 
-					if (string.IsNullOrWhiteSpace(classroomView.TeacherName))
+					// Validation 2: Check if classrooms list is empty
+					if (!createStudentClassViewModel.classrooms.Any())
 					{
+						_logger.Warning("Create classroom request with empty classrooms list");
+
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = "Teacher name cannot be empty",
+							ResponseMessage = "At least one classroom is required",
 							Status = "failed"
 						};
 					}
 
-					var duplicateCheck = await CheckDuplicateClassroom(classroomView.Name, schoolId);
-					if (duplicateCheck)
+					// Validation 3: Check SchoolId
+					if (string.IsNullOrEmpty(userInfo.SchoolId))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "SchoolId not found in authentication token",
+							Status = "failed"
+						};
+					}
+
+					// Validation 4: Check UserId
+					if (string.IsNullOrEmpty(userInfo.UserId))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "UserId not found in authentication token",
+							Status = "failed"
+						};
+					}
+
+					// Validation 5: Parse SchoolId
+					if (!Guid.TryParse(userInfo.SchoolId, out var schoolId))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format in token",
+							Status = "failed"
+						};
+					}
+
+					// Validation 6: Parse UserId
+					if (!Guid.TryParse(userInfo.UserId, out var createdBy))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid UserId format in token",
+							Status = "failed"
+						};
+					}
+
+					_logger.Information(
+						"Creating {ClassroomCount} classroom(s) - SchoolId: {SchoolId}",
+						createStudentClassViewModel.classrooms.Count,
+						schoolId);
+
+					var classroomsToCreate = new List<Dictionary<string, object>>();
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+					var classroomNames = new List<string>();
+
+					foreach (var classroomView in createStudentClassViewModel.classrooms)
+					{
+						// Validation 7: Check classroom name
+						if (string.IsNullOrWhiteSpace(classroomView.Name))
+						{
+							_logger.Warning("Classroom name is empty");
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = "Classroom name cannot be empty",
+								Status = "failed"
+							};
+						}
+
+						// Validation 8: Check TeacherId
+						//if (classroomView.TeacherId == Guid.Empty)
+						//{
+						//	_logger.Warning("TeacherId is empty for classroom: {ClassroomName}", classroomView.Name);
+
+						//	return new BaseResponse
+						//	{
+						//		ResponseCode = ResponseCode.BadRequest,
+						//		ResponseMessage = $"TeacherId is required for classroom '{classroomView.Name}'",
+						//		Status = "failed"
+						//	};
+						//}
+
+						// Validation 9: Check if teacher exists and belongs to same school
+						//var teacher = await _queryrepositoryUser.Get(classroomView.TeacherId);
+
+						//if (teacher == null)
+						//{
+						//	_logger.Warning(
+						//		"Teacher not found - TeacherId: {TeacherId}, ClassroomName: {ClassroomName}",
+						//		classroomView.TeacherId,
+						//		classroomView.Name);
+
+						//	return new BaseResponse
+						//	{
+						//		ResponseCode = ResponseCode.NotFound,
+						//		ResponseMessage = $"Teacher not found for classroom '{classroomView.Name}'",
+						//		Status = "failed"
+						//	};
+						//}
+
+						// Validation 10: Check if teacher belongs to same school
+						//if (teacher.SchoolId != schoolId)
+						//{
+						//	_logger.Warning(
+						//		"Teacher belongs to different school - TeacherId: {TeacherId}, TeacherSchoolId: {TeacherSchoolId}, RequestSchoolId: {RequestSchoolId}",
+						//		classroomView.TeacherId,
+						//		teacher.SchoolId,
+						//		schoolId);
+
+						//	return new BaseResponse
+						//	{
+						//		ResponseCode = ResponseCode.Forbidden,
+						//		ResponseMessage = $"Teacher for classroom '{classroomView.Name}' belongs to a different school",
+						//		Status = "failed"
+						//	};
+						//}
+
+						// Validation 11: Check if teacher is active
+						//if (!teacher.IsActive)
+						//{
+						//	_logger.Warning(
+						//		"Teacher is not active - TeacherId: {TeacherId}, ClassroomName: {ClassroomName}",
+						//		classroomView.TeacherId,
+						//		classroomView.Name);
+
+						//	return new BaseResponse
+						//	{
+						//		ResponseCode = ResponseCode.BadRequest,
+						//		ResponseMessage = $"Teacher for classroom '{classroomView.Name}' is not active",
+						//		Status = "failed"
+						//	};
+						//}
+
+						// Validation 12: Check if teacher role is valid
+						//var teacherRole = (UserRole)teacher.RoleId;
+						//if (teacherRole != UserRole.SubjectTeacher &&
+						//	teacherRole != UserRole.HeadTeacher &&
+						//	teacherRole != UserRole.Administrator &&
+						//	teacherRole != UserRole.SuperAdministrator)
+						//{
+						//	_logger.Warning(
+						//		"User is not a teacher - UserId: {UserId}, Role: {Role}, ClassroomName: {ClassroomName}",
+						//		classroomView.Name,
+						//		teacherRole,
+						//		classroomView.Name);
+
+						//	return new BaseResponse
+						//	{
+						//		ResponseCode = ResponseCode.BadRequest,
+						//		ResponseMessage = $"User assigned to classroom '{classroomView.Name}' is not a teacher",
+						//		Status = "failed"
+						//	};
+						//}
+
+						// Validation 13: Check for duplicate classroom name
+						var duplicateCheck = await CheckDuplicateClassroom(classroomView.Name.Trim(), schoolId);
+						if (duplicateCheck)
+						{
+							_logger.Warning(
+								"Duplicate classroom name - Name: {ClassroomName}, SchoolId: {SchoolId}",
+								classroomView.Name,
+								schoolId);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Conflict,
+								ResponseMessage = $"Classroom '{classroomView.Name}' already exists in your school",
+								Status = "failed"
+							};
+						}
+
+						var classroomId = Guid.NewGuid();
+						var classroomDict = new Dictionary<string, object>
+						{
+							{ "Id", classroomId },
+							{ "Name", classroomView.Name.Trim() },
+							{ "NoOfStudents", classroomView.NoOfStudents },
+							{ "CreationDate", now },
+							{ "ModifiedDate", now },
+							{ "CreatedBy", createdBy },
+							{ "SchoolId", schoolId },
+							{ "IsActive", true }
+						};
+
+						classroomsToCreate.Add(classroomDict);
+						classroomNames.Add(classroomView.Name.Trim());
+
+						_logger.Debug(
+							"Prepared classroom for creation - Id: {ClassroomId}, Name: {ClassroomName}, TeacherId: {TeacherId}",
+							classroomId,
+							classroomView.Name
+							);
+					}
+
+					// ✅ Use batch insert (single SQL statement)
+					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+
+					await _studentClassCommandRespository.CreateBatchAsync(
+						scope.Transaction,
+						scope.Connection,
+						classroomsToCreate);
+
+					await scope.CommitAsync();
+
+					_logger.Information(
+						"Successfully created {ClassroomCount} classroom(s) - Names: {ClassroomNames}",
+						classroomsToCreate.Count,
+						string.Join(", ", classroomNames));
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = $"{classroomsToCreate.Count} classroom(s) created successfully",
+						Status = "successful",
+						Data = new
+						{
+							ClassroomsCreated = classroomsToCreate.Count,
+							ClassroomIds = classroomsToCreate.Select(c => c["Id"]).ToList(),
+							ClassroomNames = classroomNames
+						}
+					};
+				}
+				catch (SqlException ex)
+				{
+					_logger.Error(
+						ex,
+						"SQL error creating classrooms - SchoolId: {SchoolId}, ClassroomCount: {ClassroomCount}",
+						userInfo.SchoolId,
+						createStudentClassViewModel?.classrooms?.Count ?? 0);
+
+					if (ex.Message.ToLower().Contains("duplicate"))
 					{
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Conflict,
-							ResponseMessage = $"Classroom '{classroomView.Name}' already exists in your school",
+							ResponseMessage = "One or more classrooms already exist",
 							Status = "failed"
 						};
 					}
 
-					var classroomDict = new Dictionary<string, object>
-					{
-						{ "Id", Guid.NewGuid() },
-						{ "Name", classroomView.Name.Trim() },
-						{ "TeacherName", classroomView.TeacherName.Trim() },
-						{ "NoOfStudents", classroomView.NoOfStudents },
-						{ "CreationDate", now },
-						{ "ModifiedDate", now },
-						{ "CreatedBy", createdBy },
-						{ "SchoolId", schoolId },
-						{ "IsActive", true }
-					};
-
-					classroomsToCreate.Add(classroomDict);
-				}
-
-				// Use transaction for bulk insert
-				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
-
-				foreach (var classroomDict in classroomsToCreate)
-				{
-					await _studentClassCommandRespository.Create(scope.Transaction, scope.Connection, classroomDict);
-				}
-
-				await scope.CommitAsync();
-
-				return new BaseResponse
-				{
-					ResponseCode = ResponseCode.successful,
-					ResponseMessage = $"{classroomsToCreate.Count} classroom(s) created successfully",
-					Status = "successful",
-					Data = new
-					{
-						ClassroomsCreated = classroomsToCreate.Count,
-						ClassroomIds = classroomsToCreate.Select(c => c["Id"]).ToList()
-					}
-				};
-			}
-			catch (SqlException ex)
-			{
-				if (ex.Message.ToLower().Contains("duplicate"))
-				{
 					return new BaseResponse
 					{
-						ResponseCode = ResponseCode.Conflict,
-						ResponseMessage = "One or more classrooms already exist",
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "Database error occurred while creating classrooms",
 						Status = "failed"
 					};
 				}
-
-				return new BaseResponse
+				catch (Exception ex)
 				{
-					ResponseCode = ResponseCode.ErrorOccured,
-					ResponseMessage = "Database error occurred while creating classrooms",
-					Status = "failed"
-				};
-			}
-			catch (Exception ex)
-			{
-				// Log exception here
-				// _logger.LogError(ex, "Unexpected error occurred while creating classrooms");
+					_logger.Error(
+						ex,
+						"Unexpected error creating classrooms - SchoolId: {SchoolId}",
+						userInfo.SchoolId);
 
-				return new BaseResponse
-				{
-					ResponseCode = ResponseCode.ErrorOccured,
-					ResponseMessage = "An unexpected error occurred while creating classrooms",
-					Status = "failed"
-				};
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An unexpected error occurred while creating classrooms",
+						Status = "failed"
+					};
+				}
 			}
 		}
 
@@ -964,6 +1100,340 @@ namespace TechHub.Service.Service
 
 
 		}
+		/// <summary>
+		/// this endpoint assigns teachers to classrooms
+		/// </summary>
+		/// <param name="assignTeachersViewModel"></param>
+		/// <param name="userInfo"></param>
+		/// <returns></returns>
+		#region
+		public async Task<BaseResponse> AssignTeachersToClassroom(AssignTeacherViewModel assignTeachersViewModel, AuthenticatedUserClaims userInfo)
+		{
+			using (LogContext.PushProperty("RequestedBy", userInfo.UserId))
+			//using (LogContext.PushProperty("TenantId", userInfo.TenantIdentifier))
+			{
+				try
+				{
+					if (assignTeachersViewModel is null)
+					{
+						_logger.Warning("Assign teachers request with null data");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Assignment data cannot be empty",
+							Status = "failed"
+						};
+					}
+
+					if (assignTeachersViewModel.ClassroomId == Guid.Empty)
+					{
+						_logger.Warning("Empty ClassroomId in assignment");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "ClassroomId cannot be empty",
+							Status = "failed"
+						};
+					}
+
+					if (!assignTeachersViewModel.TeacherIds.Any())
+					{
+						_logger.Warning("Assign teachers request with empty teacher list - ClassroomId: {ClassroomId}",
+							assignTeachersViewModel.ClassroomId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "At least one teacher is required",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userInfo.SchoolId, out var schoolId))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format in token",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userInfo.UserId, out var createdBy))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid UserId format in token",
+							Status = "failed"
+						};
+					}
+
+					_logger.Information(
+						"Assigning {TeacherCount} teacher(s) to classroom - ClassroomId: {ClassroomId}",
+						assignTeachersViewModel.TeacherIds.Count,
+						assignTeachersViewModel.ClassroomId);
+
+					// Validation 6: Check if classroom exists
+					var classroom = await _studentClassQueryRespository.Get(assignTeachersViewModel.ClassroomId);
+
+					if (classroom == null)
+					{
+						_logger.Warning("Classroom not found - ClassroomId: {ClassroomId}",
+							assignTeachersViewModel.ClassroomId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Classroom not found",
+							Status = "failed"
+						};
+					}
+
+					if (classroom.SchoolId != schoolId)
+					{
+						_logger.Warning(
+							"Classroom belongs to different school - ClassroomId: {ClassroomId}, ClassroomSchoolId: {ClassroomSchoolId}, RequestSchoolId: {RequestSchoolId}",
+							assignTeachersViewModel.ClassroomId,
+							classroom.SchoolId,
+							schoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Classroom belongs to a different school",
+							Status = "failed"
+						};
+					}
+
+					var assignmentsToCreate = new List<Dictionary<string, object>>();
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+					var assignedTeacherNames = new List<string>();
+					var isPrimaryAssigned = false;
+
+					foreach (var teacherId in assignTeachersViewModel.TeacherIds)
+					{
+						if (teacherId == Guid.Empty)
+						{
+							_logger.Warning("Empty TeacherId in assignment for ClassroomId: {ClassroomId}",
+								assignTeachersViewModel.ClassroomId);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = "TeacherId cannot be empty",
+								Status = "failed"
+							};
+						}
+
+						var teacher = await _queryrepositoryUser.Get(teacherId);
+
+						if (teacher == null)
+						{
+							_logger.Warning("Teacher not found - TeacherId: {TeacherId}", teacherId);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.NotFound,
+								ResponseMessage = $"Teacher with ID {teacherId} not found",
+								Status = "failed"
+							};
+						}
+
+						// Validation 10: Check if teacher belongs to same school
+						if (teacher.SchoolId != schoolId)
+						{
+							_logger.Warning(
+								"Teacher belongs to different school - TeacherId: {TeacherId}, TeacherSchoolId: {TeacherSchoolId}, RequestSchoolId: {RequestSchoolId}",
+								teacherId,
+								teacher.SchoolId,
+								schoolId);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Forbidden,
+								ResponseMessage = $"Teacher {teacher.FirstName} {teacher.LastName} belongs to a different school",
+								Status = "failed"
+							};
+						}
+
+						if (!teacher.IsActive)
+						{
+							_logger.Warning("Teacher is not active - TeacherId: {TeacherId}", teacherId);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = $"Teacher {teacher.FirstName} {teacher.LastName} is not active",
+								Status = "failed"
+							};
+						}
+
+						//var teacherRole = (UserRole)teacher.RoleId;
+						//if (teacherRole != UserRole.SubjectTeacher &&
+						//	teacherRole != UserRole.HeadTeacher &&
+						//	teacherRole != UserRole.Administrator &&
+						//	teacherRole != UserRole.SuperAdministrator)
+						//{
+						//	_logger.Warning(
+						//		"User is not a teacher - UserId: {UserId}, Role: {Role}",
+						//		teacherId,
+						//		teacherRole);
+
+						//	return new BaseResponse
+						//	{
+						//		ResponseCode = ResponseCode.BadRequest,
+						//		ResponseMessage = $"User {teacher.FirstName} {teacher.LastName} is not a teacher (Role: {teacherRole})",
+						//		Status = "failed"
+						//	};
+						//}
+
+						// Validation 13: Check if teacher is already assigned to this classroom
+						var existingAssignment = await CheckTeacherAlreadyAssigned(
+							assignTeachersViewModel.ClassroomId,
+							teacherId);
+
+						if (existingAssignment)
+						{
+							_logger.Warning(
+								"Teacher already assigned to classroom - TeacherId: {TeacherId}, ClassroomId: {ClassroomId}",
+								teacherId,
+								assignTeachersViewModel.ClassroomId);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Conflict,
+								ResponseMessage = $"Teacher {teacher.FirstName} {teacher.LastName} is already assigned to this classroom",
+								Status = "failed"
+							};
+						}
+
+						var isPrimary = !isPrimaryAssigned;
+						if (isPrimary) isPrimaryAssigned = true;
+
+						var assignmentDict = new Dictionary<string, object>
+						{
+							{ "Id", Guid.NewGuid() },
+							{ "ClassroomId", assignTeachersViewModel.ClassroomId },
+							{ "TeacherId", teacherId },
+							{ "IsPrimary", isPrimary },
+							{ "CreationDate", now },
+							{ "ModifiedDate", now },
+							{ "CreatedBy", createdBy },
+							{ "SchoolId", schoolId },
+							{ "IsActive", true }
+						};
+
+						assignmentsToCreate.Add(assignmentDict);
+						assignedTeacherNames.Add($"{teacher.FirstName} {teacher.LastName}" + (isPrimary ? " (Primary)" : ""));
+
+						_logger.Debug(
+							"Prepared teacher assignment - ClassroomId: {ClassroomId}, TeacherId: {TeacherId}, TeacherName: {TeacherName}, IsPrimary: {IsPrimary}",
+							assignTeachersViewModel.ClassroomId,
+							teacherId,
+							$"{teacher.FirstName} {teacher.LastName}",
+							isPrimary);
+					}
+
+					// Use batch insert
+					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+
+					await _classroomTeacherCommandRepository.CreateBatchAsync(
+						scope.Transaction,
+						scope.Connection,
+						assignmentsToCreate);
+
+					await scope.CommitAsync();
+
+					_logger.Information(
+						"Successfully assigned {TeacherCount} teacher(s) to classroom - ClassroomId: {ClassroomId}, ClassroomName: {ClassroomName}, Teachers: {Teachers}",
+						assignmentsToCreate.Count,
+						assignTeachersViewModel.ClassroomId,
+						classroom.Name,
+						string.Join(", ", assignedTeacherNames));
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = $"{assignmentsToCreate.Count} teacher(s) assigned successfully to classroom '{classroom.Name}'",
+						Status = "successful",
+						Data = new
+						{
+							ClassroomId = assignTeachersViewModel.ClassroomId,
+							ClassroomName = classroom.Name,
+							TeachersAssigned = assignmentsToCreate.Count,
+							TeacherNames = assignedTeacherNames,
+							AssignmentIds = assignmentsToCreate.Select(a => a["Id"]).ToList()
+						}
+					};
+				}
+				catch (SqlException ex)
+				{
+					_logger.Error(
+						ex,
+						"SQL error assigning teachers - ClassroomId: {ClassroomId}",
+						assignTeachersViewModel?.ClassroomId);
+
+					if (ex.Message.ToLower().Contains("duplicate") || ex.Number == 2627)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Conflict,
+							ResponseMessage = "One or more teachers are already assigned to this classroom",
+							Status = "failed"
+						};
+					}
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "Database error occurred while assigning teachers",
+						Status = "failed"
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(
+						ex,
+						"Unexpected error assigning teachers - ClassroomId: {ClassroomId}",
+						assignTeachersViewModel?.ClassroomId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An unexpected error occurred while assigning teachers",
+						Status = "failed"
+					};
+				}
+			}
+		}
+		#endregion
+		private async Task<bool> CheckTeacherAlreadyAssigned(Guid classroomId, Guid teacherId)
+		{
+			try
+			{
+				var query = $@"
+					SELECT COUNT(1) 
+					FROM ClassroomTeacher 
+					WHERE ClassroomId = '{classroomId}' 
+					AND TeacherId = '{teacherId}'
+					AND IsActive = 1";
+
+				var count = await _classroomTeacherQueryRespository.CountAsync(query, new Dictionary<string, object>());
+				return count > 0;
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(
+					ex,
+					"Error checking teacher assignment - ClassroomId: {ClassroomId}, TeacherId: {TeacherId}",
+					classroomId,
+					teacherId);
+				return true; // Safe default
+			}
+		}
 
 		public async Task<BaseResponse> UpdateSchoolClassroom(UpdateClassroomView updateClassroomView, AuthenticatedUserClaims userInfo)
 		{
@@ -1124,15 +1594,14 @@ namespace TechHub.Service.Service
 						{ "Name", classroom.Name.Trim() },
 						{ "IsActive", classroom.IsActive },
 						{ "ModifiedDate", now },
-						{ "ModifiedBy", modifiedBy },
 						{ "SchoolId", schoolId } 
 					};
 
 							inputValueList.Add(values);
-					}
+				}
 
 				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
-				await _studentClassCommandRespository.UpdateBatchByIdAsync(scope.Transaction, scope.Connection, inputValueList);
+				await _studentClassCommandRespository.UpdateBatchByIdAsyncV2(scope.Transaction, scope.Connection, inputValueList);
 				await scope.CommitAsync();
 
 				return new BaseResponse
@@ -1413,6 +1882,280 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public async Task<BaseResponse> GetSubjectById(Guid subjectId, AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId format in token",
+						Status = "failed"
+					};
+				}
+
+				var subject = await _queryrepositorySubject.Get(subjectId);
+
+				if (subject is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Subject not found",
+						Status = "failed"
+					};
+				}
+
+				if (subject.SchoolId != schoolId)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You cannot access subjects from a different school",
+						Status = "failed"
+					};
+				}
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Subject retrieved successfully",
+					Status = "successful",
+					Data = new
+					{
+						subject.Id,
+						subject.Subject,
+						Category = subject.Category.ToString(),
+						ClassCategory = subject.ClassCategory.ToString(),
+						subject.SchoolId,
+						subject.IsActive,
+						subject.CreationDate,
+						subject.ModifiedDate
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching subject by ID - SubjectId: {SubjectId}", subjectId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching subject",
+					Status = "failed"
+				};
+			}
+		}
+
+		public async Task<BaseResponse> GetClassroomById(Guid classroomId, AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId format in token",
+						Status = "failed"
+					};
+				}
+
+				var classroom = await _studentClassQueryRespository.Get(classroomId);
+
+				if (classroom is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Classroom not found",
+						Status = "failed"
+					};
+				}
+
+				if (classroom.SchoolId != schoolId)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You cannot access classrooms from a different school",
+						Status = "failed"
+					};
+				}
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Classroom retrieved successfully",
+					Status = "successful",
+					Data = new
+					{
+						classroom.Id,
+						classroom.Name,
+						classroom.TeacherName,
+						classroom.NoOfStudents,
+						classroom.SchoolId,
+						classroom.IsActive,
+						classroom.CreationDate,
+						classroom.ModifiedDate
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching classroom by ID - ClassroomId: {ClassroomId}", classroomId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching classroom",
+					Status = "failed"
+				};
+			}
+		}
+		//_queryrepositorySubject,_classroomSubjectQueryRespository;_studentClassQueryRespository
+		/// <summary>
+		/// this endpoint fetches subjects for a class with Id
+		/// </summary>
+		/// <param name="classroomId"></param>
+		/// <param name="userClaims"></param>
+		/// <returns></returns>
+		#region
+		public async Task<BaseResponse> GetSubjectsByClassroom(Guid classroomId, AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId format in token",
+						Status = "failed"
+					};
+				}
+
+				// Validate classroom exists and belongs to school
+				var classroom = await _studentClassQueryRespository.Get(classroomId);
+				if (classroom is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Classroom not found",
+						Status = "failed"
+					};
+				}
+
+				if (classroom.SchoolId != schoolId)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You cannot access classrooms from a different school",
+						Status = "failed"
+					};
+				}
+
+				// Query 1: Get classroom-subject mappings
+				var classroomSubjectsQuery = $@"
+					SELECT * FROM ClassroomSubject 
+					WHERE ClassroomId = '{classroomId}'
+					AND SchoolId = '{schoolId}'
+					AND IsActive = 1";
+
+				var classroomSubjects = await _classroomSubjectQueryRespository.GetByQuery(classroomSubjectsQuery);
+				var classroomSubjectsList = classroomSubjects.Where(cs => cs != null).ToList();
+
+				if (!classroomSubjectsList.Any())
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "No subjects found for this classroom",
+						Status = "successful",
+						Data = new
+						{
+							ClassroomId = classroomId,
+							ClassroomName = classroom.Name,
+							TotalCount = 0,
+							MajorSubjectsCount = 0,
+							MinorSubjectsCount = 0,
+							MajorSubjects = Array.Empty<object>(),
+							MinorSubjects = Array.Empty<object>()
+						}
+					};
+				}
+
+				var subjectIds = classroomSubjectsList.Select(cs => $"'{cs!.SubjectId}'");
+
+				var subjectsQuery = $@"
+					SELECT * FROM Subjects 
+					WHERE Id IN ({string.Join(",", subjectIds)})
+					AND SchoolId = '{schoolId}'
+					AND IsActive = 1";
+
+				var subjects = await _queryrepositorySubject.GetByQuery(subjectsQuery);
+				var subjectsList = subjects.Where(s => s != null).ToList();
+
+				var majorSubjects = subjectsList
+					.Where(s => s!.Category == SubjectCategory.Major)
+					.Select(s => new
+					{
+						s!.Id,
+						s.Subject,
+						Category = s.Category.ToString(),
+						ClassCategory = s.ClassCategory.ToString(),
+						s.IsActive,
+						s.CreationDate,
+						s.ModifiedDate
+					}).ToList();
+
+				var minorSubjects = subjectsList
+					.Where(s => s!.Category == SubjectCategory.Minor)
+					.Select(s => new
+					{
+						s!.Id,
+						s.Subject,
+						Category = s.Category.ToString(),
+						ClassCategory = s.ClassCategory.ToString(),
+						s.IsActive,
+						s.CreationDate,
+						s.ModifiedDate
+					}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Subjects retrieved successfully",
+					Status = "successful",
+					Data = new
+					{
+						ClassroomId = classroomId,
+						ClassroomName = classroom.Name,
+						TotalCount = subjectsList.Count,
+						MajorSubjectsCount = majorSubjects.Count,
+						MinorSubjectsCount = minorSubjects.Count,
+						MajorSubjects = majorSubjects,
+						MinorSubjects = minorSubjects
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching subjects for classroom - ClassroomId: {ClassroomId}", classroomId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching subjects",
+					Status = "failed"
+				};
+			}
+		}
+		#endregion
 		public Task<BaseResponse> CreateStudentClass(CreateStudentClassViewModel createStudentClassViewModel, AuthenticatedUserClaims userInfo)
 		{
 			throw new NotImplementedException();

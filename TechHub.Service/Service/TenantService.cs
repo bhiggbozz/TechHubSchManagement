@@ -72,14 +72,13 @@ public class TenantService : ITenantService
 					Id,
 				    SchoolId,
 					Identifier,
-					SchoolName as Name,
 					IsActive,
 					ConnectionString,
 					CreatedDate,
 					ModifiedDate
 				FROM TenantInfo 
 				WHERE Identifier = LOWER(@Identifier)
-				AND ti.IsActive = 1";
+				AND IsActive = 1";
 			var columnInput = new Dictionary<string, object> { { "Identifier", identifier.ToLower() } };
 
 			//var tenant = await _dbConnection.QueryFirstOrDefaultAsync<TenantInfo>(
