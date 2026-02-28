@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core;
 using TechHub.Core.Model;
+using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.classroom;
 using TechHub.Core.ViewModel.school;
@@ -27,5 +28,14 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetClassroomById(Guid classroomId, AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> GetSubjectsByClassroom(Guid classroomId, AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> AssignTeachersToClassroom(AssignTeacherViewModel assignTeachersViewModel, AuthenticatedUserClaims userInfo);
+		Task<ClassroomDetails> GetAllClassrooms(AuthenticatedUserClaims userInfo, int pageNumber = 1, int pageSize = 50);
+		Task<SubjectsListResponse> GetSubjectsByClassCategory(int classCategory,AuthenticatedUserClaims userInfo,int pageNumber = 1,int pageSize = 50);
+		Task<SubjectsListResponse> GetSubjectsBySubjectCategory(int subjectCategory,AuthenticatedUserClaims userInfo,int pageNumber = 1,int pageSize = 50);
+
+		Task<SubjectsListResponse> GetAllSubjects(AuthenticatedUserClaims userInfo,int? classCategory = null,int? subjectCategory = null,int pageNumber = 1,int pageSize = 50);
+		Task<BaseResponse> UpdateClassroomTeachers(UpdateClassroomTeachersViewModel updateClassroomTeachersViewModel,AuthenticatedUserClaims userInfo);
+
+
+		//Task<SubjectDetailResponse> GetSubjectById(Guid subjectId,AuthenticatedUserClaims userInfo);
 	}
 }

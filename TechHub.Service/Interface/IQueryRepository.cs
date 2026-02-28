@@ -23,5 +23,6 @@ namespace TechHub.Service.Interface
 		Task<List<Users>> GetTeachersBySchool(Guid schoolId);
 		Task<List<Users>> GetAdministratorsBySchool(Guid schoolId);
 		Task<bool> EmailExistsInSchool(string email, Guid schoolId, Guid? excludeUserId = null);
+		Task<IEnumerable<T>> QueryAsync<T>(string query, Dictionary<string, object> values);
 	}
 }
