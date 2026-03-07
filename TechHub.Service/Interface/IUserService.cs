@@ -1,13 +1,15 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
-using TechHub.Core.ViewModel;
 using TechHub.Core;
-using TechHub.Core.Models;
-using System.Security.Claims;
+using TechHub.Core.Enum;
 using TechHub.Core.Model;
+using TechHub.Core.Models;
+using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.Users;
 
 namespace TechHub.Service.Interface
 {
@@ -22,6 +24,15 @@ namespace TechHub.Service.Interface
 
 		Task<BaseResponse> updatePassword(UpdatePasswordViewModel updatePasswordViewModel, AuthenticatedUserClaims? claims);
 		Task<BaseResponse> GetUserById(Guid userId, AuthenticatedUserClaims? claims);
+		Task<BaseResponse> AssignAdminPermissions( AssignAdminPermissionsViewModel model,AuthenticatedUserClaims userClaims);
+		Task<BaseResponse> GetAdminPermissions(Guid adminUserId,AuthenticatedUserClaims userClaims);
+		Task<BaseResponse> GetAllAdminPermissions(AuthenticatedUserClaims userClaims,int pageNumber = 1,int pageSize = 50);
+
+		
+		Task<BaseResponse> RevokeAdminPermissions(Guid adminUserId,AuthenticatedUserClaims userClaims);
+
+		
+		Task<bool> HasPermission(Guid adminUserId,Guid schoolId,AdminPermission permission);
 
 	}
 }

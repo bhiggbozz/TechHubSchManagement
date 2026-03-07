@@ -100,3 +100,27 @@ CREATE TABLE Subjects
     -- Unique constraint (one teacher can't be assigned to same classroom twice)
     CONSTRAINT UQ_ClassroomTeacher_Classroom_Teacher UNIQUE (ClassroomId, TeacherId)
 );
+--------------------------------------------------------------------------
+
+CREATE TABLE AdminPermissions (
+    Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+    UserId UNIQUEIDENTIFIER NOT NULL,
+    SchoolId UNIQUEIDENTIFIER NOT NULL,
+    
+    -- ✅ Single column for all permissions (bitwise flags)
+    Permissions INT NOT NULL DEFAULT 0,  -- Stores enum flags as integer
+    
+    CreationDate DATETIME NOT NULL DEFAULT GETUTCDATE(),
+    ModifiedDate DATETIME NOT NULL DEFAULT GETUTCDATE(),
+    CreatedBy UNIQUEIDENTIFIER NOT NULL,
+    IsActive BIT DEFAULT 1,
+    
+    CONSTRAINT FK_AdminPermissions_User FOREIGN KEY (UserId) REFERENCES Users(Id),
+    CONSTRAINT FK_AdminPermissions_School FOREIGN KEY (SchoolId) REFERENCES School(Id),
+    CONSTRAINT FK_AdminPermissions_CreatedBy FOREIGN KEY (CreatedBy) REFERENCES Users(Id),
+    CONSTRAINT UQ_AdminPermissions_User_School UNIQUE (UserId, SchoolId)
+);
+
+CREATE INDEX IX_AdminPermissions_UserId ON AdminPermissions(UserId);
+CREATE INDEX IX_AdminPermissions_SchoolId ON AdminPermissions(SchoolId);
+CREATE INDEX IX_AdminPermissions_Permissions ON AdminPermissions(Permissions);
