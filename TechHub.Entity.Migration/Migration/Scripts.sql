@@ -305,6 +305,64 @@ CREATE INDEX IX_ClassPreparationMedia_PublicId
     ON ClassPreparationMedia(PublicId) 
     WHERE PublicId IS NOT NULL;
 
+
+
+
+
+
+    -- Add UploadStatus and UploadErrorMessage columns
+
+-- Add UploadStatus column
+IF NOT EXISTS (SELECT * FROM sys.columns 
+               WHERE object_id = OBJECT_ID(N'[dbo].[ClassPreparationMedia]') 
+               AND name = 'UploadStatus')
+BEGIN
+    ALTER TABLE ClassPreparationMedia
+    ADD UploadStatus INT NOT NULL DEFAULT 0;
+    
+    PRINT 'UploadStatus column added';
+END
+
+-- Add UploadErrorMessage column
+IF NOT EXISTS (SELECT * FROM sys.columns 
+               WHERE object_id = OBJECT_ID(N'[dbo].[ClassPreparationMedia]') 
+               AND name = 'UploadErrorMessage')
+BEGIN
+    ALTER TABLE ClassPreparationMedia
+    ADD UploadErrorMessage NVARCHAR(500) NULL;
+    
+    PRINT 'UploadErrorMessage column added';
+END
+
+-- Add ModifiedDate column if it doesn't exist
+IF NOT EXISTS (SELECT * FROM sys.columns 
+               WHERE object_id = OBJECT_ID(N'[dbo].[ClassPreparationMedia]') 
+               AND name = 'ModifiedDate')
+BEGIN
+    ALTER TABLE ClassPreparationMedia
+    ADD ModifiedDate DATETIME NULL;
+    
+    PRINT 'ModifiedDate column added';
+END
+
+-- Update existing records to have default values
+UPDATE ClassPreparationMedia
+SET UploadStatus = 2,  -- Set existing records to "Completed"
+    ModifiedDate = CreationDate
+WHERE UploadStatus IS NULL OR UploadStatus = 0;
+
+PRINT 'Migration completed successfully';
+
+-- Create index for upload status queries
+IF NOT EXISTS (SELECT * FROM sys.indexes 
+               WHERE name = 'IX_ClassPreparationMedia_UploadStatus' 
+               AND object_id = OBJECT_ID('ClassPreparationMedia'))
+BEGIN
+    CREATE INDEX IX_ClassPreparationMedia_UploadStatus 
+    ON ClassPreparationMedia(UploadStatus, CreationDate);
+    
+    PRINT 'Index created on UploadStatus';
+END
 -- ========================================
 -- SAMPLE DATA (Optional - for testing)
 -- ========================================

@@ -14,9 +14,19 @@ public static class ClassPreparationExtensions
 	/// <summary>
 	/// Map ClassPreparation entity to DTO
 	/// </summary>
+	/// <summary>
+	/// Map ClassPreparation entity to DTO with full details
+	/// </summary>
 	public static ClassPreparationDto ToDto(this ClassPreparation classPrep, string subjectName = "", string classroomName = "", string teacherName = "", string? teacherEmail = null,
 		List<MediaFileDto>? mediaFiles = null, string? submittedByName = null, string? approvedByName = null, string? rejectedByName = null, string? createdByName = null, Guid? currentUserId = null)
 	{
+		// Parse status
+		var status = (ClassPreparationStatus)classPrep.Status;
+		var classType = (ClassType)classPrep.ClassType;
+
+		// Calculate total media size
+		var totalMediaSize = mediaFiles?.Sum(m => m.FileSizeBytes) ?? 0;
+
 		var dto = new ClassPreparationDto
 		{
 			Id = classPrep.Id,
@@ -48,20 +58,20 @@ public static class ClassPreparationExtensions
 
 			// Class type
 			ClassType = classPrep.ClassType,
-			ClassTypeName = ((ClassType)classPrep.ClassType).ToString(),
+			ClassTypeName = classType.ToString(),
 
 			// Status
 			Status = classPrep.Status,
-			StatusName = ((ClassPreparationStatus)classPrep.Status).ToString(),
-			StatusColor = GetStatusColor((ClassPreparationStatus)classPrep.Status),
+			StatusName = status.ToString(),
+			StatusColor = GetStatusColor(status),
 
 			// Media
 			MediaFiles = mediaFiles ?? new List<MediaFileDto>(),
 			MediaFilesCount = mediaFiles?.Count ?? 0,
-			TotalMediaSizeBytes = mediaFiles?.Sum(m => m.FileSizeBytes) ?? 0,
-			TotalMediaSizeFormatted = FormatFileSize(mediaFiles?.Sum(m => m.FileSizeBytes) ?? 0),
+			TotalMediaSizeBytes = totalMediaSize,
+			TotalMediaSizeFormatted = FormatFileSize(totalMediaSize),
 
-			// Workflow
+			// Workflow tracking
 			SubmittedDate = classPrep.SubmittedForApprovalDate?.ToString("yyyy-MM-dd HH:mm:ss"),
 			SubmittedByName = submittedByName,
 
@@ -77,7 +87,7 @@ public static class ClassPreparationExtensions
 			ModifiedDate = classPrep.ModifiedDate,
 			CreatedByName = createdByName ?? "",
 
-			// Permissions
+			// Permissions (for frontend to show/hide buttons)
 			CanEdit = CanEdit(classPrep, currentUserId),
 			CanDelete = CanDelete(classPrep, currentUserId),
 			CanSubmit = CanSubmit(classPrep, currentUserId),
@@ -88,64 +98,33 @@ public static class ClassPreparationExtensions
 		return dto;
 	}
 
-
-	/// <summary>
-	/// Map ClassPreparationMedia entity to DTO
-	/// </summary>
-	public static MediaFileDto ToDto(this ClassPreparationMedia media,string? uploadedByName = null)
+	private static string? FormatDuration(int? totalMinutes)
 	{
-		var compressionRatio = media.OriginalSizeBytes.HasValue && media.OriginalSizeBytes > 0
-			? (1 - ((double)media.FileSizeBytes / media.OriginalSizeBytes.Value)) * 100
-			: (double?)null;
+		if (!totalMinutes.HasValue || totalMinutes.Value <= 0)
+			return null;
 
-		return new MediaFileDto
+		var hours = totalMinutes.Value / 60;
+		var minutes = totalMinutes.Value % 60;
+
+		if (hours > 0 && minutes > 0)
+			return $"{hours} hour{(hours > 1 ? "s" : "")} {minutes} minute{(minutes > 1 ? "s" : "")}";
+		else if (hours > 0)
+			return $"{hours} hour{(hours > 1 ? "s" : "")}";
+		else
+			return $"{minutes} minute{(minutes > 1 ? "s" : "")}";
+	}
+
+	private static string FormatFileSize(long bytes)
+	{
+		string[] sizes = { "B", "KB", "MB", "GB" };
+		double len = bytes;
+		int order = 0;
+		while (len >= 1024 && order < sizes.Length - 1)
 		{
-			Id = media.Id,
-
-			// Identifiers
-			MediaKey = media.MediaKey,
-			PublicId = media.PublicId ?? string.Empty,
-
-			// Type
-			MediaType = media.MediaType,
-			MediaTypeName = ((MediaType)media.MediaType).ToString(),
-			MediaTypeIcon = GetMediaTypeIcon((MediaType)media.MediaType),
-
-			// File details
-			OriginalFileName = media.OriginalFileName,
-			DisplayName = media.DisplayName ?? media.OriginalFileName,
-			FileExtension = media.FileExtension ?? string.Empty,
-
-			// Size
-			FileSizeBytes = media.FileSizeBytes,
-			FileSizeFormatted = FormatFileSize(media.FileSizeBytes),
-			OriginalSizeBytes = media.OriginalSizeBytes,
-			OriginalSizeFormatted = media.OriginalSizeBytes.HasValue
-				? FormatFileSize(media.OriginalSizeBytes.Value)
-				: null,
-			CompressionRatio = compressionRatio,
-
-			// Duration
-			DurationSeconds = media.DurationSeconds,
-			DurationFormatted = FormatDuration(media.DurationSeconds),
-
-			// URLs
-			CdnUrl = media.CdnUrl,
-			ThumbnailUrl = media.ThumbnailUrl,
-
-			// Status
-			IsTemporary = media.IsTemporary,
-			IsDeleted = media.IsDeleted,
-			DeletionReason = media.DeletionReason,
-
-			// Tracking
-			DownloadCount = media.DownloadCount ?? 0,
-			LastDownloadDate = media.LastDownloadDate?.ToString("yyyy-MM-dd HH:mm:ss"),
-
-			// Metadata
-			UploadedDate = media.UploadedDate.ToString("yyyy-MM-dd HH:mm:ss"),
-			UploadedByName = uploadedByName ?? ""
-		};
+			order++;
+			len = len / 1024;
+		}
+		return $"{len:0.##} {sizes[order]}";
 	}
 
 	private static string GetStatusColor(ClassPreparationStatus status)
@@ -174,48 +153,6 @@ public static class ClassPreparationExtensions
 		};
 	}
 
-	private static string FormatFileSize(long bytes)
-	{
-		string[] sizes = { "B", "KB", "MB", "GB" };
-		double len = bytes;
-		int order = 0;
-		while (len >= 1024 && order < sizes.Length - 1)
-		{
-			order++;
-			len = len / 1024;
-		}
-		return $"{len:0.##} {sizes[order]}";
-	}
-
-	//private static string? FormatDuration(int? totalSeconds)
-	//{
-	//	if (!totalSeconds.HasValue || totalSeconds.Value <= 0)
-	//		return null;
-
-	//	var ts = TimeSpan.FromSeconds(totalSeconds.Value);
-
-	//	if (ts.TotalHours >= 1)
-	//		return $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}";
-	//	else
-	//		return $"{ts.Minutes}:{ts.Seconds:D2}";
-	//}
-
-	private static string? FormatDuration(int? totalMinutes)
-	{
-		if (!totalMinutes.HasValue || totalMinutes.Value <= 0)
-			return null;
-
-		var hours = totalMinutes.Value / 60;
-		var minutes = totalMinutes.Value % 60;
-
-		if (hours > 0 && minutes > 0)
-			return $"{hours} hour{(hours > 1 ? "s" : "")} {minutes} minute{(minutes > 1 ? "s" : "")}";
-		else if (hours > 0)
-			return $"{hours} hour{(hours > 1 ? "s" : "")}";
-		else
-			return $"{minutes} minute{(minutes > 1 ? "s" : "")}";
-	}
-
 	#region Permission Helpers
 
 	private static bool CanEdit(ClassPreparation classPrep, Guid? currentUserId)
@@ -226,7 +163,7 @@ public static class ClassPreparationExtensions
 		if (classPrep.TeacherId != currentUserId.Value) return false;
 
 		return classPrep.Status == (int)ClassPreparationStatus.Draft ||
-			   classPrep.Status == (int)ClassPreparationStatus.Rejected;
+				classPrep.Status == (int)ClassPreparationStatus.Rejected;
 	}
 
 	private static bool CanDelete(ClassPreparation classPrep, Guid? currentUserId)
@@ -235,7 +172,7 @@ public static class ClassPreparationExtensions
 		if (!currentUserId.HasValue) return false;
 
 		return classPrep.TeacherId == currentUserId.Value &&
-			   classPrep.Status == (int)ClassPreparationStatus.Draft;
+				classPrep.Status == (int)ClassPreparationStatus.Draft;
 	}
 
 	private static bool CanSubmit(ClassPreparation classPrep, Guid? currentUserId)
@@ -246,7 +183,7 @@ public static class ClassPreparationExtensions
 		if (classPrep.TeacherId != currentUserId.Value) return false;
 
 		return classPrep.Status == (int)ClassPreparationStatus.Draft ||
-			   classPrep.Status == (int)ClassPreparationStatus.Rejected;
+				classPrep.Status == (int)ClassPreparationStatus.Rejected;
 	}
 
 	private static bool CanApprove(ClassPreparation classPrep, Guid? currentUserId)
@@ -263,9 +200,97 @@ public static class ClassPreparationExtensions
 		return classPrep.Status == (int)ClassPreparationStatus.Pending;
 	}
 
+	
+
 	#endregion
-
-
 }
+
+
+
+/// <summary>
+/// Map ClassPreparationMedia entity to DTO
+/// </summary>
+//public static MediaFileDto ToDto(this ClassPreparationMedia media,string? uploadedByName = null)
+//{
+//	var compressionRatio = media.OriginalSizeBytes.HasValue && media.OriginalSizeBytes > 0
+//		? (1 - ((double)media.FileSizeBytes / media.OriginalSizeBytes.Value)) * 100
+//		: (double?)null;
+
+//	return new MediaFileDto
+//	{
+//		Id = media.Id,
+
+//		// Identifiers
+//		MediaKey = media.MediaKey,
+//		PublicId = media.PublicId ?? string.Empty,
+
+//		// Type
+//		MediaType = media.MediaType,
+//		MediaTypeName = ((MediaType)media.MediaType).ToString(),
+//		MediaTypeIcon = GetMediaTypeIcon((MediaType)media.MediaType),
+
+//		// File details
+//		OriginalFileName = media.OriginalFileName,
+//		DisplayName = media.DisplayName ?? media.OriginalFileName,
+//		FileExtension = media.FileExtension ?? string.Empty,
+
+//		// Size
+//		FileSizeBytes = media.FileSizeBytes,
+//		FileSizeFormatted = FormatFileSize(media.FileSizeBytes),
+//		OriginalSizeBytes = media.OriginalSizeBytes,
+//		OriginalSizeFormatted = media.OriginalSizeBytes.HasValue
+//			? FormatFileSize(media.OriginalSizeBytes.Value)
+//			: null,
+//		CompressionRatio = compressionRatio,
+
+//		// Duration
+//		DurationSeconds = media.DurationSeconds,
+//		DurationFormatted = FormatDuration(media.DurationSeconds),
+
+//		// URLs
+//		CdnUrl = media.CdnUrl,
+//		ThumbnailUrl = media.ThumbnailUrl,
+
+//		// Status
+//		IsTemporary = media.IsTemporary,
+//		IsDeleted = media.IsDeleted,
+//		DeletionReason = media.DeletionReason,
+
+//		// Tracking
+//		DownloadCount = media.DownloadCount ?? 0,
+//		LastDownloadDate = media.LastDownloadDate?.ToString("yyyy-MM-dd HH:mm:ss"),
+
+//		// Metadata
+//		UploadedDate = media.UploadedDate.ToString("yyyy-MM-dd HH:mm:ss"),
+//		UploadedByName = uploadedByName ?? ""
+//	};
+//}
+
+
+//public static class MediaExtensions
+//{
+	/// <summary>
+	/// Map ClassPreparationMedia entity to DTO
+	/// </summary>
+	
+
+	
+
+	
+	//private static string? FormatDuration(int? totalSeconds)
+	//{
+	//	if (!totalSeconds.HasValue || totalSeconds.Value <= 0)
+	//		return null;
+
+	//	var ts = TimeSpan.FromSeconds(totalSeconds.Value);
+
+	//	if (ts.TotalHours >= 1)
+	//		return $"{(int)ts.TotalHours}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+	//	else
+	//		return $"{ts.Minutes}:{ts.Seconds:D2}";
+	//}
+
+	
+//}
 
 

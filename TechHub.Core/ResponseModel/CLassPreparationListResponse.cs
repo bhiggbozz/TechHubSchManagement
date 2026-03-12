@@ -37,15 +37,15 @@ public class ClassPreparationsListResponse : BaseResponse
 /// <summary>
     /// Single media file response
     /// </summary>
-    public class UploadMediaResponse : BaseResponse
-    {
-        public MediaFileDto? MediaFile { get; set; }
-    }
+    //public class UploadMediaResponse : BaseResponse
+    //{
+    //    public MediaFileDto? MediaFile { get; set; }
+    //}
 
     /// <summary>
     /// List of media files
     /// </summary>
-    public class MediaFilesListResponse : BaseResponse
-    {
-        public List<MediaFileDto> MediaFiles { get; set; } = new();
-    }
+    //public class MediaFilesListResponse : BaseResponse
+    //{
+    //    public List<MediaFileDto> MediaFiles { get; set; } = new();
+    //}

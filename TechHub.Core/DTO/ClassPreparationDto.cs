@@ -82,48 +82,44 @@ public class ClassPreparationDto
 /// </summary>
 public class MediaFileDto
 {
+	
 	public Guid Id { get; set; }
-
-	// Identifiers
 	public string MediaKey { get; set; } = string.Empty;
 	public string PublicId { get; set; } = string.Empty;
 
-	// Type
 	public int MediaType { get; set; }
 	public string MediaTypeName { get; set; } = string.Empty;
-	public string MediaTypeIcon { get; set; } = string.Empty;  // "video", "image", "document"
+	public string MediaTypeIcon { get; set; } = string.Empty;
 
-	// File details
 	public string OriginalFileName { get; set; } = string.Empty;
 	public string DisplayName { get; set; } = string.Empty;
 	public string FileExtension { get; set; } = string.Empty;
 
-	// Size
 	public long FileSizeBytes { get; set; }
-	public string FileSizeFormatted { get; set; } = string.Empty;  // "45.2 MB"
-	public long? OriginalSizeBytes { get; set; }
-	public string? OriginalSizeFormatted { get; set; }
-	public double? CompressionRatio { get; set; }  // 85.5 (means 85.5% reduction)
+	public string FileSizeFormatted { get; set; } = string.Empty;
 
-	// Duration (for video/audio)
+	public long OriginalSizeBytes { get; set; }
+	public string OriginalSizeFormatted { get; set; } = string.Empty;
+
+	public double? CompressionRatio { get; set; }
+
 	public int? DurationSeconds { get; set; }
-	public string? DurationFormatted { get; set; }  // "3:45"
+	public string? DurationFormatted { get; set; }
 
-	// URLs
 	public string CdnUrl { get; set; } = string.Empty;
 	public string? ThumbnailUrl { get; set; }
-	public string? DownloadUrl { get; set; }  // Signed URL for download
+	public string CdnProvider { get; set; } = "Cloudinary";
 
-	// Status
 	public bool IsTemporary { get; set; }
 	public bool IsDeleted { get; set; }
-	public string? DeletionReason { get; set; }
 
-	// Tracking
+	public int UploadStatus { get; set; }
+	public string UploadStatusName { get; set; } = string.Empty;
+	public string? UploadErrorMessage { get; set; }
+
 	public int DownloadCount { get; set; }
-	public string? LastDownloadDate { get; set; }
+	public DateTime? LastDownloadDate { get; set; }
 
-	// Metadata
 	public string UploadedDate { get; set; } = string.Empty;
 	public string UploadedByName { get; set; } = string.Empty;
 }
