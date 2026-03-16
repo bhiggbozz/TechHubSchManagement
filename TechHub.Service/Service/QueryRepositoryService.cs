@@ -1,15 +1,16 @@
-﻿using Microsoft.Data.SqlClient;
+﻿using Dapper;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using static Dapper.SqlMapper;
 using TechHub.Core.Helper;
-using TechHub.Service.Interface;
-using Dapper;
+using TechHub.Core.Model;
 using TechHub.Core.Utilities;
+using TechHub.Service.Interface;
+using static Dapper.SqlMapper;
 
 namespace TechHub.Service.Service
 {
@@ -131,6 +132,20 @@ namespace TechHub.Service.Service
 			var result = await conn.QueryAsync<TEntity>(query, parameter);
 			return result;
 		}
+		public async Task<IEnumerable<T>> QueryAsync<T>(string query, Dictionary<string, object> values)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+
+			var parameter = new DynamicParameters();
+			foreach (var key in values.Keys)
+			{
+				parameter.Add($"@{key}", values[key]);
+			}
+
+			var result = await conn.QueryAsync<T>(query, parameter);
+			return result;
+		}
 		public async Task<IEnumerable<TEntity?>> SelectAllBySingleColumn( KeyValuePair<string, object> values)
 		{
 			using var conn = new SqlConnection(_config);
@@ -142,6 +157,96 @@ namespace TechHub.Service.Service
 
 			var result = await conn.QueryAsync<TEntity>(query, parameter);
 			return result;
+		}
+
+		public async Task<List<Users>> GetUsersBySchoolAndRole(Guid schoolId, int? roleId)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+
+			var query = "SELECT * FROM Users WHERE SchoolId = @SchoolId";
+			var parameters = new DynamicParameters();
+			parameters.Add("@SchoolId", schoolId);
+
+			// If roleId is provided and valid, filter by role
+			if (roleId.HasValue && roleId.Value >= 0)
+			{
+				query += " AND RoleId = @RoleId";
+				parameters.Add("@RoleId", roleId.Value);
+			}
+
+			query += " ORDER BY FirstName, LastName";
+
+			var users = await conn.QueryAsync<Users>(query, parameters);
+			return users.ToList();
+		}
+
+		public async Task<List<Users>> GetTeachersBySchool(Guid schoolId)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+
+			var query = @"
+                SELECT * FROM Users 
+                WHERE SchoolId = @SchoolId 
+                AND RoleId IN (@SubjectTeacher, @HeadTeacher)
+                ORDER BY FirstName, LastName";
+
+			var parameters = new DynamicParameters();
+			parameters.Add("@SchoolId", schoolId);
+			parameters.Add("@SubjectTeacher", 4); // SubjectTeacher
+			parameters.Add("@HeadTeacher", 1);     // HeadTeacher
+
+			var users = await conn.QueryAsync<Users>(query, parameters);
+			return users.ToList();
+		}
+
+		public async Task<List<Users>> GetAdministratorsBySchool(Guid schoolId)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+
+			var query = @"
+                SELECT * FROM Users 
+                WHERE SchoolId = @SchoolId 
+                AND RoleId IN (@Administrator, @SuperAdministrator)
+                ORDER BY FirstName, LastName";
+
+			var parameters = new DynamicParameters();
+			parameters.Add("@SchoolId", schoolId);
+			parameters.Add("@Administrator", 2);        // Administrator
+			parameters.Add("@SuperAdministrator", 3);   // SuperAdministrator
+
+			var users = await conn.QueryAsync<Users>(query, parameters);
+			return users.ToList();
+		}
+
+		public async Task<bool> EmailExistsInSchool(string email, Guid schoolId, Guid? excludeUserId = null)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+
+			var query = @"
+                SELECT CASE WHEN EXISTS (
+                    SELECT 1 
+                    FROM Users 
+                    WHERE LOWER(EmailAddress) = @Email 
+                    AND SchoolId = @SchoolId";
+
+			var parameters = new DynamicParameters();
+			parameters.Add("@Email", email.ToLower());
+			parameters.Add("@SchoolId", schoolId);
+
+			if (excludeUserId.HasValue)
+			{
+				query += " AND Id != @ExcludeUserId";
+				parameters.Add("@ExcludeUserId", excludeUserId.Value);
+			}
+
+			query += ") THEN 1 ELSE 0 END";
+
+			var exists = await conn.ExecuteScalarAsync<bool>(query, parameters);
+			return exists;
 		}
 
 		//public async Task<TEntity?> SelectAllBySingleColumn(KeyValuePair<string, object> values)

@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace TechHub.Core.Entities
 {
-	public class ClassroomSubjects
+	public class ClassroomSubject
 	{
 		public Guid Id { get; set; } = Guid.NewGuid();
 		public string CreationDate { get; set; } = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");

@@ -9,9 +9,7 @@ namespace TechHub.Core.ViewModel
 {
 	public class CreateBaseViewModel
 	{
-		[Required]
-		public Guid CreatedBy { get; set; }
-		//[Required]
-		//public Guid SchoolId { get; set; }
+		public Guid? CreatedBy { get; set; }
+		public Guid? SchoolId { get; set; }
 	}
 }

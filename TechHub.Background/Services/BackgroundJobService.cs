@@ -1,0 +1,117 @@
+﻿using Hangfire;
+using TechHub.Background.Jobs;
+using TechHub.BackgroundJobs.Interfaces;
+using TechHub.BackgroundJobs.Jobs;
+
+namespace TechHub.BackgroundJobs.Services;
+
+	public class BackgroundJobService : IBackgroundJobService
+	{
+	//	/// <summary>
+	//	/// Enqueue media upload job
+	//	/// </summary>
+	//	public string EnqueueMediaUpload(Guid mediaId,string mediaKey,byte[] fileContent,string originalFileName,long originalFileSize,Guid schoolId,int mediaType)
+	//	{
+	//		// Enqueue job to 'default' queue with Hangfire
+	//		// Returns immediately with job ID
+	//		// Job executes in background worker thread
+
+	//		var jobId = BackgroundJob.Enqueue<MediaUploadJob>(job =>
+	//			job.ExecuteAsync(mediaId,mediaKey,fileContent,originalFileName,originalFileSize,schoolId,mediaType));
+
+	//		return jobId;
+	//	}
+
+	//	/// <summary>
+	//	/// Schedule recurring cleanup job
+	//	/// </summary>
+	//	public void ScheduleMediaCleanup()
+	//	{
+	//		// Schedule job to run daily at 2 AM
+	//		RecurringJob.AddOrUpdate<MediaCleanupJob>("media-cleanup",
+	//			job => job.ExecuteAsync(),
+	//			Cron.Daily(2)); // 2 AM daily
+	//	}
+
+	/// <summary>
+	/// Enqueue media upload job (server-side upload)
+	/// </summary>
+		public string EnqueueMediaUpload(Guid mediaId,string mediaKey,byte[] fileContent,string originalFileName,long originalFileSize,Guid schoolId,int mediaType)
+		{
+			var jobId = BackgroundJob.Enqueue<MediaUploadJob>(
+				job => job.ExecuteAsync(mediaId,mediaKey,fileContent,originalFileName,originalFileSize,schoolId,mediaType));
+
+			return jobId;
+		}
+
+		/// <summary>
+		/// Schedule daily media cleanup job
+		/// Runs at 2 AM every day
+		/// </summary>
+		public void ScheduleMediaCleanup()
+		{
+			RecurringJob.AddOrUpdate<MediaCleanupJob>("media-cleanup",
+				job => job.ExecuteAsync(),
+				Cron.Daily(2));  // 2 AM every day
+		}
+
+		/// <summary>
+		/// NEW: Enqueue thumbnail generation job
+		/// 
+		/// JOB DETAILS:
+		/// - Queue: "default" (medium priority)
+		/// - Retry: 2 attempts (thumbnail generation can fail if video corrupted)
+		/// - Delay: Immediate (enqueued right after upload)
+		/// 
+		/// WHAT IT DOES:
+		/// 1. Extract thumbnail from video (frame at 2 seconds)
+		/// 2. Generate preview clip (first 30 seconds)
+		/// 3. Update database with thumbnail/preview URLs
+		/// 
+		/// CALLED AFTER:
+		/// - ConfirmUpload (direct-to-CDN)
+		/// - UploadComplete webhook (server-side)
+		/// </summary>
+		public string EnqueueThumbnailGeneration(Guid mediaId,string publicId,Guid schoolId)
+		{
+			var jobId = BackgroundJob.Enqueue<ThumbnailGenerationJob>(
+				job => job.Execute(mediaId, publicId, schoolId));
+
+			return jobId;
+		}
+
+		/// <summary>
+		/// NEW: Enqueue AI content analysis job
+		/// 
+		/// JOB DETAILS:
+		/// - Queue: "low" (low priority, can run later)
+		/// - Retry: 1 attempt (AI analysis not critical, expensive to retry)
+		/// - Delay: 2 minutes (let video processing finish first)
+		/// 
+		/// WHAT IT DOES:
+		/// 1. Analyze video content for inappropriate material
+		/// 2. Assess video/audio quality
+		/// 3. Detect key moments (intro, main content, summary)
+		/// 4. Extract topics/subjects
+		/// 5. Update database with analysis results
+		/// 
+		/// CALLED AFTER:
+		/// - ConfirmUpload (direct-to-CDN)
+		/// - UploadComplete webhook (server-side)
+		/// 
+		/// NOTE: Currently implements basic analysis
+		/// Can be enhanced with Azure Video Indexer or Cloudinary AI
+		/// </summary>
+		public string EnqueueAIContentAnalysis(Guid mediaId,string cdnUrl,int? duration)
+		{
+			// Schedule with 2-minute delay
+			// Gives time for video processing to complete
+			var jobId = BackgroundJob.Schedule<AIContentAnalysisJob>(
+				job => job.Execute(mediaId, cdnUrl, duration),
+				TimeSpan.FromMinutes(2));
+
+			return jobId;
+		}
+
+	}
+

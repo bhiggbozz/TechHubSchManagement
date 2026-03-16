@@ -11,6 +11,7 @@ namespace TechHub.Service.Interface
 	public interface ICommandRespository<T> where T : class
 	{
 		Task Create(T entity);
+		Task Create(Dictionary<string, object> obj);
 		Task UpdateTableColumnById(string columnToUpdateName, string keyColumnName, object columnToUpdateValue, object KeyColumnValue);
 		Task<Guid> CreateWithReturnedID(SqlTransaction transaction, SqlConnection connection, Dictionary<string, object> obj);
 		Task UpdateTableColumnById(Dictionary<string, object> obj, KeyValuePair<string, object> keyValue);
@@ -21,6 +22,8 @@ namespace TechHub.Service.Interface
 		Task CreateBatchAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues);
 		Task UpdateBatchByIdAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues);
 		Task Create(SqlTransaction transaction, SqlConnection connection, T entity);
+		Task UpdateBatchByIdAsyncV2(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues);
 
-    }
+
+	}
 }

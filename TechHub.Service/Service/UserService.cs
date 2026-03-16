@@ -1,11 +1,18 @@
 ﻿using AutoMapper;
+using Azure;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
+using Serilog;
+using Serilog.Context;
 using System;
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
+using System.Net;
+using System.Numerics;
+using System.Reflection.Metadata;
+using System.Runtime.InteropServices;
 using System.Security.Claims;
 using System.Security.Cryptography.Pkcs;
 using System.Text;
@@ -20,10 +27,13 @@ using TechHub.Core.Model;
 using TechHub.Core.Models;
 using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.Users;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
+using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
 using TechhubMS.util;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace TechHub.Service.Service
 {
@@ -31,6 +41,7 @@ namespace TechHub.Service.Service
 	{
 		private readonly IQueryRepository<LoginHistory> _queryrepositoryLoginHistory;
 		private readonly IQueryRepository<Users> _queryrepositoryUser;
+
 		private readonly ICommandRespository<LoginHistory> _commandRepositoryLoginHistory;
 		private readonly ICommandRespository<Users> _commandRepositoryUser;
 		private readonly ICommandRespository<StudentClassroom> _commandRepositoryStudentClassroom;
@@ -39,17 +50,20 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<StudentMinorSubject> _commandRepositoryMinorSubject;
 		private readonly ICommandRespository<StudentCourses> _studentCourseCommandRepository;
 		private readonly ICommandRespository<Classroom> _classroomCommandRespository;
+		private readonly ICommandRespository<AdminPermissions> _adminPermissionsCommandRepository;
 
 		private readonly IQueryRepository<School> _queryrepositorySchool;
 		private readonly IQueryRepository<SchoolCode> _schCodeQueryRespository;
 		private readonly IQueryRepository<Classroom> _classroomQueryRespository;
 		private readonly IQueryRepository<StudentCourses> _studentCoursesQueryRespository;
+		private readonly IQueryRepository<AdminPermissions> _adminPermissionsQueryRespository;
 
 
+		
 		private readonly IConfiguration _configuration;
 		private readonly IMapper _mapper;
 		private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
-		//private readonly ILogger _logger;
+		private readonly ILogger _logger;
 		private readonly string? _connString;
 
 		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<Users> queryrepositoryUser,
@@ -57,7 +71,8 @@ namespace TechHub.Service.Service
 			IQueryRepository<School> queryrepositorySchool, IQueryRepository<SchoolCode> schCodeQueryRespository, ICommandRespository<StudentCourses> studentCourseCommandRepository,
 			ICommandRespository<Classroom> classroomCommandRespository, IQueryRepository<Classroom> classroomQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration, ICommandRespository<StudentClassroom> commandRepositoryStudentClassroom, ICommandRespository<TeacherClassroom> commandRepositoryTeacherClassroom,
-			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, IMapper mapper)
+			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject,
+			ICommandRespository<AdminPermissions> adminPermissionsCommandRepository, IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,IMapper mapper, ILogger logger)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
@@ -73,9 +88,13 @@ namespace TechHub.Service.Service
 			_commandRepositoryMinorSubject = commandRepositoryMinorSubject;
 			_classroomCommandRespository = classroomCommandRespository;
 			_classroomQueryRespository = classroomQueryRespository;
+			_adminPermissionsCommandRepository = adminPermissionsCommandRepository;
+			_adminPermissionsQueryRespository = adminPermissionsQueryRespository;
+			_logger = logger;
+			_configuration = configuration;
 
 			_mapper = mapper;
-			_connString = _configuration.GetConnectionString("DbConnectionString") ?? null;
+			_connString = _configuration.GetConnectionString("DbConnectionString") ?? throw new ArgumentNullException("Db COnfig is null");
 
 		}
 
@@ -236,234 +255,308 @@ namespace TechHub.Service.Service
 		}
 		public async Task<BaseResponse> CreateUser(UserViewModel userViewModel, AuthenticatedUserClaims userClaims)
 		{
-			try
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
 			{
-				// ===== VALIDATION SECTION =====
-
-				// Validation 1: Check if model is null
-				if (userViewModel is null)
+				try
 				{
-					return new BaseResponse
+					// ===== VALIDATION SECTION =====
+
+					// Validation 1: Check if model is null
+					if (userViewModel is null)
 					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "User data cannot be empty",
-						Status = "failed"
-					};
-				}
+						_logger.Warning("CreateUser called with null model");
 
-				// Validation 2: Validate user claims
-				if (string.IsNullOrEmpty(userClaims.SchoolId) || string.IsNullOrEmpty(userClaims.UserId))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Unauthorized,
-						ResponseMessage = "User authentication information is missing",
-						Status = "failed"
-					};
-				}
-
-				// Validation 3: Parse claims
-				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid SchoolId format in token",
-						Status = "failed"
-					};
-				}
-
-				if (!Guid.TryParse(userClaims.UserId, out var createdBy))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid UserId format in token",
-						Status = "failed"
-					};
-				}
-
-				if (!int.TryParse(userClaims.Role, out int userRole))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid role format in token",
-						Status = "failed"
-					};
-				}
-
-				if (userRole != (int)UserRole.Administrator && userRole != (int)UserRole.SuperAdministrator)
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Forbidden,
-						ResponseMessage = "You are not authorized to create users",
-						Status = "failed"
-					};
-				}
-
-				var creator = await _queryrepositoryUser.Get(createdBy);
-				if (creator is null)
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Creator user does not exist",
-						Status = "failed"
-					};
-				}
-
-				if (!creator.IsActive)
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Forbidden,
-						ResponseMessage = "Your account is not active",
-						Status = "failed"
-					};
-				}
-
-				// Validation 7: Role-specific validations
-				var roleValidation = ValidateUserRoleRequirements(userViewModel);
-				if (!roleValidation.IsValid)
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = roleValidation.ErrorMessage,
-						Status = "failed"
-					};
-				}
-
-				// Validation 8: Check if user already exists
-				var existingUser = await CheckUserExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId);
-				if (existingUser.Exists)
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Conflict,
-						ResponseMessage = existingUser.Message,
-						Status = "failed"
-					};
-				}
-
-				// ===== USER CREATION SECTION =====
-
-				// Create the main user entity
-				var newUser = new Users
-				{
-					Id = Guid.NewGuid(),
-					FirstName = userViewModel.FirstName.Trim(),
-					LastName = userViewModel.LastName.Trim(),
-					UserName = userViewModel.UserName.Trim(),
-					EmailAddress = userViewModel.EmailAddress.Trim().ToLower(),
-					HashPassword = userViewModel.HashPassword,
-					RoleId = (int)userViewModel.Role,
-					SchoolId = schoolId,
-					CreatedBy = createdBy,
-					IsActive = true
-
-				};
-
-				var userDict = new Dictionary<string, object>
-				{
-					{ "Id", newUser.Id },
-					{ "FirstName", newUser.FirstName },
-					{ "LastName", newUser.LastName },
-					{ "UserName", newUser.UserName },
-					{ "Email", newUser.EmailAddress },
-					{ "HashPassword", newUser.HashPassword },
-					{ "RoleId", newUser.RoleId },
-					{ "SchoolId", newUser.SchoolId },
-					{ "CreatedBy", newUser.CreatedBy },
-					{ "IsActive", newUser.IsActive },
-					{ "CreationDate", newUser.CreationDate },
-					{ "ModifiedDate", newUser.ModifiedDate}
-				};
-
-
-				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
-
-				await _commandRepositoryUser.Create(scope.Transaction, scope.Connection, userDict);
-
-				switch (userViewModel.Role)
-				{
-					case UserRole.Student:
-						await CreateStudentAssociations(scope, newUser.Id, userViewModel, schoolId, createdBy);
-						break;
-
-					case UserRole.SubjectTeacher:
-					case UserRole.HeadTeacher:
-					case UserRole.Administrator:
-					case UserRole.SuperAdministrator:
-						await CreateTeacherAssociations(scope, newUser.Id, userViewModel, schoolId, createdBy);
-						break;
-
-					default:
-						await scope.RollbackAsync();
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = $"Invalid user role: {userViewModel.Role}",
+							ResponseMessage = "User data cannot be empty",
 							Status = "failed"
 						};
-				}
-
-				await scope.CommitAsync();
-
-				return new BaseResponse
-				{
-					ResponseCode = ResponseCode.successful,
-					ResponseMessage = $"{userViewModel.Role} user created successfully",
-					Status = "successful",
-					Data = new
-					{
-						UserId = newUser.Id,
-						UserName = newUser.UserName,
-						Email = newUser.EmailAddress,
-						Role = userViewModel.Role.ToString(),
-						ClassroomsAssigned = userViewModel.UserClassroomsId.Count,
-						SubjectsAssigned = userViewModel.UserSubjects.Count
 					}
-				};
-			}
-			catch (SqlException ex)
-			{
-				if (ex.Message.ToLower().Contains("duplicate"))
-				{
+
+					// Validation 2: Validate user claims
+					if (string.IsNullOrEmpty(userClaims.SchoolId) || string.IsNullOrEmpty(userClaims.UserId))
+					{
+						_logger.Warning("CreateUser called with missing authentication information");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "User authentication information is missing",
+							Status = "failed"
+						};
+					}
+
+					// Validation 3: Parse claims
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					{
+						_logger.Warning("Invalid SchoolId format in token - SchoolId: {SchoolId}", userClaims.SchoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format in token",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userClaims.UserId, out var createdBy))
+					{
+						_logger.Warning("Invalid UserId format in token - UserId: {UserId}", userClaims.UserId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid UserId format in token",
+							Status = "failed"
+						};
+					}
+
+					if (!int.TryParse(userClaims.Role, out int userRole))
+					{
+						_logger.Warning("Invalid role format in token - Role: {Role}", userClaims.Role);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid role format in token",
+							Status = "failed"
+						};
+					}
+
+					// Validation 4: Check user role (must be Admin or SuperAdmin)
+					if (userRole != (int)UserRole.Administrator && userRole != (int)UserRole.SuperAdministrator)
+					{
+						_logger.Warning(
+							"Unauthorized user creation attempt - UserId: {UserId}, Role: {Role}",
+							createdBy,
+							((UserRole)userRole).ToString());
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You are not authorized to create users",
+							Status = "failed"
+						};
+					}
+
+					// Validation 5: Check creator exists and is active
+					var creator = await _queryrepositoryUser.Get(createdBy);
+					if (creator is null)
+					{
+						_logger.Warning("Creator user does not exist - UserId: {UserId}", createdBy);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Creator user does not exist",
+							Status = "failed"
+						};
+					}
+
+					if (!creator.IsActive)
+					{
+						_logger.Warning("Inactive user attempted to create user - UserId: {UserId}", createdBy);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Your account is not active",
+							Status = "failed"
+						};
+					}
+
+					if (userRole == (int)UserRole.Administrator)
+					{
+						var hasPermission = await this.HasPermission(createdBy,schoolId,AdminPermission.CreateUsers );
+
+						if (!hasPermission)
+						{
+							_logger.Warning(
+								"Admin lacks CreateClasses permission - AdminId: {AdminId}, TargetRole: {TargetRole}",
+								createdBy,
+								userViewModel.Role.ToString());
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Forbidden,
+								ResponseMessage = "You don't have permission to create users. Contact your SuperAdministrator.",
+								Status = "failed"
+							};
+						}
+
+						_logger.Information(
+							"Admin has CreateClasses permission - AdminId: {AdminId}",
+							createdBy);
+					}
+
+					_logger.Information(
+						"Creating user - TargetRole: {Role}, CreatedBy: {CreatedBy}",
+						userViewModel.Role.ToString(),
+						createdBy);
+
+					// Validation 7: Role-specific validations
+					var roleValidation = ValidateUserRoleRequirements(userViewModel);
+					if (!roleValidation.IsValid)
+					{
+						_logger.Warning(
+							"Role validation failed - Role: {Role}, Error: {Error}",
+							userViewModel.Role.ToString(),
+							roleValidation.ErrorMessage);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = roleValidation.ErrorMessage,
+							Status = "failed"
+						};
+					}
+
+					// Validation 8: Check if user already exists
+					var existingUser = await CheckUserExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId);
+					if (existingUser.Exists)
+					{
+						_logger.Warning(
+							"User already exists - Username: {Username}, Email: {Email}",
+							userViewModel.UserName,
+							userViewModel.EmailAddress);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Conflict,
+							ResponseMessage = existingUser.Message,
+							Status = "failed"
+						};
+					}
+
+					// ===== USER CREATION SECTION =====
+
+					// Create the main user entity
+					var newUser = new Users
+					{
+						Id = Guid.NewGuid(),
+						FirstName = userViewModel.FirstName.Trim(),
+						LastName = userViewModel.LastName.Trim(),
+						UserName = userViewModel.UserName.Trim(),
+						EmailAddress = userViewModel.EmailAddress.Trim().ToLower(),
+						HashPassword = userViewModel.HashPassword,
+						RoleId = (int)userViewModel.Role,
+						SchoolId = schoolId,
+						CreatedBy = createdBy,
+						IsActive = true
+					};
+
+					var userDict = new Dictionary<string, object>
+					{
+						{ "Id", newUser.Id },
+						{ "FirstName", newUser.FirstName },
+						{ "LastName", newUser.LastName },
+						{ "UserName", newUser.UserName },
+						{ "Email", newUser.EmailAddress },
+						{ "HashPassword", newUser.HashPassword },
+						{ "RoleId", newUser.RoleId },
+						{ "SchoolId", newUser.SchoolId },
+						{ "CreatedBy", newUser.CreatedBy },
+						{ "IsActive", newUser.IsActive },
+						{ "CreationDate", newUser.CreationDate },
+						{ "ModifiedDate", newUser.ModifiedDate }
+					};
+
+					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+
+					await _commandRepositoryUser.Create(scope.Transaction, scope.Connection, userDict);
+
+					switch (userViewModel.Role)
+					{
+						case UserRole.Student:
+							await CreateStudentAssociations(scope, newUser.Id, userViewModel, schoolId, createdBy);
+							break;
+
+						case UserRole.SubjectTeacher:
+						case UserRole.HeadTeacher:
+						case UserRole.Administrator:
+						case UserRole.SuperAdministrator:
+							await CreateTeacherAssociations(scope, newUser.Id, userViewModel, schoolId, createdBy);
+							break;
+
+						default:
+							_logger.Warning("Invalid user role - Role: {Role}", userViewModel.Role);
+
+							await scope.RollbackAsync();
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = $"Invalid user role: {userViewModel.Role}",
+								Status = "failed"
+							};
+					}
+
+					await scope.CommitAsync();
+
+					_logger.Information(
+						"User created successfully - UserId: {UserId}, Username: {Username}, Role: {Role}, CreatedBy: {CreatedBy}",
+						newUser.Id,
+						newUser.UserName,
+						userViewModel.Role.ToString(),
+						createdBy);
+
 					return new BaseResponse
 					{
-						ResponseCode = ResponseCode.Conflict,
-						ResponseMessage = "User with this username or email already exists",
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = $"{userViewModel.Role} user created successfully",
+						Status = "successful",
+						Data = new
+						{
+							UserId = newUser.Id,
+							UserName = newUser.UserName,
+							Email = newUser.EmailAddress,
+							Role = userViewModel.Role.ToString(),
+							ClassroomsAssigned = userViewModel.UserClassroomsId.Count,
+							SubjectsAssigned = userViewModel.UserSubjects.Count
+						}
+					};
+				}
+				catch (SqlException ex)
+				{
+					_logger.Error(
+						ex,
+						"SQL error occurred while creating user - Username: {Username}",
+						userViewModel?.UserName);
+
+					if (ex.Message.ToLower().Contains("duplicate"))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Conflict,
+							ResponseMessage = "User with this username or email already exists",
+							Status = "failed"
+						};
+					}
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "Database error occurred while creating user",
 						Status = "failed"
 					};
 				}
-
-				// Log exception
-				// _logger.LogError(ex, "SQL error occurred while creating user");
-
-				return new BaseResponse
+				catch (Exception ex)
 				{
-					ResponseCode = ResponseCode.ErrorOccured,
-					ResponseMessage = "Database error occurred while creating user",
-					Status = "failed"
-				};
-			}
-			catch (Exception ex)
-			{
-				// Log exception
-				// _logger.LogError(ex, "Unexpected error occurred while creating user");
+					_logger.Error(
+						ex,
+						"Unexpected error occurred while creating user - Username: {Username}",
+						userViewModel?.UserName);
 
-				return new BaseResponse
-				{
-					ResponseCode = ResponseCode.ErrorOccured,
-					ResponseMessage = "An unexpected error occurred while creating user",
-					Status = "failed"
-				};
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An unexpected error occurred while creating user",
+						Status = "failed"
+					};
+				}
 			}
 		}
-
 
 		//public async Task<BaseResponse> SaveClassTeacherUser(UserViewModel userViewModel)
 		//{
@@ -619,178 +712,1224 @@ namespace TechHub.Service.Service
 			var lastLoginHistory = await _queryrepositoryLoginHistory.GetByQuery(query);
 			return lastLoginHistory;
 		}
-		public async Task<BaseResponse> RegisterToClass(RegisterStudentClassViewModel registerStudentClassViewModel, AuthenticatedUserClaims userInfo)
+		public async Task<BaseResponse> RegisterToClass(RegisterStudentClassViewModel registerStudentClassViewModel,AuthenticatedUserClaims userInfo)
+		{
+			#region
+			using (LogContext.PushProperty("RequestedBy", userInfo.UserId))
+			//using (LogContext.PushProperty("TenantId", userInfo.TenantIdentifier))
+			{
+				try
+				{
+					// ===== VALIDATION SECTION =====
+
+					if (registerStudentClassViewModel is null)
+					{
+						_logger.Warning("RegisterToClass called with null model");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Registration data cannot be empty",
+							Status = "failed"
+						};
+					}
+
+					if (string.IsNullOrEmpty(userInfo.SchoolId))
+					{
+						_logger.Warning("RegisterToClass called with missing SchoolId");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "SchoolId not found in authentication token",
+							Status = "failed"
+						};
+					}
+
+					if (string.IsNullOrEmpty(userInfo.UserId))
+					{
+						_logger.Warning("RegisterToClass called with missing UserId");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "UserId not found in authentication token",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userInfo.SchoolId, out var schoolId))
+					{
+						_logger.Warning("Invalid SchoolId format - SchoolId: {SchoolId}", userInfo.SchoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format in token",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userInfo.UserId, out var createdBy))
+					{
+						_logger.Warning("Invalid UserId format - UserId: {UserId}", userInfo.UserId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid UserId format in token",
+							Status = "failed"
+						};
+					}
+
+					if (!int.TryParse(userInfo.Role, out int userRole))
+					{
+						_logger.Warning("Invalid role format in token - Role: {Role}", userInfo.Role);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid role format in token",
+							Status = "failed"
+						};
+					}
+
+					// Only Admins and SuperAdmins can do this
+					if (userRole != (int)UserRole.Administrator &&
+						userRole != (int)UserRole.SuperAdministrator)
+					{
+						_logger.Warning(
+							"Unauthorized class registration attempt - UserId: {UserId}, Role: {Role}",
+							createdBy,
+							((UserRole)userRole).ToString());
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You are not authorized to register students to classes",
+							Status = "failed"
+						};
+					}
+
+					// SuperAdministrators always have permission
+					if (userRole == (int)UserRole.Administrator)
+					{
+						var hasPermission = await this.HasPermission(createdBy,schoolId,AdminPermission.CreateClasses);
+
+						if (!hasPermission)
+						{
+							_logger.Warning(
+								"Admin lacks CreateClasses permission - AdminId: {AdminId}, StudentId: {StudentId}, ClassroomId: {ClassroomId}",
+								createdBy,
+								registerStudentClassViewModel.StudentId,
+								registerStudentClassViewModel.ClassId);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Forbidden,
+								ResponseMessage = "You don't have permission to register students to classes. Contact your SuperAdministrator.",
+								Status = "failed"
+							};
+						}
+
+						_logger.Information(
+							"Admin has CreateClasses permission - AdminId: {AdminId}",
+							createdBy);
+					}
+
+					_logger.Information(
+						"Registering student to class - StudentId: {StudentId}, ClassroomId: {ClassroomId}, RegisteredBy: {RegisteredBy}",
+						registerStudentClassViewModel.StudentId,
+						registerStudentClassViewModel.ClassId,
+						createdBy);
+
+					// Validation 4: Validate student
+					var studentValidation = await ValidateStudent(
+						registerStudentClassViewModel.StudentId,
+						schoolId);
+
+					if (!studentValidation.IsValid)
+					{
+						_logger.Warning(
+							"Student validation failed - StudentId: {StudentId}, Error: {Error}",
+							registerStudentClassViewModel.StudentId,
+							studentValidation.Message);
+
+						return new BaseResponse
+						{
+							ResponseCode = studentValidation.ResponseCode,
+							ResponseMessage = studentValidation.Message,
+							Status = "failed"
+						};
+					}
+
+					// Validation 5: Validate classroom
+					var classroomValidation = await ValidateClassroom(
+						registerStudentClassViewModel.ClassId,
+						schoolId);
+
+					if (!classroomValidation.IsValid)
+					{
+						_logger.Warning(
+							"Classroom validation failed - ClassroomId: {ClassroomId}, Error: {Error}",
+							registerStudentClassViewModel.ClassId,
+							classroomValidation.Message);
+
+						return new BaseResponse
+						{
+							ResponseCode = classroomValidation.ResponseCode,
+							ResponseMessage = classroomValidation.Message,
+							Status = "failed"
+						};
+					}
+
+					var isAlreadyRegistered = await CheckExistingRegistration(
+						registerStudentClassViewModel.StudentId,
+						registerStudentClassViewModel.ClassId
+					);
+
+					if (isAlreadyRegistered)
+					{
+						_logger.Warning(
+							"Student already registered in classroom - StudentId: {StudentId}, ClassroomId: {ClassroomId}",
+							registerStudentClassViewModel.StudentId,
+							registerStudentClassViewModel.ClassId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Conflict,
+							ResponseMessage = "Student is already registered in this classroom",
+							Status = "failed"
+						};
+					}
+
+					var existingActiveClass = await GetStudentActiveClassroom(
+						registerStudentClassViewModel.StudentId);
+
+					if (existingActiveClass.HasValue)
+					{
+						_logger.Warning(
+							"Student already enrolled in another classroom - StudentId: {StudentId}, CurrentClassroomId: {CurrentClassroomId}, AttemptedClassroomId: {AttemptedClassroomId}",
+							registerStudentClassViewModel.StudentId,
+							existingActiveClass.Value,
+							registerStudentClassViewModel.ClassId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Conflict,
+							ResponseMessage = "Student is already enrolled in another classroom. Please transfer the student first.",
+							Status = "failed",
+							Data = new { CurrentClassroomId = existingActiveClass.Value }
+						};
+					}
+
+					// ===== REGISTRATION SECTION =====
+
+					var registrationId = Guid.NewGuid();
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+					var studentCourse = new Dictionary<string, object>
+					{
+						{ "Id", registrationId },
+						{ "CreationDate", now },
+						{ "ModifiedDate", now },
+						{ "ClassroomId", registerStudentClassViewModel.ClassId },
+						{ "StudentId", registerStudentClassViewModel.StudentId },
+						{ "SchoolId", schoolId },
+						{ "CreatedBy", createdBy },
+						{ "Status", (int)StudentClassroomStatus.Active }
+					};
+
+					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+
+					await _studentCourseCommandRepository.Create(
+						scope.Transaction,
+						scope.Connection,
+						studentCourse);
+
+					await scope.CommitAsync();
+
+					_logger.Information(
+						"Student registered to classroom successfully - RegistrationId: {RegistrationId}, StudentId: {StudentId}, ClassroomId: {ClassroomId}, RegisteredBy: {RegisteredBy}",
+						registrationId,
+						registerStudentClassViewModel.StudentId,
+						registerStudentClassViewModel.ClassId,
+						createdBy);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Student registered to classroom successfully",
+						Status = "successful",
+						Data = new
+						{
+							RegistrationId = registrationId,
+							StudentId = registerStudentClassViewModel.StudentId,
+							ClassroomId = registerStudentClassViewModel.ClassId,
+							Status = StudentClassroomStatus.Active.ToString()
+						}
+					};
+				}
+				catch (SqlException ex)
+				{
+					_logger.Error(
+						ex,
+						"SQL error occurred while registering student - StudentId: {StudentId}, ClassroomId: {ClassroomId}",
+						registerStudentClassViewModel?.StudentId,
+						registerStudentClassViewModel?.ClassId);
+
+					if (ex.Message.ToLower().Contains("duplicate"))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Conflict,
+							ResponseMessage = "Student is already registered in this classroom",
+							Status = "failed"
+						};
+					}
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "Database error occurred while registering student",
+						Status = "failed"
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(
+						ex,
+						"Unexpected error occurred while registering student - StudentId: {StudentId}, ClassroomId: {ClassroomId}",
+						registerStudentClassViewModel?.StudentId,
+						registerStudentClassViewModel?.ClassId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An unexpected error occurred while registering student",
+						Status = "failed"
+					};
+				}
+			}
+			#endregion
+		}
+
+
+		public async Task<BaseResponse> EditUser(UpdateUserView updateUserViewModel,AuthenticatedUserClaims? userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims?.UserId))
+			//using (LogContext.PushProperty("TenantId", userClaims?.TenantIdentifier))
+			{
+				try
+				{
+
+					if (updateUserViewModel is null)
+					{
+						_logger.Warning("EditUser called with null model");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "User data cannot be empty",
+							Status = "failed"
+						};
+					}
+
+					if (string.IsNullOrEmpty(userClaims?.SchoolId) || string.IsNullOrEmpty(userClaims?.UserId))
+					{
+						_logger.Warning("EditUser called with missing authentication information");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "User authentication information is missing",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userClaims.SchoolId, out var claimSchoolId))
+					{
+						_logger.Warning("Invalid SchoolId format - SchoolId: {SchoolId}", userClaims.SchoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format in token",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userClaims.UserId, out var modifiedBy))
+					{
+						_logger.Warning("Invalid UserId format - UserId: {UserId}", userClaims.UserId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid UserId format in token",
+							Status = "failed"
+						};
+					}
+
+					if (!int.TryParse(userClaims.Role, out int userRole))
+					{
+						_logger.Warning("Invalid role format - Role: {Role}", userClaims.Role);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid role format in token",
+							Status = "failed"
+						};
+					}
+
+					var modifier = await _queryrepositoryUser.Get(modifiedBy);
+					if (modifier is null)
+					{
+						_logger.Warning("Modifier user does not exist - UserId: {UserId}", modifiedBy);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Modifier user does not exist",
+							Status = "failed"
+						};
+					}
+
+					if (!modifier.IsActive)
+					{
+						_logger.Warning("Inactive user attempted to edit user - UserId: {UserId}", modifiedBy);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Your account is not active",
+							Status = "failed"
+						};
+					}
+
+					var existingUser = await _queryrepositoryUser.Get(updateUserViewModel.Id);
+					if (existingUser is null)
+					{
+						_logger.Warning("Target user not found - UserId: {UserId}", updateUserViewModel.Id);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "User not found",
+							Status = "failed"
+						};
+					}
+
+					if (existingUser.SchoolId != claimSchoolId)
+					{
+						_logger.Warning(
+							"Cross-school user edit attempt - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}, ModifierSchool: {ModifierSchool}, TargetSchool: {TargetSchool}",
+							modifiedBy,
+							updateUserViewModel.Id,
+							claimSchoolId,
+							existingUser.SchoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You cannot update users from a different school",
+							Status = "failed"
+						};
+					}
+
+					// ===== AUTHORIZATION SECTION =====
+
+					bool isSelfEdit = updateUserViewModel.Id == modifiedBy;
+
+					if (userRole != (int)UserRole.Administrator && userRole != (int)UserRole.SuperAdministrator)
+					{
+						// Non-admins can only edit themselves
+						if (!isSelfEdit)
+						{
+							_logger.Warning(
+								"Unauthorized user edit attempt - ModifiedBy: {ModifiedBy}, Role: {Role}, TargetUserId: {TargetUserId}",
+								modifiedBy,
+								((UserRole)userRole).ToString(),
+								updateUserViewModel.Id);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Forbidden,
+								ResponseMessage = "You are not authorized to update other users",
+								Status = "failed"
+							};
+						}
+
+						// TODO: For non-admins editing themselves, you might want to restrict which fields they can update
+						// For now, we allow it but you should add field-level restrictions
+						_logger.Information("User editing own profile - UserId: {UserId}", modifiedBy);
+					}
+					else
+					{
+						// ✅ NEW VALIDATION: Admin/SuperAdmin editing OTHER users
+						if (!isSelfEdit)
+						{
+							// SuperAdministrators always have permission
+							if (userRole == (int)UserRole.Administrator)
+							{
+								var hasPermission = await this.HasPermission(
+									modifiedBy,
+									claimSchoolId,
+									AdminPermission.ManageStudents
+								);
+
+								if (!hasPermission)
+								{
+									_logger.Warning(
+										"Admin lacks ManageUsers permission - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
+										modifiedBy,
+										updateUserViewModel.Id);
+
+									return new BaseResponse
+									{
+										ResponseCode = ResponseCode.Forbidden,
+										ResponseMessage = "You don't have permission to manage users. Contact your SuperAdministrator.",
+										Status = "failed"
+									};
+								}
+
+								_logger.Information(
+									"Admin has ManageUsers permission - AdminId: {AdminId}",
+									modifiedBy);
+							}
+
+							_logger.Information(
+								"Editing user - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}, IsSelfEdit: {IsSelfEdit}",
+								modifiedBy,
+								updateUserViewModel.Id,
+								isSelfEdit);
+						}
+						else
+						{
+							_logger.Information("Admin editing own profile - UserId: {UserId}", modifiedBy);
+						}
+					}
+
+					// Validation 8: SuperAdmin restrictions
+					if (existingUser.RoleId == (int)UserRole.SuperAdministrator &&
+						userRole != (int)UserRole.SuperAdministrator)
+					{
+						_logger.Warning(
+							"Non-SuperAdmin attempted to edit SuperAdmin - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}",
+							modifiedBy,
+							updateUserViewModel.Id);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Only SuperAdministrator can update SuperAdministrator accounts",
+							Status = "failed"
+						};
+					}
+
+					// Validation 9: Check email uniqueness
+					if (!string.IsNullOrWhiteSpace(updateUserViewModel.EmailAddress) &&
+						updateUserViewModel.EmailAddress.Trim().ToLower() != existingUser.EmailAddress?.ToLower())
+					{
+						var emailExists = await CheckEmailExists(
+							updateUserViewModel.EmailAddress,
+							claimSchoolId,
+							updateUserViewModel.Id);
+
+						if (emailExists)
+						{
+							_logger.Warning(
+								"Email already in use - Email: {Email}, TargetUserId: {TargetUserId}",
+								updateUserViewModel.EmailAddress,
+								updateUserViewModel.Id);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Conflict,
+								ResponseMessage = "Email address is already in use by another user",
+								Status = "failed"
+							};
+						}
+					}
+
+					// ===== UPDATE SECTION =====
+
+					var updateDict = new Dictionary<string, object>
+			{
+				{ "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") }
+			};
+
+					var updatedFields = new List<string>();
+
+					// Build update dictionary
+					if (!string.IsNullOrWhiteSpace(updateUserViewModel.FirstName))
+					{
+						updateDict["FirstName"] = updateUserViewModel.FirstName.Trim();
+						updatedFields.Add("FirstName");
+					}
+
+					if (!string.IsNullOrWhiteSpace(updateUserViewModel.LastName))
+					{
+						updateDict["LastName"] = updateUserViewModel.LastName.Trim();
+						updatedFields.Add("LastName");
+					}
+
+					if (!string.IsNullOrWhiteSpace(updateUserViewModel.EmailAddress))
+					{
+						updateDict["EmailAddress"] = updateUserViewModel.EmailAddress.Trim().ToLower();
+						updatedFields.Add("EmailAddress");
+					}
+
+					if (!string.IsNullOrWhiteSpace(updateUserViewModel.HashPassword))
+					{
+						// TODO: Hash password before storing
+						updateDict["HashPassword"] = updateUserViewModel.HashPassword;
+						updatedFields.Add("Password");
+					}
+
+					if (updateUserViewModel.IsActive.HasValue)
+					{
+						updateDict["IsActive"] = updateUserViewModel.IsActive.Value;
+						updatedFields.Add("IsActive");
+					}
+
+					if (updateUserViewModel.HasAccess.HasValue)
+					{
+						updateDict["HasAccess"] = updateUserViewModel.HasAccess.Value;
+						updatedFields.Add("HasAccess");
+					}
+
+					if (updateUserViewModel.RoleId.HasValue &&
+						updateUserViewModel.RoleId.Value != existingUser.RoleId)
+					{
+						// Validate role change permissions
+						if (updateUserViewModel.RoleId.Value == (int)UserRole.SuperAdministrator &&
+							userRole != (int)UserRole.SuperAdministrator)
+						{
+							_logger.Warning(
+								"Unauthorized SuperAdmin promotion attempt - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}",
+								modifiedBy,
+								updateUserViewModel.Id);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Forbidden,
+								ResponseMessage = "Only SuperAdministrator can promote to SuperAdministrator role",
+								Status = "failed"
+							};
+						}
+
+						updateDict["RoleId"] = updateUserViewModel.RoleId.Value;
+						updatedFields.Add("Role");
+					}
+
+					if (!string.IsNullOrWhiteSpace(updateUserViewModel.ProfileImage))
+					{
+						updateDict["ProfileImage"] = updateUserViewModel.ProfileImage;
+						updatedFields.Add("ProfileImage");
+					}
+
+					if (!string.IsNullOrWhiteSpace(updateUserViewModel.GuardianName))
+					{
+						updateDict["GuardianName"] = updateUserViewModel.GuardianName.Trim();
+						updatedFields.Add("GuardianName");
+					}
+
+					if (updateDict.Count == 1) // Only ModifiedDate
+					{
+						_logger.Warning("No fields to update - UserId: {UserId}", updateUserViewModel.Id);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "No fields to update",
+							Status = "failed"
+						};
+					}
+
+					var whereClause = new KeyValuePair<string, object>("Id", updateUserViewModel.Id);
+					await _commandRepositoryUser.UpdateTableColumnById(updateDict, whereClause);
+
+					_logger.Information(
+						"User updated successfully - UserId: {UserId}, UpdatedFields: [{UpdatedFields}], ModifiedBy: {ModifiedBy}",
+						updateUserViewModel.Id,
+						string.Join(", ", updatedFields),
+						modifiedBy);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "User updated successfully",
+						Status = "successful",
+						Data = new
+						{
+							UserId = updateUserViewModel.Id,
+							UpdatedFields = updatedFields.ToArray(),
+							UpdatedBy = modifiedBy,
+							UpdatedAt = updateDict["ModifiedDate"]
+						}
+					};
+				}
+				catch (SqlException ex)
+				{
+					_logger.Error(
+						ex,
+						"SQL error occurred while updating user - UserId: {UserId}",
+						updateUserViewModel?.Id);
+
+					if (ex.Message.ToLower().Contains("duplicate"))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Conflict,
+							ResponseMessage = "Email address is already in use",
+							Status = "failed"
+						};
+					}
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "Database error occurred while updating user",
+						Status = "failed"
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(
+						ex,
+						"Unexpected error occurred while updating user - UserId: {UserId}",
+						updateUserViewModel?.Id);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An unexpected error occurred while updating user",
+						Status = "failed"
+					};
+				}
+			}
+		}
+		/// <summary>
+		/// Allow users to update their own profile with limited fields
+		/// </summary>
+		private async Task<BaseResponse> UpdateOwnProfile(UpdateUserView updateUserViewModel, Users existingUser, Guid userId)
 		{
 			try
 			{
-
-				if (registerStudentClassViewModel is null)
+				// Users can only update: FirstName, LastName, ProfileImage, Password
+				var updateDict = new Dictionary<string, object>
 				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Registration data cannot be empty",
-						Status = "failed"
-					};
-				}
-
-				if (string.IsNullOrEmpty(userInfo.SchoolId))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Unauthorized,
-						ResponseMessage = "SchoolId not found in authentication token",
-						Status = "failed"
-					};
-				}
-
-				if (string.IsNullOrEmpty(userInfo.UserId))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Unauthorized,
-						ResponseMessage = "UserId not found in authentication token",
-						Status = "failed"
-					};
-				}
-
-				if (!Guid.TryParse(userInfo.SchoolId, out var schoolId))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid SchoolId format in token",
-						Status = "failed"
-					};
-				}
-
-				if (!Guid.TryParse(userInfo.UserId, out var createdBy))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid UserId format in token",
-						Status = "failed"
-					};
-				}
-
-				var studentValidation = await ValidateStudent(registerStudentClassViewModel.StudentId, schoolId);
-				if (!studentValidation.IsValid)
-				{
-					return new BaseResponse
-					{
-						ResponseCode = studentValidation.ResponseCode,
-						ResponseMessage = studentValidation.Message,
-						Status = "failed"
-					};
-				}
-
-				var classroomValidation = await ValidateClassroom(registerStudentClassViewModel.ClassId, schoolId);
-				if (!classroomValidation.IsValid)
-				{
-					return new BaseResponse
-					{
-						ResponseCode = classroomValidation.ResponseCode,
-						ResponseMessage = classroomValidation.Message,
-						Status = "failed"
-					};
-				}
-
-				// Check if student is already registered in this classroom
-				var isAlreadyRegistered = await CheckExistingRegistration(
-					registerStudentClassViewModel.StudentId,
-					registerStudentClassViewModel.ClassId
-				);
-
-				if (isAlreadyRegistered)
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Conflict,
-						ResponseMessage = "Student is already registered in this classroom",
-						Status = "failed"
-					};
-				}
-
-				var existingActiveClass = await GetStudentActiveClassroom(registerStudentClassViewModel.StudentId);
-				if (existingActiveClass.HasValue)
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Conflict,
-						ResponseMessage = "Student is already enrolled in another classroom. Please transfer the student first.",
-						Status = "failed",
-						Data = new { CurrentClassroomId = existingActiveClass.Value }
-					};
-				}
-
-
-				var studentCourse = new Dictionary<string, object>
-				{
-					{ "Id", Guid.NewGuid() },
-					{ "CreationDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") },
-					{ "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") },
-					{ "ClassroomId", registerStudentClassViewModel.ClassId },
-					{ "StudentId", registerStudentClassViewModel.StudentId },
-					{ "SchoolId", schoolId },
-					{ "CreatedBy", createdBy },
-					{ "Status", (int)StudentClassroomStatus.Active }
+					{ "ModifiedDate", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") }
 				};
 
+				var updatedFields = new List<string>();
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.FirstName))
+				{
+					updateDict["FirstName"] = updateUserViewModel.FirstName.Trim();
+					updatedFields.Add("FirstName");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.LastName))
+				{
+					updateDict["LastName"] = updateUserViewModel.LastName.Trim();
+					updatedFields.Add("LastName");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.ProfileImage))
+				{
+					updateDict["ProfileImage"] = updateUserViewModel.ProfileImage;
+					updatedFields.Add("ProfileImage");
+				}
+
+				if (!string.IsNullOrWhiteSpace(updateUserViewModel.HashPassword))
+				{
+					// TODO: Hash password before storing
+					updateDict["HashPassword"] = updateUserViewModel.HashPassword;
+					updatedFields.Add("Password");
+				}
+
+				// Users CANNOT update: Email, Role, IsActive, HasAccess, GuardianName
+
+				// Check if anything was updated
+				if (updateDict.Count == 1) // Only ModifiedDate
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "No fields to update",
+						Status = "failed"
+					};
+				}
 
 				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
-				await _studentCourseCommandRepository.Create(scope.Transaction, scope.Connection, studentCourse);
-				await scope.CommitAsync();
+				var whereClause = new KeyValuePair<string, object>("Id", updateUserViewModel.Id);
+				await _commandRepositoryUser.UpdateTableColumnById(updateDict, whereClause);
+
 
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.successful,
-					ResponseMessage = "Student registered to classroom successfully",
+					ResponseMessage = "Profile updated successfully",
 					Status = "successful",
 					Data = new
 					{
-						RegistrationId = studentCourse["Id"],
-						StudentId = registerStudentClassViewModel.StudentId,
-						ClassroomId = registerStudentClassViewModel.ClassId,
-						Status = StudentClassroomStatus.Active.ToString()
+						UserId = updateUserViewModel.Id,
+						UpdatedFields = updatedFields.ToArray(),
+						UpdatedAt = updateDict["ModifiedDate"]
 					}
 				};
 			}
 			catch (SqlException ex)
 			{
-				if (ex.Message.ToLower().Contains("duplicate"))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Conflict,
-						ResponseMessage = "Student is already registered in this classroom",
-						Status = "failed"
-					};
-				}
-
 				// Log exception
-				// _logger.LogError(ex, "SQL error occurred while registering student to class");
-
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
-					ResponseMessage = "Database error occurred while registering student",
+					ResponseMessage = "Database error occurred while updating profile",
 					Status = "failed"
 				};
 			}
 			catch (Exception ex)
 			{
 				// Log exception
-				// _logger.LogError(ex, "Unexpected error occurred while registering student to class");
-
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
-					ResponseMessage = "An unexpected error occurred while registering student",
+					ResponseMessage = "An error occurred while updating profile",
 					Status = "failed"
 				};
 			}
 		}
+
+		/// <summary>
+		/// Check if email already exists for another user
+		/// </summary>
+		private async Task<bool> CheckEmailExists(string email, Guid schoolId, Guid excludeUserId)
+		{
+			try
+			{
+				// Assuming you have a method to get user by email
+				//var users = await _queryrepositoryUser.GetAll(schoolId);
+				var query = "SELECT * FROM Users WHERE EmailAddress = @EmailAddress";
+				var parameters = new Dictionary<string, object>
+					{
+						{ "EmailAddress", email }
+					};
+
+				var user = await _queryrepositoryUser.SelectByColumns(query, parameters);
+
+				//var existingUser = users.FirstOrDefault(u =>
+				//	u.EmailAddress?.ToLower() == email.Trim().ToLower() &&
+				//	u.Id != excludeUserId);
+
+				return user != null;
+			}
+			catch (Exception ex)
+			{
+				// Log exception
+				// _logger.LogError(ex, "Error checking email existence: {Email}", email);
+
+				// Return true to be safe (prevent duplicate)
+				return true;
+			}
+		}
+
+		public async Task<BaseResponse> GetUsersByRole(AuthenticatedUserClaims userClaims,int? roleId,int pageNumber,int pageSize)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId format",
+						Status = "failed"
+					};
+				}
+
+				if (pageNumber < 1) pageNumber = 1;
+				if (pageSize < 1 || pageSize > 100) pageSize = 50;
+
+				string query;
+				if (roleId.HasValue && roleId.Value >= 0)
+				{
+					query = $@"
+                    SELECT * FROM Users 
+                    WHERE SchoolId = '{schoolId}' 
+                    AND RoleId = {roleId.Value} 
+                    ORDER BY FirstName, LastName";
+				}
+				else
+				{
+					query = $@"
+                    SELECT * FROM Users 
+                    WHERE SchoolId = '{schoolId}' 
+                    ORDER BY FirstName, LastName";
+				}
+
+				var allUsers = await _queryrepositoryUser.GetByQuery(query);
+				var usersList = allUsers.Where(u => u != null).ToList();
+
+				// Pagination
+				var totalCount = usersList.Count;
+				var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+				var paginatedUsers = usersList
+					.Skip((pageNumber - 1) * pageSize)
+					.Take(pageSize)
+					.ToList();
+
+				var userDtos = paginatedUsers.Select(u => new UserDto
+				{
+					Id = u!.Id,
+					FirstName = u.FirstName,
+					LastName = u.LastName,
+					UserName = u.UserName,
+					EmailAddress = u.EmailAddress,
+					RoleId = u.RoleId,
+					RoleName = ((UserRole)u.RoleId).ToString(),
+					IsActive = u.IsActive,
+					HasAccess = u.HasAccess,
+					ProfileImage = u.ProfileImage,
+					GuardianName = u.GuardianName,
+					CreatedDate = u.CreationDate,
+					ModifiedDate = u.ModifiedDate
+				}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Users retrieved successfully",
+					Status = "successful",
+					Data = new UsersListData
+					{
+						Users = userDtos,
+						TotalCount = totalCount,
+						PageNumber = pageNumber,
+						PageSize = pageSize,
+						TotalPages = totalPages,
+						HasPreviousPage = pageNumber > 1,
+						HasNextPage = pageNumber < totalPages,
+						RoleFilter = roleId.HasValue ? ((UserRole)roleId.Value).ToString() : "All"
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching users by role");
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching users",
+					Status = "failed"
+				};
+			}
+		}
+
+		public async Task<BaseResponse> GetTeachers(AuthenticatedUserClaims userClaims,int pageNumber,int pageSize)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId",
+						Status = "failed"
+					};
+				}
+
+				if (pageNumber < 1) pageNumber = 1;
+				if (pageSize < 1 || pageSize > 100) pageSize = 50;
+
+				// ✅ Use GetByQuery with IN clause
+				var query = $@"
+                SELECT * FROM Users 
+                WHERE SchoolId = '{schoolId}' 
+                AND RoleId IN (1, 4)
+                ORDER BY FirstName, LastName";
+
+				var allTeachers = await _queryrepositoryUser.GetByQuery(query);
+				var teachersList = allTeachers.Where(u => u != null).ToList();
+
+				var totalCount = teachersList.Count;
+				var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+				var paginatedTeachers = teachersList
+					.Skip((pageNumber - 1) * pageSize)
+					.Take(pageSize)
+					.ToList();
+
+				var teacherDtos = paginatedTeachers.Select(u => new UserDto
+				{
+					Id = u!.Id,
+					FirstName = u.FirstName,
+					LastName = u.LastName,
+					UserName = u.UserName,
+					EmailAddress = u.EmailAddress,
+					RoleId = u.RoleId,
+					RoleName = ((UserRole)u.RoleId).ToString(),
+					IsActive = u.IsActive,
+					HasAccess = u.HasAccess,
+					ProfileImage = u.ProfileImage,
+					CreatedDate = u.CreationDate,
+					ModifiedDate = u.ModifiedDate
+				}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Teachers retrieved successfully",
+					Status = "successful",
+					Data = new UsersListData
+					{
+						Users = teacherDtos,
+						TotalCount = totalCount,
+						PageNumber = pageNumber,
+						PageSize = pageSize,
+						TotalPages = totalPages,
+						HasPreviousPage = pageNumber > 1,
+						HasNextPage = pageNumber < totalPages,
+						RoleFilter = "Teachers"
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching teachers");
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching teachers",
+					Status = "failed"
+				};
+			}
+		}
+
+		public async Task<BaseResponse> GetAdministrators(
+			AuthenticatedUserClaims userClaims,
+			int pageNumber,
+			int pageSize)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId",
+						Status = "failed"
+					};
+				}
+
+				if (pageNumber < 1) pageNumber = 1;
+				if (pageSize < 1 || pageSize > 100) pageSize = 50;
+
+				// ✅ Use GetByQuery
+				var query = $@"
+                SELECT * FROM Users 
+                WHERE SchoolId = '{schoolId}' 
+                AND RoleId IN (2, 3)
+                ORDER BY FirstName, LastName";
+
+				var allAdmins = await _queryrepositoryUser.GetByQuery(query);
+				var adminsList = allAdmins.Where(u => u != null).ToList();
+
+				var totalCount = adminsList.Count;
+				var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+				var paginatedAdmins = adminsList
+					.Skip((pageNumber - 1) * pageSize)
+					.Take(pageSize)
+					.ToList();
+
+				var adminDtos = paginatedAdmins.Select(u => new UserDto
+				{
+					Id = u!.Id,
+					FirstName = u.FirstName,
+					LastName = u.LastName,
+					UserName = u.UserName,
+					EmailAddress = u.EmailAddress,
+					RoleId = u.RoleId,
+					RoleName = ((UserRole)u.RoleId).ToString(),
+					IsActive = u.IsActive,
+					HasAccess = u.HasAccess,
+					ProfileImage = u.ProfileImage,
+					CreatedDate = u.CreationDate,
+					ModifiedDate = u.ModifiedDate
+				}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Administrators retrieved successfully",
+					Status = "successful",
+					Data = new UsersListData
+					{
+						Users = adminDtos,
+						TotalCount = totalCount,
+						PageNumber = pageNumber,
+						PageSize = pageSize,
+						TotalPages = totalPages,
+						HasPreviousPage = pageNumber > 1,
+						HasNextPage = pageNumber < totalPages,
+						RoleFilter = "Administrators"
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching administrators");
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching administrators",
+					Status = "failed"
+				};
+			}
+		}
+
+		// TechHub.Service.Service/UserService.cs
+
+		public async Task<BaseResponse> GetUserById(Guid userId, AuthenticatedUserClaims userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
+			{
+				try
+				{
+					// Validation 1: Check if user claims are valid
+					if (string.IsNullOrEmpty(userClaims?.SchoolId) || string.IsNullOrEmpty(userClaims?.UserId))
+					{
+						_logger.Warning("Get user request with invalid claims");
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "User authentication information is missing",
+							Status = "failed"
+						};
+					}
+
+					// Validation 2: Parse SchoolId
+					if (!Guid.TryParse(userClaims.SchoolId, out var claimSchoolId))
+					{
+						_logger.Warning("Invalid SchoolId format in token - SchoolId: {SchoolId}", userClaims.SchoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format in token",
+							Status = "failed"
+						};
+					}
+
+					_logger.Information("Fetching user by ID - TargetUserId: {TargetUserId}", userId);
+
+					// Get user from repository
+					var user = await _queryrepositoryUser.Get(userId);
+
+					if (user == null)
+					{
+						_logger.Warning("User not found - TargetUserId: {TargetUserId}", userId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "User not found",
+							Status = "failed"
+						};
+					}
+
+					// Validation 3: Multi-tenancy check - Ensure user belongs to same school
+					if (user.SchoolId != claimSchoolId)
+					{
+						_logger.Warning(
+							"Unauthorized access attempt - User {RequestedBy} tried to access user {TargetUserId} from different school",
+							userClaims.UserId,
+							userId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You cannot access users from a different school",
+							Status = "failed"
+						};
+					}
+
+					_logger.Information(
+						"User retrieved successfully - TargetUserId: {TargetUserId}, Email: {Email}",
+						user.Id,
+						user.EmailAddress);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "User retrieved successfully",
+						Status = "successful",
+						Data = new UserDto
+						{
+							Id = user.Id,
+							FirstName = user.FirstName,
+							LastName = user.LastName,
+							UserName = user.UserName,
+							EmailAddress = user.EmailAddress,
+							RoleId = user.RoleId,
+							RoleName = ((UserRole)user.RoleId).ToString(),
+							IsActive = user.IsActive,
+							HasAccess = user.HasAccess,
+							ProfileImage = user.ProfileImage,
+							GuardianName = user.GuardianName,
+							CreatedDate = user.CreationDate,
+							ModifiedDate = user.ModifiedDate
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error fetching user by ID - TargetUserId: {TargetUserId}", userId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching user",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		// ✅ Email exists check using generic methods
+		//private async Task<bool> CheckEmailExists(string email, Guid schoolId, Guid excludeUserId)
+		//{
+		//	try
+		//	{
+		//		var query = $@"
+		//              SELECT COUNT(1) 
+		//              FROM Users 
+		//              WHERE LOWER(EmailAddress) = '{email.ToLower()}' 
+		//              AND SchoolId = '{schoolId}' 
+		//              AND Id != '{excludeUserId}'";
+
+		//		var count = await _queryRepository.CountAsync(query, new Dictionary<string, object>());
+		//		return count > 0;
+		//	}
+		//	catch (Exception ex)
+		//	{
+		//		_logger.LogError(ex, "Error checking email existence");
+		//		return true; // Safe default
+		//	}
+		//}
+
 
 		/// <summary>
 		/// Validate student exists, belongs to school, and is active
@@ -915,7 +2054,7 @@ namespace TechHub.Service.Service
 				new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
 				new Claim(ClaimTypes.Name, user.UserName ?? string.Empty),
 				new Claim(ClaimTypes.Email, user.EmailAddress ?? string.Empty),
-				new Claim(ClaimTypes.Role, user.RoleId.ToString()),
+		        new Claim(ClaimTypes.Role, ((UserRole)user.RoleId).ToString()),
 				new Claim("SchoolId", user.SchoolId.ToString()),
 				new Claim("TenantId", tenantId ?? string.Empty),
 				new Claim("SchoolName", schoolInfo?.SchoolName ?? string.Empty),
@@ -933,7 +2072,7 @@ namespace TechHub.Service.Service
 				claims.Add(new Claim(ClaimTypes.Surname, user.LastName));
 			}
 
-			var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
+			var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:SecretKey"]));
 			var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 			var expires = DateTime.UtcNow.AddHours(1); // Token valid for 1 hour
 
@@ -1051,7 +2190,6 @@ namespace TechHub.Service.Service
 
 			await _commandRepositoryStudentClassroom.Create(scope.Transaction, scope.Connection, studentClassroom);
 
-			// Create student minor subjects (if any)
 			if (userViewModel.UserSubjects.Any())
 			{
 				var studentSubjects = userViewModel.UserSubjects.Select(subjectId => new Dictionary<string, object>
@@ -1119,6 +2257,653 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		#region AssignAdminPermissions
+
+		/// <summary>
+		/// Assign or update permissions for an admin user
+		/// Flow:
+		/// 1. Validate requesting user is SuperAdmin
+		/// 2. Validate target user is Admin/SuperAdmin
+		/// 3. Validate permission values are valid
+		/// 4. Convert List<int> to single int using bitwise OR
+		/// 5. Store in database
+		/// </summary>
+		public async Task<BaseResponse> AssignAdminPermissions(
+			AssignAdminPermissionsViewModel model,
+			AuthenticatedUserClaims userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
+			{
+				try
+				{
+					// Validation 1: Parse GUIDs
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					{
+						_logger.Warning("Invalid SchoolId format - SchoolId: {SchoolId}", userClaims.SchoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userClaims.UserId, out var requestingUserId))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid UserId format",
+							Status = "failed"
+						};
+					}
+
+					// Validation 2: Check requesting user is SuperAdministrator
+					var requestingUser = await _queryrepositoryUser.Get(requestingUserId);
+					if (requestingUser == null)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "User not found",
+							Status = "failed"
+						};
+					}
+
+					if (requestingUser.RoleId != (int)UserRole.SuperAdministrator)
+					{
+						_logger.Warning(
+							"Unauthorized permission assignment attempt - UserId: {UserId}, Role: {Role}",
+							requestingUserId,
+							((UserRole)requestingUser.RoleId).ToString());
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Only SuperAdministrators can assign admin permissions",
+							Status = "failed"
+						};
+					}
+
+					// Validation 3: Check for invalid permission values
+					// Uses extension method to find values not in {0, 1, 2, 4, 8, 16, 32, 64}
+					var invalidPermissions = model.Permissions.GetInvalidPermissions();
+
+					if (invalidPermissions.Any())
+					{
+						_logger.Warning(
+							"Invalid permission values provided - InvalidValues: {InvalidValues}",
+							string.Join(", ", invalidPermissions));
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = $"Invalid permission values: {string.Join(", ", invalidPermissions)}. Valid values are: 1, 2, 4, 8, 16, 32, 64",
+							Status = "failed"
+						};
+					}
+
+					_logger.Information(
+						"Assigning admin permissions - TargetUserId: {TargetUserId}, Permissions: [{Permissions}]",
+						model.AdminUserId,
+						string.Join(", ", model.Permissions));
+
+					// Validation 4: Check target admin user exists
+					var targetAdmin = await _queryrepositoryUser.Get(model.AdminUserId);
+					if (targetAdmin == null)
+					{
+						_logger.Warning("Target admin not found - UserId: {UserId}", model.AdminUserId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Admin user not found",
+							Status = "failed"
+						};
+					}
+
+					// Validation 5: Multi-tenancy check
+					if (targetAdmin.SchoolId != schoolId)
+					{
+						_logger.Warning(
+							"Admin belongs to different school - AdminId: {AdminId}, AdminSchoolId: {AdminSchoolId}, RequestSchoolId: {RequestSchoolId}",
+							model.AdminUserId,
+							targetAdmin.SchoolId,
+							schoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Admin belongs to a different school",
+							Status = "failed"
+						};
+					}
+
+					// Validation 6: Check target user role
+					if (targetAdmin.RoleId != (int)UserRole.Administrator &&
+						targetAdmin.RoleId != (int)UserRole.SuperAdministrator)
+					{
+						_logger.Warning(
+							"User is not an admin - UserId: {UserId}, Role: {Role}",
+							model.AdminUserId,
+							((UserRole)targetAdmin.RoleId).ToString());
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = $"User {targetAdmin.FirstName} {targetAdmin.LastName} is not an Administrator",
+							Status = "failed"
+						};
+					}
+
+					// Validation 7: Check target user is active
+					if (!targetAdmin.IsActive)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = $"Admin {targetAdmin.FirstName} {targetAdmin.LastName} is not active",
+							Status = "failed"
+						};
+					}
+
+					// Convert List<int> to AdminPermission enum using extension method
+					// Example: [1, 2, 16] → (AdminPermission)19
+					var permissionsEnum = model.Permissions.ToAdminPermission();
+					var permissionsValue = (int)permissionsEnum;
+
+					// Check if permissions record already exists
+					var existingPermissions = await GetExistingPermissions(model.AdminUserId, schoolId);
+
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+					if (existingPermissions != null)
+					{
+						// Update existing permissions
+						var updateDict = new Dictionary<string, object>
+						{
+							{ "Permissions", permissionsValue },
+							{ "ModifiedDate", now }
+						};
+
+						var whereClause = new KeyValuePair<string, object>("Id", existingPermissions.Id);
+						await _adminPermissionsCommandRepository.UpdateTableColumnById(updateDict, whereClause);
+
+						_logger.Information(
+							"Admin permissions updated - AdminId: {AdminId}, PermissionsValue: {PermissionsValue}, Permissions: [{Permissions}]",
+							model.AdminUserId,
+							permissionsValue,
+							string.Join(", ", model.Permissions));
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.successful,
+							ResponseMessage = $"Permissions updated successfully for {targetAdmin.FirstName} {targetAdmin.LastName}",
+							Status = "successful",
+							Data = new
+							{
+								AdminId = model.AdminUserId,
+								AdminName = $"{targetAdmin.FirstName} {targetAdmin.LastName}",
+								PermissionsValue = permissionsValue,
+								Permissions = model.Permissions,
+								PermissionNames = model.Permissions.ToPermissionNames()
+							}
+						};
+					}
+					else
+					{
+						// Create new permissions record
+						var permissionsDict = new Dictionary<string, object>
+						{
+							{ "Id", Guid.NewGuid() },
+							{ "UserId", model.AdminUserId },
+							{ "SchoolId", schoolId },
+							{ "Permissions", permissionsValue },
+							{ "CreationDate", now },
+							{ "ModifiedDate", now },
+							{ "CreatedBy", requestingUserId },
+							{ "IsActive", true }
+						};
+
+						await _adminPermissionsCommandRepository.Create(permissionsDict);
+
+						_logger.Information(
+							"Admin permissions created - AdminId: {AdminId}, PermissionsValue: {PermissionsValue}, Permissions: [{Permissions}]",
+							model.AdminUserId,
+							permissionsValue,
+							string.Join(", ", model.Permissions));
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.successful,
+							ResponseMessage = $"Permissions assigned successfully to {targetAdmin.FirstName} {targetAdmin.LastName}",
+							Status = "successful",
+							Data = new
+							{
+								AdminId = model.AdminUserId,
+								AdminName = $"{targetAdmin.FirstName} {targetAdmin.LastName}",
+								PermissionsValue = permissionsValue,
+								Permissions = model.Permissions,
+								PermissionNames = model.Permissions.ToPermissionNames()
+							}
+						};
+					}
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(
+						ex,
+						"Error assigning admin permissions - AdminId: {AdminId}",
+						model.AdminUserId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while assigning permissions",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		#endregion
+
+		#region GetAdminPermissions
+
+		/// <summary>
+		/// Get permissions for a specific admin
+		/// Converts database int value back to List<int> for API response
+		/// </summary>
+		public async Task<BaseResponse> GetAdminPermissions(
+			Guid adminUserId,
+			AuthenticatedUserClaims userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
+			{
+				try
+				{
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format",
+							Status = "failed"
+						};
+					}
+
+					var admin = await _queryrepositoryUser.Get(adminUserId);
+					if (admin == null)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Admin user not found",
+							Status = "failed"
+						};
+					}
+
+					if (admin.SchoolId != schoolId)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Admin belongs to a different school",
+							Status = "failed"
+						};
+					}
+
+					var permissions = await GetExistingPermissions(adminUserId, schoolId);
+
+					if (permissions == null)
+					{
+						// No permissions assigned - return defaults (all false)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.successful,
+							ResponseMessage = "No permissions assigned (using defaults)",
+							Status = "successful",
+							Data = new AdminPermissionsDto
+							{
+								UserId = adminUserId,
+								UserName = $"{admin.FirstName} {admin.LastName}",
+								Email = admin.EmailAddress ?? string.Empty,
+								RoleName = ((UserRole)admin.RoleId).ToString(),
+								PermissionsValue = 0,
+								Permissions = new List<int>(),
+								//PermissionNames = new List<string>()
+							}
+						};
+					}
+
+					// Convert database int to enum, then to list
+					// Example: 19 → (AdminPermission)19 → [1, 2, 16]
+					var permissionsEnum = (AdminPermission)permissions.Permissions;
+					var permissionsList = permissionsEnum.ToPermissionList();
+					var permissionNames = permissionsList.ToPermissionNames();
+
+					var creator = await _queryrepositoryUser.Get(permissions.CreatedBy);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Admin permissions retrieved successfully",
+						Status = "successful",
+						Data = new AdminPermissionsDto
+						{
+							Id = permissions.Id,
+							UserId = adminUserId,
+							UserName = $"{admin.FirstName} {admin.LastName}",
+							Email = admin.EmailAddress ?? string.Empty,
+							RoleName = ((UserRole)admin.RoleId).ToString(),
+							PermissionsValue = permissions.Permissions,
+							Permissions = permissionsList,
+							//PermissionNames = permissionNames,
+							CreationDate = permissions.CreationDate ?? string.Empty,
+							ModifiedDate = permissions.ModifiedDate ?? string.Empty,
+							CreatedByName = creator != null ? $"{creator.FirstName} {creator.LastName}" : string.Empty
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error fetching admin permissions - AdminId: {AdminId}", adminUserId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching permissions",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		#endregion
+
+		#region GetAllAdminPermissions
+
+		/// <summary>
+		/// Get all admin permissions for the school (paginated)
+		/// </summary>
+		public async Task<BaseResponse> GetAllAdminPermissions(
+			AuthenticatedUserClaims userClaims,
+			int pageNumber = 1,
+			int pageSize = 50)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
+			{
+				try
+				{
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format",
+							Status = "failed"
+						};
+					}
+
+					// Validate pagination
+					if (pageNumber < 1) pageNumber = 1;
+					if (pageSize < 1 || pageSize > 100) pageSize = 50;
+
+					_logger.Information("Fetching all admin permissions - SchoolId: {SchoolId}", schoolId);
+
+					// Get all active permissions for school
+					var query = $@"
+                        SELECT * FROM AdminPermissions 
+                        WHERE SchoolId = '{schoolId}' 
+                        AND IsActive = 1
+                        ORDER BY CreationDate DESC";
+
+					var allPermissions = await _adminPermissionsQueryRespository.GetByQuery(query);
+					var permissionsList = allPermissions.Where(p => p != null).ToList();
+
+					// Pagination
+					var totalCount = permissionsList.Count;
+					var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+					var paginatedPermissions = permissionsList
+						.Skip((pageNumber - 1) * pageSize)
+						.Take(pageSize)
+						.ToList();
+
+					// Map to DTOs
+					var permissionDtos = new List<AdminPermissionsDto>();
+
+					foreach (var permission in paginatedPermissions)
+					{
+						if (permission == null) continue;
+
+						var admin = await _queryrepositoryUser.Get(permission.UserId);
+						if (admin == null) continue;
+
+						var permissionsEnum = (AdminPermission)permission.Permissions;
+						var permissionList = permissionsEnum.ToPermissionList();
+						var permissionNames = permissionList.ToPermissionNames();
+
+						var creator = await _queryrepositoryUser.Get(permission.CreatedBy);
+
+						permissionDtos.Add(new AdminPermissionsDto
+						{
+							Id = permission.Id,
+							UserId = permission.UserId,
+							UserName = $"{admin.FirstName} {admin.LastName}",
+							Email = admin.EmailAddress ?? string.Empty,
+							RoleName = ((UserRole)admin.RoleId).ToString(),
+							PermissionsValue = permission.Permissions,
+							Permissions = permissionList,
+							//PermissionNames = permissionNames,
+							CreationDate = permission.CreationDate ?? string.Empty,
+							ModifiedDate = permission.ModifiedDate ?? string.Empty,
+							CreatedByName = creator != null ? $"{creator.FirstName} {creator.LastName}" : string.Empty
+						});
+					}
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Admin permissions retrieved successfully",
+						Status = "successful",
+						Data = new 
+						{
+							AdminPermissions = permissionDtos,
+							TotalCount = totalCount,
+							PageNumber = pageNumber,
+							PageSize = pageSize,
+							TotalPages = totalPages,
+							HasPreviousPage = pageNumber > 1,
+							HasNextPage = pageNumber < totalPages
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error fetching all admin permissions");
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching admin permissions",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		#endregion
+
+		#region RevokeAdminPermissions
+
+		/// <summary>
+		/// Revoke all permissions from an admin (soft delete)
+		/// </summary>
+		public async Task<BaseResponse> RevokeAdminPermissions(
+			Guid adminUserId,
+			AuthenticatedUserClaims userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
+			{
+				try
+				{
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userClaims.UserId, out var requestingUserId))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid UserId format",
+							Status = "failed"
+						};
+					}
+
+					// Check requesting user is SuperAdmin
+					var requestingUser = await _queryrepositoryUser.Get(requestingUserId);
+					if (requestingUser?.RoleId != (int)UserRole.SuperAdministrator)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Only SuperAdministrators can revoke permissions",
+							Status = "failed"
+						};
+					}
+
+					_logger.Information("Revoking admin permissions - AdminId: {AdminId}", adminUserId);
+
+					var permissions = await GetExistingPermissions(adminUserId, schoolId);
+
+					if (permissions == null)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "No permissions found for this admin",
+							Status = "failed"
+						};
+					}
+
+					// Soft delete
+					var updateDict = new Dictionary<string, object>
+					{
+						{ "IsActive", false },
+						{ "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") }
+					};
+
+					var whereClause = new KeyValuePair<string, object>("Id", permissions.Id);
+					await _adminPermissionsCommandRepository.UpdateTableColumnById(updateDict, whereClause);
+
+					_logger.Information("Admin permissions revoked - AdminId: {AdminId}", adminUserId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Admin permissions revoked successfully",
+						Status = "successful"
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error revoking admin permissions - AdminId: {AdminId}", adminUserId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while revoking permissions",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		#endregion
+
+		#region HasPermission
+
+		/// <summary>
+		/// Check if admin has a specific permission
+		/// Used by other services for authorization checks
+		/// </summary>
+		/// <example>
+		/// var canApprove = await HasPermission(adminId, schoolId, AdminPermission.ApproveClasses);
+		/// </example>
+		public async Task<bool> HasPermission(
+			Guid adminUserId,
+			Guid schoolId,
+			AdminPermission permission)
+		{
+			try
+			{
+				var permissions = await GetExistingPermissions(adminUserId, schoolId);
+				if (permissions == null) return false;
+
+				// Convert database int to enum and check using bitwise AND
+				var adminPermissions = (AdminPermission)permissions.Permissions;
+				return adminPermissions.HasPermission(permission);
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error checking permission - AdminId: {AdminId}", adminUserId);
+				return false;
+			}
+		}
+
+		#endregion
+
+		#region Helper Methods
+
+		/// <summary>
+		/// Get existing permissions record from database
+		/// </summary>
+		private async Task<AdminPermissions?> GetExistingPermissions(Guid adminUserId, Guid schoolId)
+		{
+			try
+			{
+				var query = $@"
+                    SELECT * FROM AdminPermissions 
+                    WHERE UserId = '{adminUserId}' 
+                    AND SchoolId = '{schoolId}' 
+                    AND IsActive = 1";
+
+				var permissions = await _adminPermissionsQueryRespository.Get(query);
+				return permissions;
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(
+					ex,
+					"Error fetching existing permissions - AdminId: {AdminId}",
+					adminUserId);
+				return null;
+			}
+		}
+
+		#endregion
+	
+
+
+
+		public Task<BaseResponse> GetStudents(AuthenticatedUserClaims? claims, int pageNumber, int pageSize)
+		{
+			throw new NotImplementedException();
+		}
+
 		/// <summary>
 		/// Hash password using BCrypt
 		/// </summary>
@@ -1126,5 +2911,34 @@ namespace TechHub.Service.Service
 		//{
 		//	return BCrypt.Net.BCrypt.HashPassword(password);
 		//}
+	}
+
+	internal class UsersListData
+	{
+		public object Users { get; set; }
+		public object TotalCount { get; set; }
+		public int PageNumber { get; set; }
+		public int PageSize { get; set; }
+		public int TotalPages { get; set; }
+		public bool HasPreviousPage { get; set; }
+		public bool HasNextPage { get; set; }
+		public string RoleFilter { get; set; }
+	}
+
+	internal class UserDto
+	{
+		public object Id { get; set; }
+		public object FirstName { get; set; }
+		public object LastName { get; set; }
+		public object UserName { get; set; }
+		public object EmailAddress { get; set; }
+		public object RoleId { get; set; }
+		public string RoleName { get; set; }
+		public object IsActive { get; set; }
+		public object HasAccess { get; set; }
+		public object ProfileImage { get; set; }
+		public object GuardianName { get; set; }
+		public object CreatedDate { get; set; }
+		public object ModifiedDate { get; set; }
 	}
 }

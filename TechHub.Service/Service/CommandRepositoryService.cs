@@ -258,5 +258,40 @@ namespace TechHub.Service.Service
 			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
 			await conn.ExecuteAsync(query, parameter);
 		}
+
+		public async Task UpdateBatchByIdAsyncV2(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var parameter = new DynamicParameters();
+			var queryBuilder = new StringBuilder();
+
+			for (int i = 0; i < batchValues.Count; i++)
+			{
+				var values = batchValues[i];
+
+				if (!values.ContainsKey("Id"))
+					throw new ArgumentException($"Batch item at index {i} is missing required 'Id' key");
+
+				// Build SET clause excluding Id
+				var setClauses = values.Keys
+					.Where(k => k != "Id")
+					.Select(k => $"[{k}] = @{k}_{i}");
+
+				queryBuilder.AppendLine($@"
+					UPDATE [{tableName}] 
+					SET {string.Join(", ", setClauses)}
+					WHERE [Id] = @Id_{i};");
+
+				// Add parameters with consistent naming @ColumnName_rowIndex
+				foreach (var key in values.Keys)
+				{
+					parameter.Add($"@{key}_{i}", values[key]);
+				}
+			}
+
+			await conn.ExecuteAsync(queryBuilder.ToString(), parameter);
+		}
 	}
 }
