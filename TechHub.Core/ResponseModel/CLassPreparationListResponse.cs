@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core.DTO;
+using TechHub.Core.ViewModel;
 
 namespace TechHub.Core.ResponseModel;
 

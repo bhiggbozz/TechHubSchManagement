@@ -17,10 +17,10 @@ public class MediaUploadJob
 
 	private readonly ICloudinaryService _cloudinaryService;
 	private readonly ICommandRespository<ClassPreparationMedia> _mediaCommandRepo;
-	private readonly ILogger _logger;
+	private readonly ILogger<MediaUploadJob> _logger;
 
 	public MediaUploadJob(
-		ICloudinaryService cloudinaryService, ICommandRespository<ClassPreparationMedia> mediaCommandRepo, ILogger logger)
+		ICloudinaryService cloudinaryService, ICommandRespository<ClassPreparationMedia> mediaCommandRepo, ILogger<MediaUploadJob> logger)
 	{
 		_cloudinaryService = cloudinaryService;
 		_mediaCommandRepo = mediaCommandRepo;

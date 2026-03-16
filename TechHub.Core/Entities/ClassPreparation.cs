@@ -7,6 +7,10 @@ using System.Threading.Tasks;
 namespace TechHub.Core.Entities;
 public class ClassPreparation
 {
+	public string TeacherName;
+	public bool IsUrgent;
+	public bool NeedsReview;
+
 	public Guid Id { get; set; } = Guid.NewGuid();
 	public Guid ClassroomId { get; set; }
 	public Guid SubjectId { get; set; }

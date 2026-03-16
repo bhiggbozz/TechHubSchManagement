@@ -3,6 +3,7 @@
 using TechHub.Core;
 using TechHub.Core.DTO;
 using TechHub.Core.Enums;
+using TechHub.Core.ViewModel;
 
 namespace TechHub.Service.ViewModels
 {

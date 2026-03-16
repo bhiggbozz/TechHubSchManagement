@@ -59,3 +59,8 @@ namespace TechHub.Core.Model;
 //	/// </summary>
 //	public string ErrorMessage { get; set; } = string.Empty;
 //}
+
+/// <summary>
+/// NEW: Upload token for direct browser upload
+/// Contains all credentials needed to upload directly to Cloudinary
+/// </summary>

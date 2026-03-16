@@ -14,10 +14,7 @@ public static class MediaKeyGenerator
 	/// Format: {schoolId-short}_{timestamp}_{hash}_{sanitized-filename}
 	/// Example: "e589_20250308143022_a1b2c3_physics_lecture.mp4"
 	/// </summary>
-	public static string GenerateMediaKey(
-		Guid schoolId,
-		string originalFileName,
-		byte[] fileContent)
+	public static string GenerateMediaKey(Guid schoolId,string originalFileName,byte[] fileContent)
 	{
 		// 1. Short school ID (first 8 chars)
 		var schoolPrefix = schoolId.ToString("N")[..8];
@@ -91,6 +88,81 @@ public static class MediaKeyGenerator
 			sanitized = sanitized[..50];
 
 		return sanitized + extension.ToLower();
+	}
+
+	/// <summary>
+	/// Generate unique media key for Cloudinary storage
+	/// 
+	/// USAGE:
+	/// var mediaKey = MediaKeyGenerator.GenerateKey(schoolId, "Physics Lecture.mp4");
+	/// // Returns: "a1b2c3d4_20250315143025_f7a8b9_physics-lecture.mp4"
+	/// 
+	/// ALGORITHM:
+	/// 1. Extract first 8 characters of school ID
+	/// 2. Get current timestamp (yyyyMMddHHmmss)
+	/// 3. Generate 6-character random hash
+	/// 4. Sanitize filename (remove special characters)
+	/// 5. Combine into format: {schoolId}_{timestamp}_{hash}_{filename}
+	/// </summary>
+	/// <param name="schoolId">School GUID</param>
+	/// <param name="fileName">Original filename with extension</param>
+	/// <returns>Unique sanitized media key</returns>
+	public static string GenerateKey(Guid schoolId, string fileName)
+	{
+		// Extract first 8 characters of school ID
+		// Example: a1b2c3d4-e5f6-7890-abcd-ef1234567890 → a1b2c3d4
+		var schoolPrefix = schoolId.ToString("N").Substring(0, 8);
+
+		// Generate timestamp
+		// Format: yyyyMMddHHmmss (20250315143025)
+		var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+
+		// Generate random 6-character hash for uniqueness
+		// Prevents collisions if two files uploaded at same second
+		var randomHash = GenerateRandomHash(6);
+
+		// Sanitize filename
+		var sanitizedFileName = SanitizeFileName(fileName);
+
+		// Combine components
+		// Format: {schoolPrefix}_{timestamp}_{hash}_{sanitizedFileName}
+		var mediaKey = $"{schoolPrefix}_{timestamp}_{randomHash}_{sanitizedFileName}";
+
+		return mediaKey;
+	}
+
+	/// <summary>
+	/// Generate random alphanumeric hash
+	/// 
+	/// USED FOR: Adding uniqueness to prevent filename collisions
+	/// 
+	/// ALGORITHM:
+	/// 1. Generate random bytes using cryptographically secure RNG
+	/// 2. Convert to Base64
+	/// 3. Remove non-alphanumeric characters
+	/// 4. Take first N characters
+	/// 5. Convert to lowercase
+	/// </summary>
+	/// <param name="length">Desired hash length (default 6)</param>
+	/// <returns>Random lowercase alphanumeric string</returns>
+	private static string GenerateRandomHash(int length = 6)
+	{
+		using (var rng = RandomNumberGenerator.Create())
+		{
+			// Generate random bytes (need more than length to account for filtering)
+			var bytes = new byte[length * 2];
+			rng.GetBytes(bytes);
+
+			// Convert to Base64 and remove non-alphanumeric characters
+			var hash = Convert.ToBase64String(bytes)
+				.Replace("+", "")
+				.Replace("/", "")
+				.Replace("=", "")
+				.ToLowerInvariant();
+
+			// Take first N characters
+			return hash.Substring(0, Math.Min(length, hash.Length));
+		}
 	}
 }
 

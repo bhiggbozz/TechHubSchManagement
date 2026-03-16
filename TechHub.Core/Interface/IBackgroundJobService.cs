@@ -25,4 +25,38 @@
 		/// Runs daily at 2 AM
 		/// </summary>
 		void ScheduleMediaCleanup();
-	}
+
+	/// <summary>
+	/// ✅ NEW: Enqueue thumbnail generation job
+	/// Generates video thumbnail and preview clip
+	/// 
+	/// CALLED AFTER:
+	/// - Direct-to-CDN upload confirmed
+	/// - Server-side upload completed
+	/// 
+	/// GENERATES:
+	/// - Thumbnail image (frame at 2 seconds)
+	/// - Preview clip (first 30 seconds)
+	/// </summary>
+	string EnqueueThumbnailGeneration(
+		Guid mediaId,
+		string publicId,
+		Guid schoolId);
+
+	/// <summary>
+	/// ✅ NEW: Enqueue AI content analysis job
+	/// Analyzes video for inappropriate content, quality, topics
+	/// 
+	/// CALLED AFTER:
+	/// - Direct-to-CDN upload confirmed
+	/// - Server-side upload completed
+	/// 
+	/// ANALYZES:
+	/// - Content flags (inappropriate, educational)
+	/// - Quality metrics (resolution, audio, video)
+	/// - Key moments (intro, main content, summary)
+	/// - Detected topics (subject matter)
+	/// </summary>
+	string EnqueueAIContentAnalysis(Guid mediaId,string cdnUrl,int? duration);
+}
+

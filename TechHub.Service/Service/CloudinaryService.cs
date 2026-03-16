@@ -4,6 +4,8 @@ using CloudinaryDotNet;
 using CloudinaryDotNet.Actions;
 using Microsoft.Extensions.Options;
 using Serilog;
+using System.Security.Cryptography;
+using System.Text;
 using TechHub.Core.Configuration;
 using TechHub.Core.Enum;
 using TechHub.Core.Enums;
@@ -19,6 +21,7 @@ namespace TechHub.Service.Service
 
 		public CloudinaryService(IOptions<CloudinarySettings> options,ILogger logger)
 		{
+	
 			_settings = options.Value;
 			_logger = logger;
 
@@ -35,10 +38,7 @@ namespace TechHub.Service.Service
 			}
 
 			// Initialize Cloudinary
-			var account = new Account(
-				_settings.CloudName,
-				_settings.ApiKey,
-				_settings.ApiSecret);
+			var account = new Account(_settings.CloudName,_settings.ApiKey,_settings.ApiSecret);
 
 			_cloudinary = new Cloudinary(account);
 			_cloudinary.Api.Secure = true;
@@ -658,9 +658,144 @@ namespace TechHub.Service.Service
 			return $"{len:0.##} {sizes[order]}";
 		}
 
-		
+
 
 		#endregion
+
+		/// <summary>
+		/// NEW: Generate signed upload token for direct browser-to-Cloudinary upload
+		/// 
+		/// SIGNATURE ALGORITHM:
+		/// 1. Create sorted parameter dictionary (timestamp, folder, public_id)
+		/// 2. Concatenate into "key1=value1&key2=value2" string
+		/// 3. Append API secret (this makes it impossible to forge)
+		/// 4. Compute SHA-1 hash
+		/// 5. Return as hexadecimal string
+		/// 
+		/// SECURITY:
+		/// - API Secret NEVER sent to frontend
+		/// - Signature proves parameters came from your server
+		/// - Frontend cannot generate valid signatures
+		/// - Timestamp limits validity to 1 hour
+		/// - PublicId and Folder lock upload destination
+		/// 
+		/// EXAMPLE:
+		/// Input parameters:
+		///   timestamp: 1710512345
+		///   folder: "temp/pending/school-abc"
+		///   public_id: "media-xyz-123"
+		/// 
+		/// String to sign:
+		///   "folder=temp/pending/school-abc&public_id=media-xyz-123&timestamp=1710512345YOUR_API_SECRET"
+		/// 
+		/// Signature (SHA-1):
+		///   "a7f8b9c2d3e4f5g6h7i8j9k0l1m2n3o4p5q6r7s8"
+		/// </summary>
+		public CloudinaryUploadToken GenerateUploadToken(string publicId,string folder,long timestamp)
+		{
+			try
+			{
+				_logger.Debug(
+					"Generating upload token - PublicId: {PublicId}, Folder: {Folder}",publicId,folder);
+
+				// Parameters to include in signature
+				// MUST match exactly what frontend sends to Cloudinary
+				// Sorted alphabetically for consistent signature generation
+				var paramsToSign = new SortedDictionary<string, object>
+				{
+					{ "timestamp", timestamp },
+					{ "folder", folder },
+					{ "public_id", publicId }
+				};
+
+				// Generate cryptographic signature
+				var signature = GenerateSignature(paramsToSign);
+
+				_logger.Information(
+					"Upload token generated - PublicId: {PublicId}, ExpiresAt: {ExpiresAt}",
+					publicId,
+					DateTimeOffset.FromUnixTimeSeconds(timestamp + 3600).ToString("yyyy-MM-dd HH:mm:ss"));
+
+				return new CloudinaryUploadToken
+				{
+					UploadUrl = $"https://api.cloudinary.com/v1_1/{_settings.CloudName}/auto/upload",
+					Signature = signature,
+					Timestamp = timestamp,
+					PublicId = publicId,
+					Folder = folder,
+					ApiKey =  _settings.ApiKey,  // Safe to expose (public identifier, not secret)
+					CloudName = _settings.CloudName
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error generating upload token - PublicId: {PublicId}", publicId);
+				throw;
+			}
+		}
+
+		/// <summary>
+		/// Generate SHA-1 signature for Cloudinary authentication
+		/// 
+		/// CRITICAL SECURITY:
+		/// - API Secret appended to parameter string
+		/// - Without API Secret, signature cannot be forged
+		/// - This is what makes direct uploads secure
+		/// 
+		/// USED FOR:
+		/// - Upload tokens (frontend direct upload)
+		/// - Webhook validation (verify Cloudinary sent request)
+		/// - Any authenticated Cloudinary API call
+		/// 
+		/// ALGORITHM DETAILS:
+		/// 1. Sort parameters alphabetically by key
+		/// 2. Build "key1=value1&key2=value2" string
+		/// 3. Append API Secret: "params_stringYOUR_API_SECRET"
+		/// 4. Compute SHA-1 hash of combined string
+		/// 5. Convert to lowercase hexadecimal
+		/// 
+		/// WHY SHA-1 (not SHA-256)?
+		/// - Cloudinary API requires SHA-1 specifically
+		/// - SHA-1 is sufficient for HMAC signatures (not file hashing)
+		/// </summary>
+		public string GenerateSignature(SortedDictionary<string, object> parameters)
+		{
+			try
+			{
+				// Sort parameters alphabetically
+				// This ensures consistent signature regardless of parameter order
+				var sortedParams = new SortedDictionary<string, object>(parameters);
+
+				// Build string to sign
+				// Format: "key1=value1&key2=value2&key3=value3"
+				var stringToSign = string.Join("&",
+					sortedParams.Select(kvp => $"{kvp.Key}={kvp.Value}"));
+
+				// CRITICAL: Append API secret
+				// This is what makes the signature secure
+				// Frontend doesn't have API secret, so can't forge signatures
+				stringToSign += _settings.ApiSecret;
+
+				_logger.Debug("String to sign (without secret): {Params}",
+					string.Join("&", sortedParams.Select(kvp => $"{kvp.Key}={kvp.Value}")));
+
+				// Compute SHA-1 hash
+				using (var sha1 = SHA1.Create())
+				{
+					var hash = sha1.ComputeHash(Encoding.UTF8.GetBytes(stringToSign));
+					var signature = BitConverter.ToString(hash)
+						.Replace("-", "")
+						.ToLowerInvariant();
+
+					return signature;
+				}
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error generating signature");
+				throw;
+			}
+		}
 	}
 
 	#region Result Classes
@@ -724,4 +859,6 @@ namespace TechHub.Service.Service
 	}
 
 	#endregion
+
+	
 }

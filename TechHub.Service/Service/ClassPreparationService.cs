@@ -4,10 +4,12 @@ using TechHub.Core;
 using TechHub.Core.DTO;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
+using TechHub.Core.Enums;
 using TechHub.Core.Helper;
 using TechHub.Core.Model;
 using TechHub.Core.Models;
 using TechHub.Core.ResponseModel;
+using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.classroom;
 using TechHub.Service.Interface;
 using TechhubMS.util;
@@ -19,14 +21,15 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<ClassPreparation> _classQueryRepo;
 		private readonly ICommandRespository<ClassPreparation> _classCommandRepo;
 		private readonly IMediaService _mediaService;
-		private readonly UserService _userService;
+		private readonly ITeacherTrustScoreService _trustScoreService;
+		private readonly IUserService _userService;
 		private readonly ILogger _logger;
 
 		public ClassPreparationService(
 			IQueryRepository<ClassPreparation> classQueryRepo,
 			ICommandRespository<ClassPreparation> classCommandRepo,
 			IMediaService mediaService,
-			UserService userService,
+			IUserService userService,
 			ILogger logger)
 		{
 			_classQueryRepo = classQueryRepo;
@@ -60,14 +63,14 @@ namespace TechHub.Service.Service
 		/// - Approved: Already approved (can't modify approved content)
 		/// - InProgress/Completed: Class already happened
 		/// </remarks>
-		public async Task<ClassPreparationResponse> SaveClassPreparation(SaveClassPreparationViewModel model,AuthenticatedUserClaims userClaims)
+		public async Task<ClassPreparationResponse> SaveClassPreparation(SaveClassPreparationViewModel model, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
 			{
 				try
 				{
-					
+
 
 					if (!Guid.TryParse(userClaims.UserId, out var userId))
 					{
@@ -111,7 +114,7 @@ namespace TechHub.Service.Service
 								ResponseMessage = "Class preparation not found",
 								Status = "failed"
 							};
-						}					
+						}
 
 						if (existingClass.TeacherId != userId)
 						{
@@ -129,7 +132,7 @@ namespace TechHub.Service.Service
 							};
 						}
 
-						
+
 
 						var currentStatus = (ClassPreparationStatus)existingClass.Status;
 
@@ -148,7 +151,7 @@ namespace TechHub.Service.Service
 							};
 						}
 
-						
+
 
 						// Parse scheduled time if provided
 						TimeSpan? scheduledTime = null;
@@ -192,7 +195,7 @@ namespace TechHub.Service.Service
 					}
 					else
 					{
-						
+
 
 						_logger.Information(
 							"Creating new class preparation - Topic: {Topic}, Teacher: {TeacherId}",
@@ -259,7 +262,7 @@ namespace TechHub.Service.Service
 
 						_logger.Information("✅ Class preparation created - Id: {Id}", classId);
 
-						
+
 
 						if (model.MediaFileIds.Any())
 						{
@@ -307,7 +310,7 @@ namespace TechHub.Service.Service
 		/// - Teacher can only submit their own classes
 		/// - Once submitted, teacher cannot edit until approved/rejected
 		/// </remarks>
-		public async Task<BaseResponse> SubmitForApproval(SubmitForApprovalViewModel model,AuthenticatedUserClaims userClaims)
+		public async Task<BaseResponse> SubmitForApproval(SubmitForApprovalViewModel model, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			{
@@ -340,7 +343,7 @@ namespace TechHub.Service.Service
 							ResponseMessage = "Class preparation not found",
 							Status = "failed"
 						};
-					}					
+					}
 
 					if (classPrep.TeacherId != userId)
 					{
@@ -356,7 +359,7 @@ namespace TechHub.Service.Service
 							ResponseMessage = "You can only submit your own class preparations",
 							Status = "failed"
 						};
-					}					
+					}
 
 					var currentStatus = (ClassPreparationStatus)classPrep.Status;
 
@@ -428,83 +431,113 @@ namespace TechHub.Service.Service
 
 		#region Approve Class
 
+
 		/// <summary>
-		/// Approve class preparation (Admin only)
-		/// </summary>
-		/// <remarks>
-		/// WORKFLOW:
-		/// 1. Verify user is admin with ApproveClasses permission
-		/// 2. Verify class exists and status is Pending
-		/// 3. Prevent self-approval (teacher can't approve their own class)
-		/// 4. Update status to Approved
-		/// 5. Record approval date and admin
-		/// 6. Move all media to permanent storage
+		/// Approve a pending class preparation
 		/// 
-		/// BUSINESS RULES:
-		/// - Only admins with ApproveClasses permission can approve
-		/// - Only Pending classes can be approved
-		/// - Teacher cannot approve their own class (self-approval prevention)
-		/// - SuperAdmins bypass permission check
-		/// </remarks>
-		public async Task<BaseResponse> ApproveClass(ApproveClassViewModel model,AuthenticatedUserClaims userClaims)
+		/// COMPLETE WORKFLOW WITH ALL BUSINESS RULES:
+		/// 
+		/// 1. SECURITY VALIDATION:
+		///    - Parse and validate JWT user claims
+		///    - Verify admin user ID and school ID are valid GUIDs
+		/// 
+		/// 2. RETRIEVE CLASS:
+		///    - Fetch class preparation from database
+		///    - Verify class exists
+		/// 
+		/// 3. STATUS VALIDATION:
+		///    - Verify class is in Pending status
+		///    - Cannot approve Draft, Approved, or Rejected classes
+		/// 
+		/// 4. SELF-APPROVAL PREVENTION:
+		///    - Verify admin is not approving their own class
+		///    - TeacherId must differ from admin UserId
+		/// 
+		/// 5. PERMISSION CHECK:
+		///    - Verify admin has ApproveClasses permission
+		///    - SuperAdministrators bypass permission check
+		/// 
+		/// 6. MEDIA VALIDATION:
+		///    - Verify all media files are fully uploaded (status Completed)
+		///    - Prevent approving classes with pending uploads
+		/// 
+		/// 7. MOVE MEDIA TO PERMANENT STORAGE:
+		///    - Move all class media from temp to permanent folder
+		///    - FROM: temp/pending/{schoolId}/
+		///    - TO: schools/{schoolId}/
+		///    - Log warnings if some files fail but continue
+		/// 
+		/// 8. UPDATE CLASS STATUS:
+		///    - Change status from Pending to Approved
+		///    - Record approval metadata (admin, timestamp, notes, duration)
+		///    - Update modification timestamp
+		/// 
+		/// 9. UPDATE TEACHER TRUST SCORE:
+		///    - Recalculate trust score based on approval history
+		///    - Update consecutive approvals streak
+		///    - Log error if fails but don't block approval
+		/// 
+		/// 10. RETURN SUCCESS:
+		///     - Return success response to admin
+		/// 
+		/// ERROR HANDLING:
+		/// - All database operations wrapped in try-catch
+		/// - Detailed logging at each step
+		/// - Graceful degradation (trust score failure doesn't block approval)
+		/// - Descriptive error messages
+		/// </summary>
+		public async Task<BaseResponse> ApproveClass(Core.ViewModel.classroom.ApproveClassViewModel model, AuthenticatedUserClaims userClaims)
 		{
+			// Track approval duration for performance metrics
+			var approvalStartTime = DateTime.UtcNow;
+
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			using (LogContext.PushProperty("ClassPreparationId", model.ClassPreparationId))
 			{
 				try
 				{
-					if (!Guid.TryParse(userClaims.UserId, out var userId))
+					_logger.Information(
+						"Starting class approval - ClassId: {ClassId}, AdminUserId: {AdminId}",
+						model.ClassPreparationId,
+						userClaims.UserId);
+
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 1: PARSE AND VALIDATE USER CLAIMS
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+					if (!Guid.TryParse(userClaims.UserId, out var adminUserId))
 					{
+						_logger.Warning("Invalid UserId - UserId: {UserId}", userClaims.UserId);
+
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = "Invalid UserId",
+							ResponseMessage = "Invalid user identification",
 							Status = "failed"
 						};
 					}
 
 					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
 					{
+						_logger.Warning("Invalid SchoolId - SchoolId: {SchoolId}", userClaims.SchoolId);
+
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = "Invalid SchoolId",
+							ResponseMessage = "Invalid school identification",
 							Status = "failed"
 						};
 					}
 
-					_logger.Information(
-						"Approving class - ClassId: {ClassId}, ApprovedBy: {UserId}", model.ClassPreparationId, userId);
+					_logger.Debug("Claims validated - AdminId: {AdminId}, SchoolId: {SchoolId}", adminUserId, schoolId);
 
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 2: RETRIEVE CLASS PREPARATION
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-					var userRole = int.Parse(userClaims.Role ?? "0");
+					var classPreparation = await _classQueryRepo.Get(model.ClassPreparationId);
 
-					// SuperAdmins bypass permission check
-					if (userRole == (int)UserRole.Administrator)
-					{
-						var hasPermission = await _userService.HasPermission(
-							userId,
-							schoolId,
-							AdminPermission.ApproveClasses);
-
-						if (!hasPermission)
-						{
-							_logger.Warning(
-								"Admin lacks ApproveClasses permission - UserId: {UserId}",
-								userId);
-
-							return new BaseResponse
-							{
-								ResponseCode = ResponseCode.Forbidden,
-								ResponseMessage = "You don't have permission to approve classes",
-								Status = "failed"
-							};
-						}
-					}
-
-
-					var classPrep = await _classQueryRepo.Get(model.ClassPreparationId);
-
-					if (classPrep == null)
+					if (classPreparation == null)
 					{
 						_logger.Warning("Class not found - ClassId: {ClassId}", model.ClassPreparationId);
 
@@ -514,15 +547,25 @@ namespace TechHub.Service.Service
 							ResponseMessage = "Class preparation not found",
 							Status = "failed"
 						};
-					}					
+					}
 
-					var currentStatus = (ClassPreparationStatus)classPrep.Status;
+					_logger.Debug(
+						"Class retrieved - ClassId: {ClassId}, TeacherId: {TeacherId}, Status: {Status}",
+						classPreparation.Id,
+						classPreparation.TeacherId,
+						(ClassPreparationStatus)classPreparation.Status);
+
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 3: VERIFY CLASS IS IN PENDING STATUS
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+					var currentStatus = (ClassPreparationStatus)classPreparation.Status;
 
 					if (currentStatus != ClassPreparationStatus.Pending)
 					{
 						_logger.Warning(
-							"Attempted to approve class with invalid status - ClassId: {ClassId}, Status: {Status}",
-							model.ClassPreparationId,
+							"Invalid status - ClassId: {ClassId}, Status: {Status}",
+							classPreparation.Id,
 							currentStatus);
 
 						return new BaseResponse
@@ -531,77 +574,434 @@ namespace TechHub.Service.Service
 							ResponseMessage = $"Cannot approve class with status: {currentStatus}. Only Pending classes can be approved.",
 							Status = "failed"
 						};
-					}					
+					}
 
-					if (classPrep.TeacherId == userId)
+					_logger.Debug("Status verified as Pending");
+
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 4: PREVENT SELF-APPROVAL
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+					if (classPreparation.TeacherId == adminUserId)
 					{
-						_logger.Warning(
-							"Teacher attempted to approve their own class - ClassId: {ClassId}, TeacherId: {TeacherId}",
-							model.ClassPreparationId,
-							userId);
+						_logger.Warning("Self-approval attempt - AdminId: {AdminId}", adminUserId);
 
 						return new BaseResponse
 						{
-							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = "You cannot approve your own class preparation",
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You cannot approve your own class preparation. Another administrator must review it.",
 							Status = "failed"
 						};
-					}					
+					}
 
-					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+					_logger.Debug("Self-approval check passed");
 
-					var updateDict = new Dictionary<string, object>
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 5: CHECK ADMIN PERMISSIONS
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+					var userRole = userClaims?.Role;
+
+					if (userRole == UserRole.Administrator.ToString())
 					{
-						{ "Status", (int)ClassPreparationStatus.Approved },
-						{ "ApprovedBy", userId },
-						{ "ApprovedDate", now },
-						{ "ModifiedDate", now }
-					};
+						_logger.Debug("Checking ApproveClasses permission");
 
-					var whereClause = new KeyValuePair<string, object>("Id", model.ClassPreparationId);
-					await _classCommandRepo.UpdateTableColumnById(updateDict, whereClause);
+						var hasPermission = await _userService.HasPermission(adminUserId, schoolId, AdminPermission.ApproveClasses);
 
-					_logger.Information(
-						"Class approved - ClassId: {ClassId}, Status: Pending → Approved",
-						model.ClassPreparationId);
-					
+						if (!hasPermission)
+						{
+							_logger.Warning("Missing permission - AdminId: {AdminId}", adminUserId);
 
-					_logger.Information("Moving media to permanent storage - ClassId: {ClassId}", model.ClassPreparationId);
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Forbidden,
+								ResponseMessage = "You do not have permission to approve classes",
+								Status = "failed"
+							};
+						}
 
-					var moveResult = await _mediaService.MoveMediaToPermanent(model.ClassPreparationId);
-
-					if (moveResult.ResponseCode == ResponseCode.successful)
-					{
-						_logger.Information("Media moved to permanent storage successfully");
+						_logger.Debug("Permission verified");
 					}
 					else
 					{
-						_logger.Warning("Some media files failed to move to permanent storage");
+						_logger.Debug("SuperAdministrator - permission check bypassed");
 					}
+
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 6: VERIFY ALL MEDIA FILES ARE UPLOADED
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+					_logger.Debug("Checking media upload status");
+
+					var mediaFilesResponse = await _mediaService.GetClassMediaFiles(model.ClassPreparationId);
+
+					if (mediaFilesResponse.ResponseCode == ResponseCode.successful &&
+						mediaFilesResponse.MediaFiles.Any())
+					{
+						var pendingMedia = mediaFilesResponse.MediaFiles
+							.Where(m => m.UploadStatus != (int)UploadStatus.Completed)
+							.ToList();
+
+						if (pendingMedia.Any())
+						{
+							var pendingFileNames = string.Join(", ", pendingMedia.Select(m => m.OriginalFileName));
+
+							_logger.Warning(
+								"Pending media uploads - ClassId: {ClassId}, Files: {Files}",
+								model.ClassPreparationId,
+								pendingFileNames);
+
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = $"Cannot approve: {pendingMedia.Count} media file(s) still uploading: {pendingFileNames}",
+								Status = "failed"
+							};
+						}
+
+						_logger.Information(
+							"All media uploaded - ClassId: {ClassId}, Count: {Count}",
+							model.ClassPreparationId,
+							mediaFilesResponse.MediaFiles.Count);
+					}
+
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 7: MOVE MEDIA TO PERMANENT STORAGE
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+					_logger.Information("Moving media to permanent storage - ClassId: {ClassId}",
+						model.ClassPreparationId);
+
+					var moveMediaResult = await _mediaService.MoveMediaToPermanent(model.ClassPreparationId);
+
+					if (moveMediaResult.ResponseCode != ResponseCode.successful)
+					{
+						_logger.Warning(
+							"Media move partially failed - ClassId: {ClassId}, Message: {Message}",
+							model.ClassPreparationId,
+							moveMediaResult.ResponseMessage);
+					}
+					else
+					{
+						_logger.Information("Media moved successfully - ClassId: {ClassId}",
+							model.ClassPreparationId);
+					}
+
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 8: UPDATE CLASS STATUS TO APPROVED
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+					var approvalDurationMinutes = (int)(DateTime.UtcNow - approvalStartTime).TotalMinutes;
+					var approvalTimestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+					var updateDict = new Dictionary<string, object>
+						{
+							{ "Status", (int)ClassPreparationStatus.Approved },
+							{ "ApprovedDate", approvalTimestamp },
+							{ "ApprovedBy", adminUserId },
+							{ "ApprovalNotes", model.ApprovalNotes ?? string.Empty },
+							{ "ApprovalTimeMinutes", approvalDurationMinutes },
+							{ "ModifiedDate", approvalTimestamp }
+						};
+
+					var whereClause = new KeyValuePair<string, object>("Id", model.ClassPreparationId);
+
+					await _classCommandRepo.UpdateTableColumnById(updateDict, whereClause);
+
+					_logger.Information(
+						"Class approved - ClassId: {ClassId}, ApprovedBy: {AdminId}, Duration: {Duration}min",
+						model.ClassPreparationId,
+						adminUserId,
+						approvalDurationMinutes);
+
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 9: UPDATE TEACHER TRUST SCORE
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+					try
+					{
+						await _trustScoreService.UpdateAfterApproval(
+							teacherId: classPreparation.TeacherId,
+							schoolId: schoolId,
+							approved: true,
+							approvalTimeMinutes: approvalDurationMinutes);
+
+						_logger.Information("Trust score updated - TeacherId: {TeacherId}",
+							classPreparation.TeacherId);
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(ex, "Trust score update failed - TeacherId: {TeacherId}. Approval succeeded anyway.",
+							classPreparation.TeacherId);
+					}
+
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+					// STEP 10: RETURN SUCCESS
+					// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.successful,
-						ResponseMessage = "Class preparation approved successfully",
+						ResponseMessage = "Class approved successfully",
 						Status = "successful"
 					};
 				}
 				catch (Exception ex)
 				{
-					_logger.Error(
-						ex,
-						"Exception approving class - ClassId: {ClassId}",
+					_logger.Error(ex, "Error approving class - ClassId: {ClassId}",
 						model.ClassPreparationId);
 
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.ErrorOccured,
-						ResponseMessage = "An error occurred while approving class",
+						ResponseMessage = "An error occurred while approving the class",
 						Status = "failed"
 					};
 				}
 			}
 		}
+
+		/// <summary>
+		/// Reject a pending class preparation
+		/// 
+		/// COMPLETE WORKFLOW WITH ALL BUSINESS RULES:
+		/// 
+		/// 1. SECURITY VALIDATION:
+		///    - Parse and validate JWT user claims
+		/// 
+		/// 2. RETRIEVE CLASS:
+		///    - Fetch class preparation from database
+		///    - Verify class exists
+		/// 
+		/// 3. STATUS VALIDATION:
+		///    - Verify class is in Pending status
+		/// 
+		/// 4. SELF-REJECTION PREVENTION:
+		///    - Verify admin is not rejecting their own class
+		/// 
+		/// 5. PERMISSION CHECK:
+		///    - Verify admin has ApproveClasses permission
+		/// 
+		/// 6. VALIDATE REJECTION REASON:
+		///    - Ensure reason is provided and within character limits
+		/// 
+		/// 7. DELETE CLASS MEDIA:
+		///    - Soft delete all media files in database
+		///    - Fire-and-forget physical delete from Cloudinary
+		/// 
+		/// 8. UPDATE CLASS STATUS:
+		///    - Change status to Rejected
+		///    - Record rejection metadata
+		/// 
+		/// 9. UPDATE TEACHER TRUST SCORE:
+		///    - Recalculate trust score (penalty for rejection)
+		///    - Reset consecutive approvals streak to 0
+		/// 
+		/// 10. RETURN SUCCESS
+		/// </summary>
+		//public async Task<BaseResponse> RejectClass(RejectClassViewModel model,AuthenticatedUserClaims userClaims)
+		//{
+		//	var rejectionStartTime = DateTime.UtcNow;
+
+		//	using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+		//	using (LogContext.PushProperty("ClassPreparationId", model.ClassPreparationId))
+		//	{
+		//		try
+		//		{
+		//			_logger.Information(
+		//				"Starting class rejection - ClassId: {ClassId}, AdminUserId: {AdminId}",model.ClassPreparationId,userClaims.UserId);
+
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+		//			// STEP 1: PARSE USER CLAIMS
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+		//			if (!Guid.TryParse(userClaims.UserId, out var adminUserId))
+		//			{
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = "Invalid user identification",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+		//			{
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = "Invalid school identification",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+		//			// STEP 2: RETRIEVE CLASS
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+		//			var classPreparation = await _classQueryRepo.Get(model.ClassPreparationId);
+
+		//			if (classPreparation == null)
+		//			{
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.NotFound,
+		//					ResponseMessage = "Class preparation not found",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+		//			// STEP 3: STATUS VALIDATION
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+		//			var currentStatus = (ClassPreparationStatus)classPreparation.Status;
+
+		//			if (currentStatus != ClassPreparationStatus.Pending)
+		//			{
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = $"Cannot reject class with status: {currentStatus}",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+		//			// STEP 4: PREVENT SELF-REJECTION
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+		//			if (classPreparation.TeacherId == adminUserId)
+		//			{
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.Forbidden,
+		//					ResponseMessage = "You cannot reject your own class preparation",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+		//			// STEP 5: CHECK PERMISSIONS
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+		//			var userRole = userClaims?.Role;
+
+		//			if (userRole == UserRole.Administrator.ToString())
+		//			{
+		//				var hasPermission = await _userService.HasPermission(
+		//					adminUserId,
+		//					schoolId,
+		//					AdminPermission.ApproveClasses);
+
+		//				if (!hasPermission)
+		//				{
+		//					return new BaseResponse
+		//					{
+		//						ResponseCode = ResponseCode.Forbidden,
+		//						ResponseMessage = "You do not have permission to reject classes",
+		//						Status = "failed"
+		//					};
+		//				}
+		//			}
+
+
+
+		//			if (string.IsNullOrWhiteSpace(model.RejectionReason))
+		//			{
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = "Rejection reason is required",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			if (model.RejectionReason.Length < 10 || model.RejectionReason.Length > 500)
+		//			{
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = "Rejection reason must be between 10 and 500 characters",
+		//					Status = "failed"
+		//				};
+		//			}
+
+
+
+		//			_logger.Information("Deleting media for rejected class - ClassId: {ClassId}",
+		//				model.ClassPreparationId);
+
+		//			var deleteMediaResult = await _mediaService.DeleteMediaForRejectedClass(
+		//				model.ClassPreparationId,
+		//				adminUserId,
+		//				$"Class rejected: {model.RejectionReason}");
+
+		//			if (deleteMediaResult.ResponseCode != ResponseCode.successful)
+		//			{
+		//				_logger.Warning(
+		//					"Media deletion failed - ClassId: {ClassId}, Message: {Message}",model.ClassPreparationId,deleteMediaResult.ResponseMessage);
+		//			}
+
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+		//			// STEP 8: UPDATE CLASS STATUS
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+		//			var rejectionTimestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+		//			var updateDict = new Dictionary<string, object>
+		//			{
+		//				{ "Status", (int)ClassPreparationStatus.Rejected },
+		//				{ "RejectedDate", rejectionTimestamp },
+		//				{ "RejectedBy", adminUserId },
+		//				{ "RejectionReason", model.RejectionReason },
+		//				{ "ModifiedDate", rejectionTimestamp }
+		//			};
+
+		//			await _classCommandRepo.UpdateTableColumnById(updateDict,new KeyValuePair<string, object>("Id", model.ClassPreparationId));
+
+		//			_logger.Information("Class rejected - ClassId: {ClassId}, RejectedBy: {AdminId}",
+		//				model.ClassPreparationId, adminUserId);
+
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+		//			// STEP 9: UPDATE TRUST SCORE
+		//			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+		//			try
+		//			{
+		//				await _trustScoreService.UpdateAfterApproval(teacherId: classPreparation.TeacherId,schoolId: schoolId,approved: false);
+
+		//				_logger.Information("✅ Trust score updated - TeacherId: {TeacherId}",
+		//					classPreparation.TeacherId);
+		//			}
+		//			catch (Exception ex)
+		//			{
+		//				_logger.Error(ex, "Trust score update failed - TeacherId: {TeacherId}",
+		//					classPreparation.TeacherId);
+		//			}
+
+		//			return new BaseResponse
+		//			{
+		//				ResponseCode = ResponseCode.successful,
+		//				ResponseMessage = "Class rejected successfully",
+		//				Status = "successful"
+		//			};
+		//		}
+		//		catch (Exception ex)
+		//		{
+		//			_logger.Error(ex, "Error rejecting class - ClassId: {ClassId}",
+		//				model.ClassPreparationId);
+
+		//			return new BaseResponse
+		//			{
+		//				ResponseCode = ResponseCode.ErrorOccured,
+		//				ResponseMessage = "An error occurred while rejecting the class",
+		//				Status = "failed"
+		//			};
+		//		}
+		//	}
+		//}
+
 
 		#endregion
 
@@ -626,7 +1026,7 @@ namespace TechHub.Service.Service
 		/// - Rejection reason is required (min 10 characters)
 		/// - Teacher can fix issues and resubmit after rejection
 		/// </remarks>
-		public async Task<BaseResponse> RejectClass(RejectClassViewModel model,AuthenticatedUserClaims userClaims)
+		public async Task<BaseResponse> RejectClass(Core.ViewModel.classroom.RejectClassViewModel model, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			{
@@ -656,13 +1056,13 @@ namespace TechHub.Service.Service
 						"Rejecting class - ClassId: {ClassId}, RejectedBy: {UserId}, Reason: {Reason}",
 						model.ClassPreparationId,
 						userId,
-						model.RejectionReason);					
+						model.RejectionReason);
 
 					var userRole = int.Parse(userClaims.Role ?? "0");
 
 					if (userRole == (int)UserRole.Administrator)
 					{
-						var hasPermission = await _userService.HasPermission(userId,schoolId,AdminPermission.ApproveClasses);
+						var hasPermission = await _userService.HasPermission(userId, schoolId, AdminPermission.ApproveClasses);
 
 						if (!hasPermission)
 						{
@@ -679,7 +1079,7 @@ namespace TechHub.Service.Service
 						}
 					}
 
-					
+
 
 					var classPrep = await _classQueryRepo.Get(model.ClassPreparationId);
 
@@ -695,7 +1095,7 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					
+
 
 					var currentStatus = (ClassPreparationStatus)classPrep.Status;
 
@@ -719,8 +1119,7 @@ namespace TechHub.Service.Service
 					{
 						_logger.Warning(
 							"Teacher attempted to reject their own class - ClassId: {ClassId}, TeacherId: {TeacherId}",
-							model.ClassPreparationId,
-							userId);
+							model.ClassPreparationId, userId);
 
 						return new BaseResponse
 						{
@@ -730,7 +1129,7 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					
+
 
 					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
@@ -754,14 +1153,12 @@ namespace TechHub.Service.Service
 					_logger.Information(
 						"Class rejected - ClassId: {ClassId}, Status: Pending → Rejected",
 						model.ClassPreparationId);
-				
+
 
 					_logger.Information("Deleting media for rejected class - ClassId: {ClassId}", model.ClassPreparationId);
 
 					var deleteResult = await _mediaService.DeleteMediaForRejectedClass(
-						model.ClassPreparationId,
-						userId,
-						model.RejectionReason);
+						model.ClassPreparationId, userId, model.RejectionReason);
 
 					if (deleteResult.ResponseCode == ResponseCode.successful)
 					{
@@ -808,9 +1205,7 @@ namespace TechHub.Service.Service
 		/// <summary>
 		/// Get class preparation by ID with full details
 		/// </summary>
-		public async Task<ClassPreparationResponse> GetClassPreparationById(
-			Guid id,
-			AuthenticatedUserClaims userClaims)
+		public async Task<ClassPreparationResponse> GetClassPreparationById(Guid id, AuthenticatedUserClaims userClaims)
 		{
 			try
 			{
@@ -821,25 +1216,25 @@ namespace TechHub.Service.Service
 				// ========================================
 
 				var query = $@"
-            SELECT 
-                cp.*,
-                s.Name as SubjectName,
-                sc.Name as ClassroomName,
-                CONCAT(u.FirstName, ' ', u.LastName) as TeacherName,
-                u.Email as TeacherEmail,
-                CONCAT(submitter.FirstName, ' ', submitter.LastName) as SubmittedByName,
-                CONCAT(approver.FirstName, ' ', approver.LastName) as ApprovedByName,
-                CONCAT(rejecter.FirstName, ' ', rejecter.LastName) as RejectedByName,
-                CONCAT(creator.FirstName, ' ', creator.LastName) as CreatedByName
-            FROM ClassPreparation cp
-            LEFT JOIN Subject s ON cp.SubjectId = s.Id
-            LEFT JOIN StudentClass sc ON cp.ClassroomId = sc.Id
-            LEFT JOIN Users u ON cp.TeacherId = u.Id
-            LEFT JOIN Users submitter ON cp.SubmittedBy = submitter.Id
-            LEFT JOIN Users approver ON cp.ApprovedBy = approver.Id
-            LEFT JOIN Users rejecter ON cp.RejectedBy = rejecter.Id
-            LEFT JOIN Users creator ON cp.CreatedBy = creator.Id
-            WHERE cp.Id = '{id}'";
+					SELECT 
+						cp.*,
+						s.Name as SubjectName,
+						sc.Name as ClassroomName,
+						CONCAT(u.FirstName, ' ', u.LastName) as TeacherName,
+						u.Email as TeacherEmail,
+						CONCAT(submitter.FirstName, ' ', submitter.LastName) as SubmittedByName,
+						CONCAT(approver.FirstName, ' ', approver.LastName) as ApprovedByName,
+						CONCAT(rejecter.FirstName, ' ', rejecter.LastName) as RejectedByName,
+						CONCAT(creator.FirstName, ' ', creator.LastName) as CreatedByName
+					FROM ClassPreparation cp
+					LEFT JOIN Subject s ON cp.SubjectId = s.Id
+					LEFT JOIN StudentClass sc ON cp.ClassroomId = sc.Id
+					LEFT JOIN Users u ON cp.TeacherId = u.Id
+					LEFT JOIN Users submitter ON cp.SubmittedBy = submitter.Id
+					LEFT JOIN Users approver ON cp.ApprovedBy = approver.Id
+					LEFT JOIN Users rejecter ON cp.RejectedBy = rejecter.Id
+					LEFT JOIN Users creator ON cp.CreatedBy = creator.Id
+					WHERE cp.Id = '{id}'";
 
 
 				var result = await _classQueryRepo.GetByQuery(query);
@@ -857,12 +1252,12 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				
+
 
 				var mediaResult = await _mediaService.GetClassMediaFiles(id);
-				var mediaFiles = mediaResult.MediaFiles ?? new List<MediaFileDto>();
+				var mediaFiles = mediaResult.MediaFiles.Count > 0 ? mediaResult.MediaFiles : new List<MediaFileDto>();
 
-			
+
 
 				// Note: If your GetByQuery returns dynamic objects, 
 				// you'll need to extract properties like this:
@@ -924,7 +1319,7 @@ namespace TechHub.Service.Service
 					// Continue with empty strings if extraction fails
 				}
 
-				
+
 
 				Guid? currentUserId = Guid.TryParse(userClaims.UserId, out var parsedUserId)
 					? parsedUserId
@@ -943,7 +1338,7 @@ namespace TechHub.Service.Service
 					currentUserId: currentUserId
 				);
 
-				_logger.Information("✅ Class preparation retrieved successfully");
+				_logger.Information("Class preparation retrieved successfully");
 
 				return new ClassPreparationResponse
 				{
@@ -955,7 +1350,7 @@ namespace TechHub.Service.Service
 			}
 			catch (Exception ex)
 			{
-				_logger.Error(ex, "💥 Exception retrieving class preparation - Id: {Id}", id);
+				_logger.Error(ex, "Exception retrieving class preparation - Id: {Id}", id);
 
 				return new ClassPreparationResponse
 				{
@@ -969,7 +1364,7 @@ namespace TechHub.Service.Service
 		/// <summary>
 		/// Get teacher's own class preparations with filtering and pagination
 		/// </summary>
-		public async Task<ClassPreparationsListResponse> GetMyClassPreparations(GetClassPreparationsQuery query,AuthenticatedUserClaims userClaims)
+		public async Task<ClassPreparationsListResponse> GetMyClassPreparations(GetClassPreparationsQuery query, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			{
@@ -1068,7 +1463,7 @@ namespace TechHub.Service.Service
 						_logger.Warning(ex, "Error extracting total count");
 					}
 
-					
+
 
 					var sortBy = query.SortBy ?? "CreationDate";
 					var sortDirection = query.SortDirection?.ToUpper() == "ASC" ? "ASC" : "DESC";
@@ -1120,7 +1515,7 @@ namespace TechHub.Service.Service
 								subjectName: subjectName,
 								classroomName: classroomName,
 								teacherName: teacherName,
-								mediaFiles: new List<MediaFileDto>(), 
+								mediaFiles: new List<MediaFileDto>(),
 								submittedByName: submittedByName,
 								approvedByName: approvedByName,
 								rejectedByName: rejectedByName,
@@ -1160,7 +1555,7 @@ namespace TechHub.Service.Service
 							HasPreviousPage = pageNumber > 1,
 							HasNextPage = pageNumber < totalPages
 						}
-						
+
 					};
 				}
 				catch (Exception ex)
@@ -1182,7 +1577,7 @@ namespace TechHub.Service.Service
 		/// Only returns classes with Status = Pending
 		/// Requires ApproveClasses permission for regular admins
 		/// </summary>
-		public async Task<ClassPreparationsListResponse> GetPendingApprovals(GetClassPreparationsQuery query,AuthenticatedUserClaims userClaims)
+		public async Task<ClassPreparationsListResponse> GetPendingApprovals(GetClassPreparationsQuery query, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			{
@@ -1212,14 +1607,14 @@ namespace TechHub.Service.Service
 						"Retrieving pending approvals - RequestedBy: {UserId}",
 						userId);
 
-					
+
 
 					var userRole = int.Parse(userClaims.Role ?? "0");
 
 					// SuperAdmins bypass permission check
 					if (userRole == (int)UserRole.Administrator)
 					{
-						var hasPermission = await _userService.HasPermission(userId,schoolId,AdminPermission.ApproveClasses);
+						var hasPermission = await _userService.HasPermission(userId, schoolId, AdminPermission.ApproveClasses);
 
 						if (!hasPermission)
 						{
@@ -1236,7 +1631,7 @@ namespace TechHub.Service.Service
 						}
 					}
 
-					
+
 
 					var whereConditions = new List<string>
 					{
@@ -1342,7 +1737,7 @@ namespace TechHub.Service.Service
 
 					var classes = await _classQueryRepo.GetByQuery(dataQuery);
 
-					
+
 
 					var classDtos = new List<ClassPreparationDto>();
 
@@ -1402,12 +1797,12 @@ namespace TechHub.Service.Service
 							HasPreviousPage = pageNumber > 1,
 							HasNextPage = pageNumber < totalPages
 						}
-						
+
 					};
 				}
 				catch (Exception ex)
 				{
-					_logger.Error(ex, "💥 Exception retrieving pending approvals");
+					_logger.Error(ex, "Exception retrieving pending approvals");
 
 					return new ClassPreparationsListResponse
 					{
@@ -1419,15 +1814,165 @@ namespace TechHub.Service.Service
 			}
 		}
 
-		public Task<BaseResponse> DeleteDraft(Guid id, AuthenticatedUserClaims userClaims)
+		/// <summary>
+		/// Delete a draft class preparation
+		/// 
+		/// BUSINESS RULES:
+		/// 1. Only drafts can be deleted (Status = Draft)
+		/// 2. User must be the creator
+		/// 3. Soft delete (IsActive = false, not physical delete)
+		/// 4. All associated media also soft deleted
+		/// 
+		/// WORKFLOW:
+		/// 1. Validate user claims
+		/// 2. Retrieve class preparation
+		/// 3. Verify status is Draft
+		/// 4. Verify user is creator
+		/// 5. Soft delete class
+		/// 6. Soft delete all associated media
+		/// </summary>
+		public async Task<BaseResponse> DeleteDraft(Guid id, AuthenticatedUserClaims userClaims)
 		{
-			throw new NotImplementedException();
+			try
+			{
+				_logger.Information("Deleting draft - ClassId: {ClassId}, UserId: {UserId}", id, userClaims.UserId);
+
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+				// STEP 1: VALIDATE USER CLAIMS
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+				}
+
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+				// STEP 2: RETRIEVE CLASS PREPARATION
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+				var classPrep = await _classQueryRepo.Get(id);
+
+				if (classPrep == null)
+				{
+					_logger.Warning("Class not found - ClassId: {ClassId}", id);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Class preparation not found",
+						Status = "failed"
+					};
+				}
+
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+				// STEP 3: VERIFY STATUS IS DRAFT
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+				var status = (ClassPreparationStatus)classPrep.Status;
+
+				if (status != ClassPreparationStatus.Draft)
+				{
+					_logger.Warning(
+						"Cannot delete non-draft - ClassId: {ClassId}, Status: {Status}",
+						id,
+						status);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = $"Cannot delete class with status: {status}. Only drafts can be deleted.",
+						Status = "failed"
+					};
+				}
+
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+				// STEP 4: VERIFY USER IS CREATOR
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+				if (classPrep.CreatedBy != userId)
+				{
+					_logger.Warning(
+						"Unauthorized delete attempt - ClassId: {ClassId}, UserId: {UserId}, CreatedBy: {CreatedBy}",
+						id,
+						userId,
+						classPrep.CreatedBy);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You can only delete your own draft classes",
+						Status = "failed"
+					};
+				}
+
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+				// STEP 5: SOFT DELETE CLASS
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+				var updateDict = new Dictionary<string, object>
+				{
+					{ "IsActive", false },
+					{ "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") }
+				};
+
+				await _classCommandRepo.UpdateTableColumnById(
+					updateDict,
+					new KeyValuePair<string, object>("Id", id));
+
+				_logger.Information("Class soft deleted - ClassId: {ClassId}", id);
+
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+				// STEP 6: SOFT DELETE ALL ASSOCIATED MEDIA
+				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+				try
+				{
+					await _mediaService.DeleteMediaForRejectedClass(
+						id,
+						userId,
+						"Draft deleted by user");
+
+					_logger.Information("Associated media deleted - ClassId: {ClassId}", id);
+				}
+				catch (Exception ex)
+				{
+					_logger.Warning(ex, "Failed to delete media - ClassId: {ClassId}", id);
+					// Don't fail the delete if media deletion fails
+				}
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Draft deleted successfully",
+					Status = "successful"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "💥 Error deleting draft - ClassId: {ClassId}", id);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while deleting the draft",
+					Status = "failed"
+				};
+			}
+
+
+
+			#endregion
+
+			// Additional methods (GetMyClassPreparations, GetPendingApprovals, DeleteDraft) 
+			// would follow similar patterns...
+			// I'll add them if needed, but this shows the complete core workflow!
 		}
 
-		#endregion
-
-		// Additional methods (GetMyClassPreparations, GetPendingApprovals, DeleteDraft) 
-		// would follow similar patterns...
-		// I'll add them if needed, but this shows the complete core workflow!
+		
 	}
 }

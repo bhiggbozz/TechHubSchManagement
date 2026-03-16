@@ -5,70 +5,59 @@ using TechHub.Core;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
 using TechHub.Core.ResponseModel;
+using TechHub.Core.ViewModel;
 using TechHub.Service.ViewModels;
 
 namespace TechHub.Service.Interface;
 
-/// <summary>
-/// Service for managing media files (upload, link, move, delete)
-/// </summary>
 public interface IMediaService
 {
 	/// <summary>
-	/// Upload media file to Cloudinary and save metadata to database
+	/// ✅ NEW: Request upload token for direct-to-CDN upload
 	/// </summary>
-	/// <param name="file">Uploaded file from controller</param>
-	/// <param name="mediaType">Type of media (Video, Image, Document, Audio)</param>
-	/// <param name="displayName">Optional friendly name for display</param>
-	/// <param name="userClaims">Authenticated user claims (UserId, SchoolId, etc.)</param>
-	/// <returns>Upload result with media file details</returns>
-	Task<UploadMediaResponse> UploadMedia(IFormFile file,MediaType mediaType,string? displayName,AuthenticatedUserClaims userClaims);
+	Task<RequestUploadTokenResponse> RequestUploadToken(
+		RequestUploadTokenViewModel model,
+		AuthenticatedUserClaims userClaims);
 
 	/// <summary>
-	/// Link uploaded media files to a class preparation
+	/// ✅ NEW: Confirm upload completed
 	/// </summary>
-	/// <param name="classPreparationId">Class to link media to</param>
-	/// <param name="mediaIds">List of media file IDs</param>
-	/// <param name="userClaims">Authenticated user claims</param>
-	/// <returns>Success or failure</returns>
-	Task<BaseResponse> LinkMediaToClass(Guid classPreparationId,List<Guid> mediaIds,AuthenticatedUserClaims userClaims);
+	Task<BaseResponse> ConfirmUpload(
+		ConfirmUploadViewModel model,
+		AuthenticatedUserClaims userClaims);
 
 	/// <summary>
-	/// Move all media for a class from temporary to permanent storage
-	/// Called when admin approves a class
+	/// Upload media file through server (legacy)
 	/// </summary>
-	/// <param name="classPreparationId">Approved class ID</param>
-	/// <returns>Success or failure with count of files moved</returns>
-	Task<BaseResponse> MoveMediaToPermanent(Guid classPreparationId);
+	Task<UploadMediaResponse> UploadMedia(IFormFile file,MediaType mediaType,string displayName,AuthenticatedUserClaims userClaims);
 
 	/// <summary>
-	/// Delete all media for a rejected class
-	/// Soft deletes in database and physically deletes from Cloudinary
+	/// Get upload status for a media file
 	/// </summary>
-	/// <param name="classPreparationId">Rejected class ID</param>
-	/// <param name="deletedBy">Admin who rejected the class</param>
-	/// <param name="reason">Rejection reason</param>
-	/// <returns>Success or failure with count of files deleted</returns>
-	Task<BaseResponse> DeleteMediaForRejectedClass(Guid classPreparationId,Guid deletedBy,string reason);
+	Task<MediaUploadStatusResponse> GetUploadStatus(Guid mediaId);
 
 	/// <summary>
 	/// Get all media files for a class preparation
 	/// </summary>
-	/// <param name="classPreparationId">Class ID</param>
-	/// <returns>List of media files</returns>
 	Task<MediaFilesListResponse> GetClassMediaFiles(Guid classPreparationId);
 
 	/// <summary>
-	/// Delete a single media file (soft delete)
+	/// Link media files to a class preparation
 	/// </summary>
-	/// <param name="mediaId">Media file ID</param>
-	/// <param name="deletedBy">User deleting the file</param>
-	/// <param name="reason">Deletion reason</param>
-	/// <returns>Success or failure</returns>
-	Task<BaseResponse> DeleteMedia(Guid mediaId,Guid deletedBy,string? reason);
+	Task<BaseResponse> LinkMediaToClass(Guid classPreparationId,List<Guid> mediaIds,AuthenticatedUserClaims userClaims);
+
 	/// <summary>
-	/// Get upload status for a media file
-	/// Used by frontend to poll progress
+	/// Move all class media from temporary to permanent storage
 	/// </summary>
-	Task<MediaUploadStatusResponse> GetUploadStatus(Guid mediaId);
+	Task<BaseResponse> MoveMediaToPermanent(Guid classPreparationId);
+
+	/// <summary>
+	/// Delete all media for a rejected class
+	/// </summary>
+	Task<BaseResponse> DeleteMediaForRejectedClass(Guid classPreparationId,Guid deletedBy,string reason);
+
+	/// <summary>
+	/// Delete single media file
+	/// </summary>
+	Task<BaseResponse> DeleteMedia(Guid mediaId,Guid deletedBy,string reason);
 }

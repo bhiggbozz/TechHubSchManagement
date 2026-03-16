@@ -7,6 +7,7 @@ using TechHub.Core.DTO;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Enums;
+using TechHub.Core.ViewModel;
 
 namespace TechHub.Core.Helper
 {
@@ -17,7 +18,7 @@ namespace TechHub.Core.Helper
 			var dto = new MediaFileDto
 			{
 				// Identifiers
-				Id = media.Id,
+				MediaId = media.Id,
 				MediaKey = media.MediaKey,
 				PublicId = media.PublicId ?? string.Empty,
 
@@ -48,7 +49,7 @@ namespace TechHub.Core.Helper
 				// CDN URLs
 				CdnUrl = media.CdnUrl ?? string.Empty,
 				ThumbnailUrl = media.ThumbnailUrl,
-				CdnProvider = media.CdnProvider ?? "Cloudinary",
+				//CdnProvider = media.CdnProvider ?? "Cloudinary",
 
 				// Storage status
 				IsTemporary = media.IsTemporary,
@@ -64,7 +65,7 @@ namespace TechHub.Core.Helper
 				LastDownloadDate = media.LastDownloadDate,
 
 				// Metadata
-				UploadedDate = media.UploadedDate.ToString("yyyy-MM-dd HH:mm:ss"),
+				UploadedDate = media.UploadedDate,
 				UploadedByName = uploadedByName
 			};
 
@@ -154,6 +155,35 @@ namespace TechHub.Core.Helper
 			// Round to 1 decimal place for readability
 			return Math.Round(ratio, 1);
 		}
+		/// <summary>
+		/// Format duration in MM:SS or HH:MM:SS format
+		/// Examples: "10:35", "1:01:05"
+		/// </summary>
+		//private static string FormatDuration(int? totalSeconds)
+		//{
+		//	if (!totalSeconds.HasValue || totalSeconds.Value <= 0)
+		//		return null;
+
+		//	var timespan = TimeSpan.FromSeconds(totalSeconds.Value);
+
+		//	return timespan.TotalHours >= 1
+		//		? timespan.ToString(@"h\:mm\:ss")           
+		//		: timespan.ToString(@"m\:ss");
+		//}
+
+		///// <summary>
+		///// Calculate compression ratio as percentage
+		///// Formula: (1 - compressed/original) * 100
+		///// Returns null if original size is 0 or not available
+		///// </summary>
+		//private static double? CalculateCompressionRatio(long originalSize, long compressedSize)
+		//{
+		//	if (originalSize <= 0 || compressedSize == 0)
+		//		return null;
+
+		//	var ratio = (1 - ((double)compressedSize / originalSize)) * 100;
+		//	return Math.Round(ratio, 1);
+		//}
 
 	}
 }

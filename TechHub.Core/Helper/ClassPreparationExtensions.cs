@@ -6,88 +6,125 @@ using System.Threading.Tasks;
 using TechHub.Core.DTO;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
+using TechHub.Core.ViewModel;
 
 namespace TechHub.Core.Helper;
 
 public static class ClassPreparationExtensions
 {
 	/// <summary>
-	/// Map ClassPreparation entity to DTO
+	/// Convert ClassPreparation entity to ClassPreparationDto
+	/// 
+	/// INCLUDES:
+	/// - All entity fields with formatting
+	/// - Related entity names (subject, classroom, teacher)
+	/// - Media file information
+	/// - Workflow tracking (submitted, approved, rejected)
+	/// - Permission flags for frontend (can edit, delete, submit, etc.)
 	/// </summary>
-	/// <summary>
-	/// Map ClassPreparation entity to DTO with full details
-	/// </summary>
-	public static ClassPreparationDto ToDto(this ClassPreparation classPrep, string subjectName = "", string classroomName = "", string teacherName = "", string? teacherEmail = null,
-		List<MediaFileDto>? mediaFiles = null, string? submittedByName = null, string? approvedByName = null, string? rejectedByName = null, string? createdByName = null, Guid? currentUserId = null)
+	public static ClassPreparationDto ToDto(this ClassPreparation classPrep,string subjectName = null,string classroomName = null,string teacherName = null,string teacherEmail = null,List<MediaFileDto> mediaFiles = null,string submittedByName = null,string approvedByName = null,string rejectedByName = null,string createdByName = null,Guid? currentUserId = null)
 	{
-		// Parse status
 		var status = (ClassPreparationStatus)classPrep.Status;
 		var classType = (ClassType)classPrep.ClassType;
 
 		// Calculate total media size
-		var totalMediaSize = mediaFiles?.Sum(m => m.FileSizeBytes) ?? 0;
+		var totalMediaSize = mediaFiles?.Sum(m => m.FileSize) ?? 0;
 
 		var dto = new ClassPreparationDto
 		{
 			Id = classPrep.Id,
 
-			// Class details
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// CLASS DETAILS
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			Title = classPrep.Title,
 			Topic = classPrep.Topic,
 			SubTopic = classPrep.SubTopic,
 			AimAndObjectives = classPrep.AimAndObjectives,
 
-			// Subject
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// SUBJECT
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			SubjectId = classPrep.SubjectId,
-			SubjectName = subjectName,
+			SubjectName = subjectName ?? "Unknown",
 
-			// Classroom
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// CLASSROOM
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			ClassroomId = classPrep.ClassroomId,
-			ClassroomName = classroomName,
+			ClassroomName = classroomName ?? "Unknown",
 
-			// Teacher
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// TEACHER
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			TeacherId = classPrep.TeacherId,
-			TeacherName = teacherName,
+			TeacherName = teacherName ?? "Unknown",
 			TeacherEmail = teacherEmail,
 
-			// Scheduling
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// SCHEDULING
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			ScheduledDate = classPrep.ScheduledDate?.ToString("yyyy-MM-dd"),
 			ScheduledTime = classPrep.ScheduledTime?.ToString(@"hh\:mm"),
 			DurationMinutes = classPrep.DurationMinutes,
 			DurationFormatted = FormatDuration(classPrep.DurationMinutes),
 
-			// Class type
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// CLASS TYPE
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			ClassType = classPrep.ClassType,
 			ClassTypeName = classType.ToString(),
 
-			// Status
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// STATUS
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			Status = classPrep.Status,
 			StatusName = status.ToString(),
 			StatusColor = GetStatusColor(status),
 
-			// Media
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// MEDIA
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			MediaFiles = mediaFiles ?? new List<MediaFileDto>(),
 			MediaFilesCount = mediaFiles?.Count ?? 0,
 			TotalMediaSizeBytes = totalMediaSize,
 			TotalMediaSizeFormatted = FormatFileSize(totalMediaSize),
 
-			// Workflow tracking
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// WORKFLOW TRACKING
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			SubmittedDate = classPrep.SubmittedForApprovalDate?.ToString("yyyy-MM-dd HH:mm:ss"),
 			SubmittedByName = submittedByName,
 
 			ApprovedDate = classPrep.ApprovedDate?.ToString("yyyy-MM-dd HH:mm:ss"),
 			ApprovedByName = approvedByName,
+			//ApprovalNotes = classPrep.ApprovalNotes,
 
 			RejectedDate = classPrep.RejectedDate?.ToString("yyyy-MM-dd HH:mm:ss"),
 			RejectedByName = rejectedByName,
 			RejectionReason = classPrep.RejectionReason,
 
-			// Metadata
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// METADATA
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			CreationDate = classPrep.CreationDate,
 			ModifiedDate = classPrep.ModifiedDate,
 			CreatedByName = createdByName ?? "",
 
-			// Permissions (for frontend to show/hide buttons)
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// PERMISSIONS (for frontend button visibility)
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 			CanEdit = CanEdit(classPrep, currentUserId),
 			CanDelete = CanDelete(classPrep, currentUserId),
 			CanSubmit = CanSubmit(classPrep, currentUserId),
@@ -96,6 +133,7 @@ public static class ClassPreparationExtensions
 		};
 
 		return dto;
+	
 	}
 
 	private static string? FormatDuration(int? totalMinutes)
