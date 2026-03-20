@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TechHub.Core.Enum;
 using static Dapper.SqlMapper;
 
 namespace TechHub.Service.Interface
@@ -23,6 +24,9 @@ namespace TechHub.Service.Interface
 		Task UpdateBatchByIdAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues);
 		Task Create(SqlTransaction transaction, SqlConnection connection, T entity);
 		Task UpdateBatchByIdAsyncV2(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues);
+		Task Create(T entity, DatabaseTarget target);
+		Task UpdateTableColumnById(string columnToUpdateName, string keyColumnName, object columnToUpdateValue, object KeyColumnValue, DatabaseTarget target);
+		Task UpdateTableColumnById(Dictionary<string, object> obj, KeyValuePair<string, object> keyValue, DatabaseTarget target);
 
 
 	}
