@@ -157,3 +157,9 @@ CREATE INDEX IX_ScanSessions_TeacherId
 CREATE INDEX IX_ScanSessions_Status
     ON ScanSessions(Status);
 
+--------------------------------------------------------
+
+ALTER TABLE Questions
+    ADD SnapshotUrl      NVARCHAR(MAX) NULL,
+        SnapshotPublicId NVARCHAR(500) NULL;
+

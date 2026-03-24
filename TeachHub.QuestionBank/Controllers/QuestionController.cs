@@ -12,7 +12,7 @@ using TechHub.QuestionBank.Core.ViewModel;
 using TechHub.QuestionBank.Services.interfaces;
 using TechhubMS.util;
 
-namespace TechHub.QuestionBank;
+namespace TechHub.QuestionBank.Controllers;
 
 [Authorize]
 [ApiController]

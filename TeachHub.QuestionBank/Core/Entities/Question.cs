@@ -62,4 +62,9 @@ public class Question
 
 	public string OriginalFileName { get; set; }
 	// Original file name for display
+
+	public string SnapshotUrl { get; set; }
+	// CDN url of board snapshot PNG
+
+	public string? SnapshotPublicId { get; set; }
 }

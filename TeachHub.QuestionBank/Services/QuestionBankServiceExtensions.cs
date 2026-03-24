@@ -76,6 +76,9 @@ public static class QuestionBankServiceExtensions
 
 		services.AddScoped<IQuestionService, QuestionService>();
 		services.AddScoped<IQuestionSyncService, QuestionSyncService>();
+		services.AddScoped<IQuestionBoardService, QuestionBoardService>();
+		services.AddScoped<IQuestionScanService, QuestionScanService>();
+
 
 		return services;
 	}
