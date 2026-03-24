@@ -333,7 +333,7 @@ namespace TechHub.Service.Service
 			}
 			catch (Exception ex)
 			{
-				_logger.Error(ex, "💥 Exception uploading image - MediaKey: {MediaKey}", mediaKey);
+				_logger.Error(ex, "Exception uploading image - MediaKey: {MediaKey}", mediaKey);
 
 				return new CloudinaryUploadResult
 				{
@@ -361,7 +361,7 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				_logger.Information("📄 Uploading document (no processing) - MediaKey: {MediaKey}", mediaKey);
+				_logger.Information("Uploading document (no processing) - MediaKey: {MediaKey}", mediaKey);
 
 				var rawParams = new RawUploadParams
 				{
@@ -523,7 +523,7 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				_logger.Information("🗑️ Deleting from Cloudinary - PublicId: {PublicId}", publicId);
+				_logger.Information("Deleting from Cloudinary - PublicId: {PublicId}", publicId);
 
 				// Determine resource type for deletion
 				var resourceType = mediaType switch
@@ -695,8 +695,7 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				_logger.Debug(
-					"Generating upload token - PublicId: {PublicId}, Folder: {Folder}",publicId,folder);
+				_logger.Debug("Generating upload token - PublicId: {PublicId}, Folder: {Folder}",publicId,folder);
 
 				// Parameters to include in signature
 				// MUST match exactly what frontend sends to Cloudinary

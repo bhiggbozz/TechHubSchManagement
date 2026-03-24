@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TechHub.Core.Entities;
+using TechHub.Core.Enum;
 using TechHub.Core.Model;
 
 namespace TechHub.Service.Interface
@@ -24,5 +26,10 @@ namespace TechHub.Service.Interface
 		Task<List<Users>> GetAdministratorsBySchool(Guid schoolId);
 		Task<bool> EmailExistsInSchool(string email, Guid schoolId, Guid? excludeUserId = null);
 		Task<IEnumerable<T>> QueryAsync<T>(string query, Dictionary<string, object> values);
+		Task<IEnumerable<TEntity?>> GetByQuery(string query, DatabaseTarget target);
+		Task<TEntity?> Get(Guid id, DatabaseTarget target);
+		Task<int> CountAsync(string query, DatabaseTarget target);
+		Task<IEnumerable<QuestionQueryResult>> GetByQueryForQuestion(string query, DatabaseTarget target);
+
 	}
 }

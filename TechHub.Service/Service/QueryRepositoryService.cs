@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TechHub.Core.Entities;
+using TechHub.Core.Enum;
 using TechHub.Core.Helper;
 using TechHub.Core.Model;
 using TechHub.Core.Utilities;
@@ -18,11 +20,14 @@ namespace TechHub.Service.Service
 	{
 		private readonly IConfiguration _configuration;
 		private readonly IUtilities _utilities;
+		private readonly IConnectionStringResolver _resolver;
+
 		private readonly string? _config;
-		public QueryRepositoryService(IConfiguration configuration, IUtilities utilities) 
+		public QueryRepositoryService(IConfiguration configuration, IUtilities utilities, IConnectionStringResolver resolver) 
 		{
 			_configuration = configuration;
 			_utilities = utilities;
+			_resolver = resolver;
 			_config = _configuration.GetConnectionString("DbConnectionString") ?? null;
 			ArgumentNullException.ThrowIfNullOrEmpty(nameof(_config));
 		}
@@ -247,6 +252,60 @@ namespace TechHub.Service.Service
 
 			var exists = await conn.ExecuteScalarAsync<bool>(query, parameters);
 			return exists;
+		}
+
+		public async Task<IEnumerable<TEntity?>> GetByQuery(string query, DatabaseTarget target)
+		{
+			var connectionString = _resolver.Resolve(target);
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			//var query = QueryBuilder<TEntity>.GenerateGetbyIdQuery();
+			//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(id);
+			var result = await conn.QueryAsync<TEntity>(query);
+			return result;
+		}
+
+		public async Task<int> CountAsync(string query, Dictionary<string, object> values, DatabaseTarget target)
+		{
+			var connectionString = _resolver.Resolve(target);
+			using var conn = new SqlConnection(connectionString);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var parameter = new DynamicParameters();
+			foreach (var key in values.Keys)
+			{
+				parameter.Add($"@{key}", values[key]);
+			}
+
+			var result = await conn.QueryFirstOrDefaultAsync<int>(query, parameter);
+			return result;
+		}
+
+		public async Task<int> CountAsync(string query,DatabaseTarget target)
+		{
+			var connectionString = _resolver.Resolve(target);
+			using var conn = new SqlConnection(connectionString);
+			conn.Open();
+			var result = await conn.QueryFirstOrDefaultAsync<int>(query);
+			return result;
+		}
+
+		public async Task<IEnumerable<QuestionQueryResult>> GetByQueryForQuestion(string query, DatabaseTarget target)
+		{
+			var connectionString = _resolver.Resolve(target);
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			//var query = QueryBuilder<TEntity>.GenerateGetbyIdQuery();
+			//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(id);
+			var result = await conn.QueryAsync<QuestionQueryResult>(query);
+			return result;
+		}
+
+		public Task<TEntity?> Get(Guid id, DatabaseTarget target)
+		{
+			throw new NotImplementedException();
 		}
 
 		//public async Task<TEntity?> SelectAllBySingleColumn(KeyValuePair<string, object> values)

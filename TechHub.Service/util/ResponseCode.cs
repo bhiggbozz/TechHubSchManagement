@@ -9,6 +9,7 @@
 		public const string Unauthorized = "99107";
 		public const string Conflict = "99161";
 		public const string NotFound = "99134";
+		public const string COnflict = "409";
 
 
 
