@@ -5,7 +5,6 @@ EXPOSE 80
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy all project file
 COPY ["TechhubMS.csproj", "."]
 COPY ["TechHub.Core/TechHub.Core.csproj", "TechHub.Core/"]
 COPY ["TechHub.Service/TechHub.Service.csproj", "TechHub.Service/"]
@@ -16,11 +15,10 @@ RUN dotnet restore "TechhubMS.csproj"
 
 COPY . .
 
-WORKDIR "/src/TechhubMS"
+# csproj is at /src level not /src/TechhubMS
 RUN dotnet build "TechhubMS.csproj" -c Release -o /app/build
 
 FROM build AS publish
-WORKDIR "/src/TechhubMS"
 RUN dotnet publish "TechhubMS.csproj" -c Release -o /app/publish
 
 FROM base AS final
