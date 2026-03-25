@@ -6,13 +6,13 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # Copy all project files
-COPY ["TechhubMS/TechhubMS.csproj", "TechhubMS/"]
+COPY ["TechhubMS.csproj", "."]
 COPY ["TechHub.Core/TechHub.Core.csproj", "TechHub.Core/"]
 COPY ["TechHub.Service/TechHub.Service.csproj", "TechHub.Service/"]
 COPY ["TechHub.Background/TechHub.Background.csproj", "TechHub.Background/"]
 COPY ["TeachHub.QuestionBank/TechHub.QuestionBank.csproj", "TechHub.QuestionBank/"]
 
-RUN dotnet restore "TechhubMS/TechhubMS.csproj"
+RUN dotnet restore "TechhubMS.csproj"
 
 COPY . .
 
