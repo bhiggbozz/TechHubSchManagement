@@ -1,5 +1,4 @@
 ﻿using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
 using Serilog;
 using System;
 using System.Collections;
@@ -26,7 +25,7 @@ public class TenantService : ITenantService
 {
 	private readonly IQueryRepository<TenantInfo> _queryRepositoryTenant;
 	//private readonly IDistributedCache _cache;
-	private readonly ILogger<TenantService> _logger;
+	private readonly ILogger _logger;
 	private readonly IDbConnection _dbConnection;
 	private readonly TimeSpan _cacheDuration = TimeSpan.FromMinutes(30);
 	private readonly IHttpContextAccessor _httpContextAccessor;
@@ -35,7 +34,7 @@ public class TenantService : ITenantService
 	public TenantService(
 		IQueryRepository<TenantInfo> queryRepositoryTenant,
 		//IDistributedCache cache,
-		ILogger<TenantService> logger,
+		ILogger logger,
 		IHttpContextAccessor httpContextAccessor)
 	{
 		_queryRepositoryTenant = queryRepositoryTenant;
@@ -62,7 +61,7 @@ public class TenantService : ITenantService
 		//}
 
 		// Cache miss - query database
-		_logger.LogDebug("Tenant {Identifier} not in cache, querying database", identifier);
+		_logger.Warning("Tenant {Identifier} not in cache, querying database", identifier);
 
 		try
 		{
@@ -101,7 +100,7 @@ public class TenantService : ITenantService
 				//	JsonSerializer.Serialize(tenant),
 				//	cacheOptions);
 
-				_logger.LogInformation(
+				_logger.Warning(
 					"Tenant {Identifier} loaded from database and cached (SchoolId: {SchoolId})",
 					identifier,
 					tenant.SchoolId);
@@ -109,14 +108,14 @@ public class TenantService : ITenantService
 			}
 			else
 			{
-				_logger.LogWarning("Tenant {Identifier} not found in database", identifier);
+				_logger.Warning("Tenant {Identifier} not found in database", identifier);
 			}
 
 			return tenant;
 		}
 		catch (Exception ex)
 		{
-			_logger.LogError(ex, "Error retrieving tenant by identifier: {Identifier}", identifier);
+			_logger.Error(ex, "Error retrieving tenant by identifier: {Identifier}", identifier);
 			throw;
 		}
 	}
@@ -178,7 +177,7 @@ public class TenantService : ITenantService
 		}
 		catch (Exception ex)
 		{
-			_logger.LogError(ex, "Error retrieving tenant by SchoolId: {SchoolId}", schoolId);
+			_logger.Error(ex, "Error retrieving tenant by SchoolId: {SchoolId}", schoolId);
 			throw;
 		}
 	}
