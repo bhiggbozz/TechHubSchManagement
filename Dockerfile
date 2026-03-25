@@ -8,8 +8,7 @@ WORKDIR /src
 COPY . .
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# FIX MAIN PROJECT — TechhubMS
-# Downgrade packages above net8.0
+# FIX MAIN PROJECT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN dotnet add TechhubMS.csproj \
     package Microsoft.AspNetCore.SignalR.Common \
@@ -37,7 +36,9 @@ RUN dotnet add TechhubMS.csproj \
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FIX TechHub.Core
-# Add missing packages
+# QueryBuilder.cs uses DynamicParameters from Dapper
+# Already has Dapper and AutoMapper but
+# missing Microsoft.Data.SqlClient
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN dotnet add TechHub.Core/TechHub.Core.csproj \
     package Microsoft.Data.SqlClient \
@@ -45,7 +46,7 @@ RUN dotnet add TechHub.Core/TechHub.Core.csproj \
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FIX TechHub.Entity.Migration
-# Downgrade EF Core 9 → 8
+# Downgrade EF Core 9 to 8
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN dotnet add TechHub.Entity.Migration/TechHub.Entity.Migration.csproj \
     package Microsoft.EntityFrameworkCore \
@@ -65,52 +66,55 @@ RUN dotnet add TechHub.Entity.Migration/TechHub.Entity.Migration.csproj \
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FIX TechHub.Service
-# Add missing packages
-# Downgrade versions above net8.0
+# SchoolService.cs uses: AutoMapper, Dapper, Azure
+# UserService.cs uses: AutoMapper, Dapper
+# These are confirmed missing from TechHub.Service.csproj
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
     package AutoMapper \
-    --version 12.0.1
+    --version 14.0.0
+# ✅ Matches version in TechHub.Core
+# Fixes IMapper not found in SchoolService and UserService
 
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
     package Dapper \
     --version 2.1.28
+# ✅ SchoolService and UserService use Dapper directly
 
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
-    package Hangfire.Core \
-    --version 1.8.6
+    package Azure.Storage.Blobs \
+    --version 12.19.1
+# ✅ SchoolService imports Azure namespace
 
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
-    package Hangfire.AspNetCore \
-    --version 1.8.6
-
-RUN dotnet add TechHub.Service/TechHub.Service.csproj \
-    package Microsoft.Extensions.Logging \
+    package Microsoft.Extensions.Configuration \
     --version 8.0.0
+# ✅ Both services use IConfiguration
 
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
     package Microsoft.Extensions.Configuration.Abstractions \
     --version 8.0.0
 
+RUN dotnet add TechHub.Service/TechHub.Service.csproj \
+    package Microsoft.IdentityModel.Tokens \
+    --version 8.0.0
+# ✅ UserService uses JWT token generation
+
+RUN dotnet add TechHub.Service/TechHub.Service.csproj \
+    package System.IdentityModel.Tokens.Jwt \
+    --version 8.0.0
+# ✅ UserService uses JwtSecurityToken
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FIX TechHub.Background
-# Add missing packages
+# Downgrade Serilog.Extensions.Hosting 10.0.0 → 8.0.0
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN dotnet add TechHub.Background/TechHub.Background.csproj \
-    package Hangfire.Core \
-    --version 1.8.6
-
-RUN dotnet add TechHub.Background/TechHub.Background.csproj \
-    package Hangfire.AspNetCore \
-    --version 1.8.6
-
-RUN dotnet add TechHub.Background/TechHub.Background.csproj \
-    package Serilog \
-    --version 4.3.1
+    package Serilog.Extensions.Hosting \
+    --version 8.0.0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FIX TeachHub.QuestionBank
-# Add missing packages
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN dotnet add TeachHub.QuestionBank/TechHub.QuestionBank.csproj \
     package Serilog \
@@ -131,6 +135,10 @@ RUN dotnet add TeachHub.QuestionBank/TechHub.QuestionBank.csproj \
 RUN dotnet add TeachHub.QuestionBank/TechHub.QuestionBank.csproj \
     package Microsoft.AspNetCore.Authorization \
     --version 8.0.0
+
+RUN dotnet add TeachHub.QuestionBank/TechHub.QuestionBank.csproj \
+    package AutoMapper \
+    --version 14.0.0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RESTORE AND BUILD
