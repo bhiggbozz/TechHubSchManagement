@@ -5,7 +5,7 @@ EXPOSE 80
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy all project files
+# Copy all project file
 COPY ["TechhubMS.csproj", "."]
 COPY ["TechHub.Core/TechHub.Core.csproj", "TechHub.Core/"]
 COPY ["TechHub.Service/TechHub.Service.csproj", "TechHub.Service/"]
