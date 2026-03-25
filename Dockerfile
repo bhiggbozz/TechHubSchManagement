@@ -7,12 +7,20 @@ WORKDIR /src
 
 COPY . .
 
-RUN dotnet restore "TechhubMS.sln"
+# Restore via main project not solution file
+# ProjectReferences pull in all dependencies
+RUN dotnet restore "TechhubMS.csproj"
 
-RUN dotnet build "TechhubMS.csproj" -c Release -o /app/build
+RUN dotnet build "TechhubMS.csproj" \
+    -c Release \
+    --no-restore \
+    -o /app/build
 
 FROM build AS publish
-RUN dotnet publish "TechhubMS.csproj" -c Release -o /app/publish
+RUN dotnet publish "TechhubMS.csproj" \
+    -c Release \
+    --no-restore \
+    -o /app/publish
 
 FROM base AS final
 WORKDIR /app
