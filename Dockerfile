@@ -23,10 +23,6 @@ RUN dotnet add TechhubMS.csproj \
     --version 8.0.0
 
 RUN dotnet add TechhubMS.csproj \
-    package Microsoft.Extensions.Logging \
-    --version 8.0.0
-
-RUN dotnet add TechhubMS.csproj \
     package Serilog.AspNetCore \
     --version 8.0.0
 
@@ -34,19 +30,28 @@ RUN dotnet add TechhubMS.csproj \
     package Serilog.Settings.Configuration \
     --version 8.0.0
 
+# ✅ Remove Microsoft.Extensions.Logging from main project
+# It flows down and conflicts with Serilog.ILogger
+# in TechHub.Service files
+RUN dotnet remove TechhubMS.csproj \
+    package Microsoft.Extensions.Logging
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FIX TechHub.Core
-# QueryBuilder.cs uses DynamicParameters from Dapper
-# Already has Dapper and AutoMapper but
-# missing Microsoft.Data.SqlClient
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN dotnet add TechHub.Core/TechHub.Core.csproj \
     package Microsoft.Data.SqlClient \
     --version 5.2.0
 
+# ✅ AutoMapperProfile.cs uses Profile from AutoMapper
+# TechHub.Core has AutoMapper but Profile class
+# needs explicit package reference
+RUN dotnet add TechHub.Core/TechHub.Core.csproj \
+    package AutoMapper \
+    --version 14.0.0
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FIX TechHub.Entity.Migration
-# Downgrade EF Core 9 to 8
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN dotnet add TechHub.Entity.Migration/TechHub.Entity.Migration.csproj \
     package Microsoft.EntityFrameworkCore \
@@ -66,49 +71,60 @@ RUN dotnet add TechHub.Entity.Migration/TechHub.Entity.Migration.csproj \
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FIX TechHub.Service
-# SchoolService.cs uses: AutoMapper, Dapper, Azure
-# UserService.cs uses: AutoMapper, Dapper
-# These are confirmed missing from TechHub.Service.csproj
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ✅ Add AutoMapper — fixes IMapper in SchoolService/UserService
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
     package AutoMapper \
     --version 14.0.0
-# ✅ Matches version in TechHub.Core
-# Fixes IMapper not found in SchoolService and UserService
 
+# ✅ Add Dapper
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
     package Dapper \
     --version 2.1.28
-# ✅ SchoolService and UserService use Dapper directly
 
+# ✅ Add Azure — SchoolService imports Azure namespace
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
     package Azure.Storage.Blobs \
     --version 12.19.1
-# ✅ SchoolService imports Azure namespace
 
-RUN dotnet add TechHub.Service/TechHub.Service.csproj \
-    package Microsoft.Extensions.Configuration \
-    --version 8.0.0
-# ✅ Both services use IConfiguration
-
-RUN dotnet add TechHub.Service/TechHub.Service.csproj \
-    package Microsoft.Extensions.Configuration.Abstractions \
-    --version 8.0.0
-
+# ✅ Add JWT — UserService generates tokens
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
     package Microsoft.IdentityModel.Tokens \
     --version 8.0.0
-# ✅ UserService uses JWT token generation
 
 RUN dotnet add TechHub.Service/TechHub.Service.csproj \
     package System.IdentityModel.Tokens.Jwt \
     --version 8.0.0
-# ✅ UserService uses JwtSecurityToken
+
+# ✅ Remove Microsoft.Extensions.Logging from Service
+# It conflicts with Serilog.ILogger
+# TeacherTrustScoreService, TenantService,
+# SchoolService, UserService all use Serilog.ILogger
+# Having both causes ambiguous reference error
+RUN dotnet remove TechHub.Service/TechHub.Service.csproj \
+    package Microsoft.Extensions.Logging
+
+# ✅ Downgrade Configuration packages
+RUN dotnet add TechHub.Service/TechHub.Service.csproj \
+    package Microsoft.Extensions.Configuration.Abstractions \
+    --version 8.0.0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FIX TechHub.Background
-# Downgrade Serilog.Extensions.Hosting 10.0.0 → 8.0.0
+# AutomaticRetry and Queue attributes
+# are in Hangfire.Core
+# TechHub.Background already has Hangfire 1.8.23
+# which includes Hangfire.Core
+# But the attributes may not be resolving
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ✅ Explicitly add Hangfire.Core separately
+RUN dotnet add TechHub.Background/TechHub.Background.csproj \
+    package Hangfire.Core \
+    --version 1.8.23
+
+# ✅ Downgrade Serilog.Extensions.Hosting
 RUN dotnet add TechHub.Background/TechHub.Background.csproj \
     package Serilog.Extensions.Hosting \
     --version 8.0.0
@@ -141,19 +157,21 @@ RUN dotnet add TeachHub.QuestionBank/TechHub.QuestionBank.csproj \
     --version 14.0.0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# RESTORE AND BUILD
+# RESTORE AFTER ALL PACKAGE CHANGES
+# Must restore AFTER all dotnet add/remove commands
+# so build uses updated packages
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RUN dotnet restore "TechhubMS.csproj"
 
+# Build WITHOUT --no-restore so it
+# uses the fresh restore above
 RUN dotnet build "TechhubMS.csproj" \
     -c Release \
-    --no-restore \
     -o /app/build
 
 FROM build AS publish
 RUN dotnet publish "TechhubMS.csproj" \
     -c Release \
-    --no-restore \
     -o /app/publish
 
 FROM base AS final
