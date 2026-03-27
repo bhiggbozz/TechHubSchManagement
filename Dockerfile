@@ -5,12 +5,12 @@ EXPOSE 80
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY . .
-RUN dotnet restore "TechhubMS.csproj"
-RUN dotnet build "TechhubMS.csproj" \
+RUN dotnet restore "TechhubMS/TechhubMS.csproj"
+RUN dotnet build "TechhubMS/TechhubMS.csproj" \
     -c Release -o /app/build
 
 FROM build AS publish
-RUN dotnet publish "TechhubMS.csproj" \
+RUN dotnet publish "TechhubMS/TechhubMS.csproj" \
     -c Release -o /app/publish
 
 FROM base AS final
