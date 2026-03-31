@@ -6,8 +6,10 @@ using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.classroom;
 using TechHub.Core.ViewModel.school;
+using TechHub.QuestionBank.Core.Helpers;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
+using TechhubMS.util;
 
 namespace TechhubMS.Controllers
 {
@@ -172,6 +174,18 @@ namespace TechhubMS.Controllers
 			var userClaims = User.GetAuthenticatedUserClaims();
 			var result = await _schoolService.UpdateClassroomTeachers(model, userClaims);
 			return Ok(result);
+		}
+
+		[HttpPut("logo")]
+		[Authorize]
+		[Consumes("multipart/form-data")]
+		public async Task<IActionResult> UpdateSchoolLogo([FromForm] IFormFile logo)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+
+			var result = await _schoolService.UpdateSchoolLogoAsync(logo, userClaims);
+
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
 
 	}

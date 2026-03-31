@@ -123,7 +123,7 @@ public class MultiTenantMiddleware
 		var hostWithoutPort = host.Split(':')[0].ToLowerInvariant();
 
 		// Production: *.vluethub.com → subdomain
-		if (hostWithoutPort.EndsWith(".vluethub.com"))
+		if (hostWithoutPort.EndsWith(".techhubschmanagement.onrender.com.com"))
 		{
 			var parts = hostWithoutPort.Split('.');
 			if (parts.Length >= 3)

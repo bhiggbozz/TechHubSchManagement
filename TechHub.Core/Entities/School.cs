@@ -18,6 +18,8 @@ namespace TechHub.Core.Entities
 		public string Address { get; set; }
 		public bool HasBranch { get; set; }
 		public bool ISActive { get; set; }
+		public string? LogoUrl { get; set;}
+		public string? LogoPublicId { get; set; }
 
 	}
 }

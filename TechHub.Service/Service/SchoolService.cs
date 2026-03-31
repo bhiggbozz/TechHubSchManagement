@@ -1,6 +1,7 @@
 ﻿using AutoMapper;
 using Azure;
 using Dapper;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Serilog;
@@ -42,6 +43,7 @@ namespace TechHub.Service.Service
 
 
 		private readonly IQueryRepository<State> _queryrepositoryState;
+		private readonly IQueryRepository<School> _schQueryRepository;
 		private readonly IQueryRepository<Subjects> _queryrepositorySubject;
 		private readonly IQueryRepository<Users> _queryrepositoryUser;
 		private readonly IQueryRepository<Classroom> _studentClassQueryRespository;
@@ -52,6 +54,7 @@ namespace TechHub.Service.Service
 		private readonly IConfiguration _configuration;
 		private readonly ILogger _logger;
 		private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
+		private readonly ICloudinaryService _cloudinaryService;
 		private readonly string? _connString;
 
 		private readonly IMapper _mapper;
@@ -59,7 +62,8 @@ namespace TechHub.Service.Service
 			IMapper mapper, ICommandRespository<SchoolCode> schCodeCommandRespository, ICommandRespository<Classroom> studentClassCommandRespository,
 			ICommandRespository<ClassroomSubject> classroomSubjectCommandRespository, IQueryRepository<ClassroomSubject> classroomSubjectQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IQueryRepository<Users> queryrepositoryUser, IQueryRepository<Classroom> studentClassQueryRespository,
-		ICommandRespository<Subjects> subjectCommandRespository, IQueryRepository<ClassroomTeacher> classroomTeacherQueryRespository, ICommandRespository<ClassroomTeacher> classroomTeacherCommandRepository,
+		    ICommandRespository<Subjects> subjectCommandRespository, IQueryRepository<ClassroomTeacher> classroomTeacherQueryRespository, 
+		    ICommandRespository<ClassroomTeacher> classroomTeacherCommandRepository, IQueryRepository<School> schQueryRepository, ICloudinaryService cloudinaryService,
 			IQueryRepository<Subjects> queryrepositorySubject,IConfiguration configuration, ILogger logger)
 		{
 			_schCommandRespository = schCommandRespository;
@@ -74,10 +78,13 @@ namespace TechHub.Service.Service
 			_classroomSubjectQueryRespository = classroomSubjectQueryRespository;
 			_classroomTeacherCommandRepository = classroomTeacherCommandRepository;
 			_classroomTeacherQueryRespository = classroomTeacherQueryRespository;
+			_schQueryRepository = schQueryRepository;
+
 
 			_configuration = configuration;
 			_dbTransactionScopeFactory = dbTransactionScopeFactory;
 			_queryrepositoryUser = queryrepositoryUser;
+			_cloudinaryService = cloudinaryService;
 			_mapper = mapper;
 			_logger = logger;
 			_connString = _configuration.GetConnectionString("DbConnectionString") ?? null;
@@ -2225,6 +2232,129 @@ namespace TechHub.Service.Service
 				return new List<string>();
 			}
 		}
+
+		/// <summary>
+		/// this service update the logo of the school 
+		/// </summary>
+		/// <param name="logo"></param>
+		/// <param name="userClaims"></param>
+		/// <returns></returns>
+		public async Task<BaseResponse> UpdateSchoolLogoAsync(IFormFile logo, AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				// Validate claims
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId",
+						Status = "failed"
+					};
+				}
+
+				// Validate file
+				if (logo == null || logo.Length == 0)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Logo file is required",
+						Status = "failed"
+					};
+				}
+
+				// Validate file type
+				var allowedTypes = new[]
+				{"image/jpeg", "image/png", "image/webp", "image/svg+xml"};
+
+				if (!allowedTypes.Contains(logo.ContentType.ToLower()))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Only JPEG, PNG, WebP " + "and SVG files are allowed",
+						Status = "failed"
+					};
+				}
+
+				// Validate file size — max 2MB for logos
+				if (logo.Length > 2 * 1024 * 1024)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Logo must be less than 2MB",
+						Status = "failed"
+					};
+				}
+
+				// Get existing school to check for old logo
+				var school = await _schQueryRepository.GetByQuery($"SELECT * FROM School WHERE Id = '{schoolId}'");
+
+				var existingSchool = school.FirstOrDefault();
+
+				// Delete old logo from Cloudinary if exists
+				if (existingSchool != null && !string.IsNullOrEmpty(existingSchool.LogoPublicId))
+				{
+					await _cloudinaryService.DeleteMediaAsync(existingSchool.LogoPublicId,MediaType.Image);
+
+					_logger.Information("Old logo deleted - PublicId: {PublicId}", existingSchool.LogoPublicId);
+				}
+
+				// Upload new logo
+				using var stream = logo.OpenReadStream();
+
+				var uploadResult = await _cloudinaryService.UploadSchoolLogoAsync(stream,logo.FileName,schoolId);
+
+				if (!uploadResult.Success)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "Failed to upload logo: " + uploadResult.ErrorMessage,
+						Status = "failed"
+					};
+				}
+
+				// Save logo URL and PublicId to DB
+				var updateDict = new Dictionary<string, object>
+				{
+					{ "LogoUrl", uploadResult.SecureUrl },
+					{ "LogoPublicId", uploadResult.PublicId },
+					{ "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") }
+				};
+
+				await _schCommandRespository.UpdateTableColumnById(updateDict,new KeyValuePair<string, object>("Id", schoolId));
+
+				_logger.Information("School logo updated - SchoolId: {SchoolId}, " + "Url: {Url}",schoolId,uploadResult.SecureUrl);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "School logo updated successfully",
+					Status = "successful",
+					Data = new UpdateSchoolLogoResponse
+					{
+						LogoUrl = uploadResult.SecureUrl,
+						PublicId = uploadResult.PublicId
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,"Error updating school logo - SchoolId: {SchoolId}", userClaims.SchoolId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while " + "updating school logo",
+					Status = "failed"
+				};
+			}
+		}
+
 		/// <summary>
 		/// Verify that all classrooms exist and belong to the correct school
 		/// </summary>

@@ -30,6 +30,8 @@ namespace TechhubMS
 			// Register services
 			//services.AddScoped<ITenantService, TenantService>();
 			services.AddScoped<IUtilities, Utilities>();
+
+			services.AddScoped<IEmailService, EmailService>();
 			services.AddScoped(typeof(ICommandRespository<>), typeof(CommandRepositoryService<>));
 			services.AddScoped(typeof(IQueryRepository<>), typeof(QueryRepositoryService<>));
 			services.AddScoped<ITenantService, TenantService>();
@@ -52,6 +54,8 @@ namespace TechhubMS
 			services.AddScoped<IMediaService, MediaService>();
 			services.AddScoped<IClassPreparationService, ClassPreparationService>();
 			services.AddScoped<IBackgroundJobService, BackgroundJobService>();
+
+			services.AddScoped<IEmailService, EmailService>();
 
 			//services.AddScoped<IAdminPermissionsService, AdminPermissionsService>();
 

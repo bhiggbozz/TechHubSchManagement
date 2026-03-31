@@ -89,6 +89,7 @@ public interface ICloudinaryService
 	/// - Any authenticated Cloudinary API call
 	/// </summary>
 	string GenerateSignature(System.Collections.Generic.SortedDictionary<string, object> uploadParams);
+	Task<CloudinaryUploadResult> UploadSchoolLogoAsync(Stream imageStream,string fileName,Guid schoolId);
 
 }
 
