@@ -2,14 +2,19 @@
 
 using CloudinaryDotNet;
 using CloudinaryDotNet.Actions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using Serilog;
 using System.Security.Cryptography;
 using System.Text;
+using TechHub.Core;
 using TechHub.Core.Configuration;
 using TechHub.Core.Enum;
 using TechHub.Core.Enums;
+using TechHub.Core.Model;
+using TechHub.Core.ViewModel.school;
 using TechHub.Service.Interface;
+using TechhubMS.util;
 
 namespace TechHub.Service.Service
 {
@@ -26,12 +31,10 @@ namespace TechHub.Service.Service
 			_logger = logger;
 
 			// Validate configuration
-			if (string.IsNullOrEmpty(_settings.CloudName) ||
-				string.IsNullOrEmpty(_settings.ApiKey) ||
-				string.IsNullOrEmpty(_settings.ApiSecret))
+			if (string.IsNullOrEmpty(_settings.CloudName) || string.IsNullOrEmpty(_settings.ApiKey) || string.IsNullOrEmpty(_settings.ApiSecret))
 			{
 				var errorMsg = "Cloudinary configuration is missing. " +
-							  "Please add Cloudinary section to appsettings.json with CloudName, ApiKey, and ApiSecret.";
+							  "Please add Cloudinary section to config with necessary details.";
 
 				_logger.Fatal(errorMsg);
 				throw new InvalidOperationException(errorMsg);
@@ -73,10 +76,7 @@ namespace TechHub.Service.Service
 
 				_logger.Information(
 					"Starting Cloudinary upload - MediaKey: {MediaKey}, Folder: {Folder}, Type: {MediaType}, IsTemp: {IsTemp}",
-					mediaKey,
-					folder,
-					mediaType,
-					isTemporary);
+					mediaKey,folder,mediaType,isTemporary);
 
 				// ========================================
 				// STEP 2: ROUTE TO APPROPRIATE HANDLER
@@ -101,7 +101,6 @@ namespace TechHub.Service.Service
 				}
 				else
 				{
-					// Handle document (PDF, DOC, etc.) - no processing
 					result = await UploadDocumentAsync(mediaStream, mediaKey, folder);
 				}
 
@@ -113,16 +112,13 @@ namespace TechHub.Service.Service
 				{
 					_logger.Information(
 						"Upload completed successfully - PublicId: {PublicId}, Size: {Size}, Type: {Type}",
-						result.PublicId,
-						FormatFileSize(result.FileSizeBytes),
-						mediaType);
+						result.PublicId,FormatFileSize(result.FileSizeBytes),mediaType);
 				}
 				else
 				{
 					_logger.Error(
 						"Upload failed - MediaKey: {MediaKey}, Error: {Error}",
-						mediaKey,
-						result.ErrorMessage);
+						mediaKey,result.ErrorMessage);
 				}
 
 				return result;
@@ -224,11 +220,7 @@ namespace TechHub.Service.Service
 
 				_logger.Information(
 					"Video uploaded successfully - PublicId: {PublicId}, Size: {Size}, Duration: {Duration}s, Dimensions: {Width}x{Height}",
-					uploadResult.PublicId,
-					FormatFileSize(uploadResult.Bytes),
-					uploadResult.Duration,
-					uploadResult.Width,
-					uploadResult.Height);
+					uploadResult.PublicId,FormatFileSize(uploadResult.Bytes),uploadResult.Duration,uploadResult.Width,uploadResult.Height);
 
 
 				return new CloudinaryUploadResult
@@ -313,10 +305,7 @@ namespace TechHub.Service.Service
 
 				_logger.Information(
 					"Image uploaded successfully - PublicId: {PublicId}, Size: {Size}, Dimensions: {Width}x{Height}",
-					uploadResult.PublicId,
-					FormatFileSize(uploadResult.Bytes),
-					uploadResult.Width,
-					uploadResult.Height);
+					uploadResult.PublicId,FormatFileSize(uploadResult.Bytes),uploadResult.Width,uploadResult.Height);
 
 				return new CloudinaryUploadResult
 				{
@@ -343,6 +332,8 @@ namespace TechHub.Service.Service
 			}
 		}
 
+
+		
 		/// <summary>
 		/// Upload document as-is (no processing)
 		/// </summary>
@@ -354,10 +345,7 @@ namespace TechHub.Service.Service
 		/// - Converting might break formatting
 		/// - Usually smaller than videos anyway
 		/// </remarks>
-		private async Task<CloudinaryUploadResult> UploadDocumentAsync(
-			Stream mediaStream,
-			string mediaKey,
-			string folder)
+		private async Task<CloudinaryUploadResult> UploadDocumentAsync(Stream mediaStream,string mediaKey, string folder)
 		{
 			try
 			{
@@ -794,6 +782,16 @@ namespace TechHub.Service.Service
 				_logger.Error(ex, "Error generating signature");
 				throw;
 			}
+		}
+
+		public async Task<CloudinaryUploadResult> UploadSchoolLogoAsync(Stream imageStream,string fileName,Guid schoolId)
+		{
+			// School logos go in permanent folder directly
+			// not temp — logos are always kept
+			var folder = $"schools/{schoolId}/logo";
+			var mediaKey = $"logo_{schoolId}";
+
+			return await UploadImageAsync(imageStream,mediaKey,folder);
 		}
 	}
 

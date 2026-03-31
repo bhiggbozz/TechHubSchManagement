@@ -26,12 +26,14 @@ using TechHub.Core.Helper;
 using TechHub.Core.Model;
 using TechHub.Core.Models;
 using TechHub.Core.ResponseModel;
+using TechHub.Core.Utilities;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.Users;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
 using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
+using TechhubMS;
 using TechhubMS.util;
 using static System.Net.Mime.MediaTypeNames;
 
@@ -64,6 +66,8 @@ namespace TechHub.Service.Service
 		private readonly IMapper _mapper;
 		private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
 		private readonly ILogger _logger;
+		private readonly IEmailService _emailService;
+		private readonly ITenantService _tenantService;
 		private readonly string? _connString;
 
 		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<Users> queryrepositoryUser,
@@ -72,7 +76,8 @@ namespace TechHub.Service.Service
 			ICommandRespository<Classroom> classroomCommandRespository, IQueryRepository<Classroom> classroomQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration, ICommandRespository<StudentClassroom> commandRepositoryStudentClassroom, ICommandRespository<TeacherClassroom> commandRepositoryTeacherClassroom,
 			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject,
-			ICommandRespository<AdminPermissions> adminPermissionsCommandRepository, IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,IMapper mapper, ILogger logger)
+			ICommandRespository<AdminPermissions> adminPermissionsCommandRepository, ITenantService tenantService,
+			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,IMapper mapper, ILogger logger, IEmailService emailService)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
@@ -90,8 +95,11 @@ namespace TechHub.Service.Service
 			_classroomQueryRespository = classroomQueryRespository;
 			_adminPermissionsCommandRepository = adminPermissionsCommandRepository;
 			_adminPermissionsQueryRespository = adminPermissionsQueryRespository;
+
+			_emailService = emailService;
 			_logger = logger;
 			_configuration = configuration;
+			_tenantService = tenantService;
 
 			_mapper = mapper;
 			_connString = _configuration.GetConnectionString("DbConnectionString") ?? throw new ArgumentNullException("Db COnfig is null");
@@ -253,7 +261,7 @@ namespace TechHub.Service.Service
 				};
 			}
 		}
-		public async Task<BaseResponse> CreateUser(UserViewModel userViewModel, AuthenticatedUserClaims userClaims)
+		public async Task<BaseResponse> CreateUser(UserViewModelV2 userViewModel, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
@@ -265,7 +273,7 @@ namespace TechHub.Service.Service
 					// Validation 1: Check if model is null
 					if (userViewModel is null)
 					{
-						_logger.Warning("CreateUser called with null model");
+						_logger.Warning("user details cannot be null");
 
 						return new BaseResponse
 						{
@@ -278,7 +286,7 @@ namespace TechHub.Service.Service
 					// Validation 2: Validate user claims
 					if (string.IsNullOrEmpty(userClaims.SchoolId) || string.IsNullOrEmpty(userClaims.UserId))
 					{
-						_logger.Warning("CreateUser called with missing authentication information");
+						_logger.Warning("Create User called with missing authentication information");
 
 						return new BaseResponse
 						{
@@ -328,10 +336,7 @@ namespace TechHub.Service.Service
 					// Validation 4: Check user role (must be Admin or SuperAdmin)
 					if (userRole != (int)UserRole.Administrator && userRole != (int)UserRole.SuperAdministrator)
 					{
-						_logger.Warning(
-							"Unauthorized user creation attempt - UserId: {UserId}, Role: {Role}",
-							createdBy,
-							((UserRole)userRole).ToString());
+						_logger.Warning("Unauthorized user creation attempt - UserId: {UserId}, Role: {Role}", createdBy, ((UserRole)userRole).ToString());
 
 						return new BaseResponse
 						{
@@ -446,7 +451,7 @@ namespace TechHub.Service.Service
 						CreatedBy = createdBy,
 						IsActive = true
 					};
-
+					var tempPassword = GenerateTempPassword();
 					var userDict = new Dictionary<string, object>
 					{
 						{ "Id", newUser.Id },
@@ -454,7 +459,7 @@ namespace TechHub.Service.Service
 						{ "LastName", newUser.LastName },
 						{ "UserName", newUser.UserName },
 						{ "Email", newUser.EmailAddress },
-						{ "HashPassword", newUser.HashPassword },
+						{ "HashPassword", HashPassword(tempPassword) },
 						{ "RoleId", newUser.RoleId },
 						{ "SchoolId", newUser.SchoolId },
 						{ "CreatedBy", newUser.CreatedBy },
@@ -493,13 +498,25 @@ namespace TechHub.Service.Service
 					}
 
 					await scope.CommitAsync();
+					var IsGuid = Guid.TryParse(userClaims.SchoolId, out Guid schCode);
+					var code = await GetSchoolCode(schCode);
 
-					_logger.Information(
-						"User created successfully - UserId: {UserId}, Username: {Username}, Role: {Role}, CreatedBy: {CreatedBy}",
-						newUser.Id,
-						newUser.UserName,
-						userViewModel.Role.ToString(),
-						createdBy);
+					var placeholders = new Dictionary<string, string>
+					{
+						{ "@@Name",$"{newUser.FirstName} {newUser.LastName}" },
+						{ "@@UserName", newUser.UserName },
+						{ "@@Password", GenerateTempPassword() },
+						{ "@@Link", _configuration["App:BaseUrl"]+"/"+ code}
+					};
+					var emailTemplate = await _emailService.GetRenderedTemplate(EmailTemplateKey.WelcomeUser, placeholders);
+					if(emailTemplate != null)
+					{
+						//send email notification to user 
+						_ = Task.Run(async () => await _emailService.SendAsync(newUser.EmailAddress, $"{newUser.FirstName} {newUser.LastName}", "User Profiled", emailTemplate));
+						_logger.Information("User created successfully - UserId: {UserId}, Username: {Username}, Role: {Role}, CreatedBy: {CreatedBy}",
+							newUser.Id,newUser.UserName,userViewModel.Role.ToString(),createdBy);
+					}
+					
 
 					return new BaseResponse
 					{
@@ -520,9 +537,7 @@ namespace TechHub.Service.Service
 				catch (SqlException ex)
 				{
 					_logger.Error(
-						ex,
-						"SQL error occurred while creating user - Username: {Username}",
-						userViewModel?.UserName);
+						ex,"SQL error occurred while creating user - Username: {Username}", userViewModel?.UserName);
 
 					if (ex.Message.ToLower().Contains("duplicate"))
 					{
@@ -557,6 +572,8 @@ namespace TechHub.Service.Service
 				}
 			}
 		}
+
+
 
 		//public async Task<BaseResponse> SaveClassTeacherUser(UserViewModel userViewModel)
 		//{
@@ -1411,6 +1428,36 @@ namespace TechHub.Service.Service
 				}
 			}
 		}
+
+
+		private async Task<string> GetSchoolCode(Guid schoolId)
+		{
+			try
+			{
+				// which is your school code
+				var tenant = await _tenantService.GetTenantBySchoolIdAsync(schoolId);
+
+				if (tenant != null && !string.IsNullOrEmpty(tenant.Identifier))
+				{
+					return tenant.Identifier;
+				}
+
+				// Fallback to SchoolCode table
+				var query = $@"SELECT Code FROM SchoolCode WHERE SchoolId = '{schoolId}'";
+
+				var result = await _schCodeQueryRespository.GetByQuery(query);
+
+				return result.FirstOrDefault()?.Code ?? schoolId.ToString();
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(
+					ex,
+					"Error fetching school code - SchoolId: {SchoolId}",schoolId);
+
+				return schoolId.ToString();
+			}
+		}
 		/// <summary>
 		/// Allow users to update their own profile with limited fields
 		/// </summary>
@@ -1713,10 +1760,7 @@ namespace TechHub.Service.Service
 			}
 		}
 
-		public async Task<BaseResponse> GetAdministrators(
-			AuthenticatedUserClaims userClaims,
-			int pageNumber,
-			int pageSize)
+		public async Task<BaseResponse> GetAdministrators(AuthenticatedUserClaims userClaims,int pageNumber,int pageSize)
 		{
 			try
 			{
@@ -2088,12 +2132,21 @@ namespace TechHub.Service.Service
 		}
 
 
+		private string HashPassword(string plainPassword)
+		{
+			using var sha256 = System.Security.Cryptography.SHA256.Create();
 
+			var bytes = System.Text.Encoding.UTF8.GetBytes(plainPassword);
+
+			var hash = sha256.ComputeHash(bytes);
+
+			return Convert.ToHexString(hash).ToLower();
+		}
 
 		/// <summary>
 		/// Validate role-specific requirements
 		/// </summary>
-		private (bool IsValid, string ErrorMessage) ValidateUserRoleRequirements(UserViewModel userViewModel)
+		private (bool IsValid, string ErrorMessage) ValidateUserRoleRequirements(UserViewModelV2 userViewModel)
 		{
 			switch (userViewModel.Role)
 			{
@@ -2166,12 +2219,7 @@ namespace TechHub.Service.Service
 		/// <summary>
 		/// Create student-specific associations (classroom and minor subjects)
 		/// </summary>
-		private async Task CreateStudentAssociations(
-			IDbTransactionScope scope,
-			Guid studentId,
-			UserViewModel userViewModel,
-			Guid schoolId,
-			Guid createdBy)
+		private async Task CreateStudentAssociations(IDbTransactionScope scope,Guid studentId,UserViewModelV2 userViewModel,Guid schoolId,Guid createdBy)
 		{
 			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
@@ -2211,12 +2259,7 @@ namespace TechHub.Service.Service
 		/// <summary>
 		/// Create teacher-specific associations (classrooms and subjects)
 		/// </summary>
-		private async Task CreateTeacherAssociations(
-			IDbTransactionScope scope,
-			Guid teacherId,
-			UserViewModel userViewModel,
-			Guid schoolId,
-			Guid createdBy)
+		private async Task CreateTeacherAssociations(IDbTransactionScope scope,Guid teacherId,UserViewModelV2 userViewModel,Guid schoolId,Guid createdBy)
 		{
 			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
@@ -2895,9 +2938,37 @@ namespace TechHub.Service.Service
 		}
 
 		#endregion
-	
 
 
+		private string GenerateTempPassword()
+		{
+			
+			const string uppercase = "ABCDEFGHJKMNPQRSTUVWXYZ";
+			const string lowercase = "abcdefghjkmnpqrstuvwxyz";
+			const string numbers = "23456789";
+			const string special = "!@#$%&*";
+
+			var random = new Random();
+			var password = new List<char>();
+
+			
+			password.Add(uppercase[random.Next(uppercase.Length)]);
+			password.Add(uppercase[random.Next(uppercase.Length)]);
+			password.Add(lowercase[random.Next(lowercase.Length)]);
+			password.Add(lowercase[random.Next(lowercase.Length)]);
+			password.Add(numbers[random.Next(numbers.Length)]);
+			password.Add(numbers[random.Next(numbers.Length)]);
+			password.Add(special[random.Next(special.Length)]);
+			password.Add(special[random.Next(special.Length)]);
+
+			// ✅ Shuffle so it is not predictable
+			// pattern like AA aa 22 !!
+			var shuffled = password
+				.OrderBy(_ => random.Next())
+				.ToArray();
+
+			return new string(shuffled);
+		}
 
 		public Task<BaseResponse> GetStudents(AuthenticatedUserClaims? claims, int pageNumber, int pageSize)
 		{

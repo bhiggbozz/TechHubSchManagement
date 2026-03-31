@@ -16,7 +16,7 @@ namespace TechHub.Service.Interface
 	public interface IUserService
 	{
 		Task<BaseResponse> LoginUser(LoginViewModel loginViewModel, TenantInfo? tenantInfo);
-		Task<BaseResponse> CreateUser(UserViewModel userViewModel, AuthenticatedUserClaims? claims);
+		Task<BaseResponse> CreateUser(UserViewModelV2 userViewModel, AuthenticatedUserClaims? claims);
 
 		Task<BaseResponse> GetStudents(AuthenticatedUserClaims? claims, int pageNumber, int pageSize);
 

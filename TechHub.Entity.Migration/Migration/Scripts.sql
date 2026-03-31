@@ -640,4 +640,19 @@ EXEC sp_addextendedproperty
     @level2type = N'COLUMN', @level2name = 'AutoApprovalEligible';
 
 -----------------------------------------------------------------------------------------
+CREATE TABLE EmailTemplates (
+    Id          UNIQUEIDENTIFIER PRIMARY KEY
+                DEFAULT NEWID(),
+    TemplateKey NVARCHAR(100) NOT NULL,
+    -- e.g. "welcome_user", "password_reset"
+    Subject     NVARCHAR(200) NOT NULL,
+    HtmlBody    NVARCHAR(MAX) NOT NULL,
+    -- Contains placeholders like {{UserName}}
+    -- {{LoginLink}}, {{SchoolName}},
+    -- {{TempPassword}}
+    IsActive    BIT DEFAULT 1,
+    CreationDate DATETIME DEFAULT GETUTCDATE(),
+    ModifiedDate DATETIME DEFAULT GETUTCDATE()
+)
+------------------------------------------------------------
 

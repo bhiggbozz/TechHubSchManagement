@@ -47,7 +47,7 @@ namespace TechhubMS.Controllers
 		}
 		[HttpPost("createUser")]
 		[Authorize]
-		public async Task<ActionResult<BaseResponse>> Create(UserViewModel userViewModel)
+		public async Task<ActionResult<BaseResponse>> Create(UserViewModelV2 userViewModel)
 		{
 			var schoolIdClaim = User.GetAuthenticatedUserClaims();
 

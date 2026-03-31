@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.AspNetCore.Http;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -34,6 +35,7 @@ namespace TechHub.Service.Interface
 
 		Task<SubjectsListResponse> GetAllSubjects(AuthenticatedUserClaims userInfo,int? classCategory = null,int? subjectCategory = null,int pageNumber = 1,int pageSize = 50);
 		Task<BaseResponse> UpdateClassroomTeachers(UpdateClassroomTeachersViewModel updateClassroomTeachersViewModel,AuthenticatedUserClaims userInfo);
+		Task<BaseResponse> UpdateSchoolLogoAsync(IFormFile logo, AuthenticatedUserClaims userClaims);
 
 
 		//Task<SubjectDetailResponse> GetSubjectById(Guid subjectId,AuthenticatedUserClaims userInfo);
