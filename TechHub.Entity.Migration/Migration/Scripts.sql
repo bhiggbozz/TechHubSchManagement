@@ -656,3 +656,7 @@ CREATE TABLE EmailTemplates (
 )
 ------------------------------------------------------------
 
+ALTER TABLE School
+ADD LogoUrl NVARCHAR(MAX) NULL,
+    LogoPublicId NVARCHAR(500) NULL;
+

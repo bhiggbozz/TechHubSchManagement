@@ -33,8 +33,7 @@ namespace TechHub.Service.Service
 			// Validate configuration
 			if (string.IsNullOrEmpty(_settings.CloudName) || string.IsNullOrEmpty(_settings.ApiKey) || string.IsNullOrEmpty(_settings.ApiSecret))
 			{
-				var errorMsg = "Cloudinary configuration is missing. " +
-							  "Please add Cloudinary section to config with necessary details.";
+				var errorMsg = "Cloudinary configuration is missing. " + "Please add Cloudinary section to config with necessary details.";
 
 				_logger.Fatal(errorMsg);
 				throw new InvalidOperationException(errorMsg);
@@ -58,14 +57,59 @@ namespace TechHub.Service.Service
 		/// <summary>
 		/// Main upload method - Routes to appropriate handler based on media type
 		/// </summary>
-	   
+
+		/// <summary>
+		/// Main upload method - Routes to appropriate handler based on media type.
+		/// Enforces O(1) key-value structure: {schoolId}/{resourceType}/{mediaKey}
+		/// This guarantees deterministic, scan-free retrieval from Cloudinary.
+		/// </summary>
 		public async Task<CloudinaryUploadResult> UploadMediaAsync(Stream mediaStream,string mediaKey,Guid schoolId,MediaType mediaType,bool isTemporary = true)
 		{
 			try
 			{
+				// ========================================
+				// STEP 1: ENFORCE STRUCTURED KEY (O(1) GUARANTEE)
+				// ========================================
+
+				// Map MediaType enum to a URL-safe folder segment
+				// This becomes the middle segment in the key:
+				// {schoolId} / {resourceTypeSegment} / {mediaKey}
+				var resourceTypeSegment = mediaType switch
+				{
+					MediaType.Video => "video",
+					MediaType.Audio => "audio",
+					MediaType.Image => "image",
+					MediaType.Document => "document",
+					_ => "raw"
+				};
+
+				// Sanitize incoming mediaKey — strip slashes to prevent accidental
+				// path injection that would break key structure
+				// Before: "some/nested/key" → After: "some_nested_key"
+				var sanitizedKey = mediaKey.Replace("/", "_").Replace("\\", "_").Trim();
+
+				if (string.IsNullOrWhiteSpace(sanitizedKey))
+				{
+					_logger.Error("UploadMediaAsync failed - mediaKey is empty after sanitization. Original: {MediaKey}", mediaKey);
+					return new CloudinaryUploadResult
+					{
+						Success = false,
+						ErrorMessage = "Media key cannot be empty."
+					};
+				}
+
+				// Build the deterministic structured key
+				// Format : {schoolId}/{resourceType}/{sanitizedKey}
+				// Example: "e5898860-31a3-4f17-8f32-0528212ba69d/video/lesson_42"
+				// This is the KEY in your key-value CDN model — same inputs, same key, always
+				var structuredKey = $"{schoolId}/{resourceTypeSegment}/{sanitizedKey}";
+
+				// ========================================
+				// STEP 2: RESOLVE FOLDER FROM CONFIG
+				// ========================================
 
 				// Get folder template from configuration
-				// Template: "temp/pending/{schoolId}" or "schools/{schoolId}"
+				// Template: "temp/pending/{schoolId}"  or  "schools/{schoolId}"
 				var folderTemplate = isTemporary
 					? _settings.Settings.FolderStructure.TempPending
 					: _settings.Settings.FolderStructure.Permanent;
@@ -75,57 +119,55 @@ namespace TechHub.Service.Service
 				var folder = folderTemplate.Replace("{schoolId}", schoolId.ToString());
 
 				_logger.Information(
-					"Starting Cloudinary upload - MediaKey: {MediaKey}, Folder: {Folder}, Type: {MediaType}, IsTemp: {IsTemp}",
-					mediaKey,folder,mediaType,isTemporary);
+					"Starting Cloudinary upload - StructuredKey: {StructuredKey}, Folder: {Folder}, Type: {MediaType}, IsTemp: {IsTemp}",
+					structuredKey, folder, mediaType, isTemporary);
 
 				// ========================================
-				// STEP 2: ROUTE TO APPROPRIATE HANDLER
+				// STEP 3: ROUTE TO APPROPRIATE HANDLER
 				// ========================================
 
 				// Each media type needs different processing:
-				// - Video/Audio: Compression, transcoding, thumbnail generation
-				// - Image: Optimization, format conversion, resizing
-				// - Document: Upload as-is, no processing
+				// - Video/Audio : Compression, transcoding, thumbnail generation
+				// - Image       : Optimization, format conversion, resizing
+				// - Document    : Upload as-is, no processing
 
+				// NOTE: We pass structuredKey (not the raw mediaKey) so the
+				// PublicId stored in Cloudinary matches exactly what GetUrl() will reconstruct
 				CloudinaryUploadResult result;
 
 				if (mediaType == MediaType.Video || mediaType == MediaType.Audio)
 				{
-					// Handle video/audio with compression
-					result = await UploadVideoAsync(mediaStream, mediaKey, folder);
+					result = await UploadVideoAsync(mediaStream, structuredKey, folder);
 				}
 				else if (mediaType == MediaType.Image)
 				{
-					// Handle image with optimization
-					result = await UploadImageAsync(mediaStream, mediaKey, folder);
+					result = await UploadImageAsync(mediaStream, structuredKey, folder);
 				}
 				else
 				{
-					result = await UploadDocumentAsync(mediaStream, mediaKey, folder);
+					result = await UploadDocumentAsync(mediaStream, structuredKey, folder);
 				}
 
 				// ========================================
-				// STEP 3: RETURN RESULT
+				// STEP 4: LOG OUTCOME AND RETURN
 				// ========================================
 
 				if (result.Success)
 				{
 					_logger.Information(
-						"Upload completed successfully - PublicId: {PublicId}, Size: {Size}, Type: {Type}",
-						result.PublicId,FormatFileSize(result.FileSizeBytes),mediaType);
+						"Upload completed successfully - PublicId: {PublicId}, Size: {Size}, Type: {MediaType}",result.PublicId,FormatFileSize(result.FileSizeBytes),mediaType);
 				}
 				else
 				{
 					_logger.Error(
-						"Upload failed - MediaKey: {MediaKey}, Error: {Error}",
-						mediaKey,result.ErrorMessage);
+						"Upload failed - StructuredKey: {StructuredKey}, Error: {Error}",structuredKey,result.ErrorMessage);
 				}
 
 				return result;
 			}
 			catch (Exception ex)
 			{
-				_logger.Error(ex, "Exception during Cloudinary upload - MediaKey: {MediaKey}", mediaKey);
+				_logger.Error(ex, "Exception during Cloudinary upload - MediaKey: {MediaKey}, SchoolId: {SchoolId}", mediaKey, schoolId);
 
 				return new CloudinaryUploadResult
 				{
@@ -134,7 +176,6 @@ namespace TechHub.Service.Service
 				};
 			}
 		}
-
 		#endregion
 
 		#region Upload Handlers (Video, Image, Document)
@@ -380,9 +421,7 @@ namespace TechHub.Service.Service
 				}
 
 				_logger.Information(
-					"Document uploaded successfully - PublicId: {PublicId}, Size: {Size}",
-					uploadResult.PublicId,
-					FormatFileSize(uploadResult.Bytes));
+					"Document uploaded successfully - PublicId: {PublicId}, Size: {Size}",uploadResult.PublicId,FormatFileSize(uploadResult.Bytes));
 
 				return new CloudinaryUploadResult
 				{
@@ -407,6 +446,45 @@ namespace TechHub.Service.Service
 					ErrorMessage = $"Document upload exception: {ex.Message}"
 				};
 			}
+		}
+
+		/// <summary>
+		/// O(1) URL construction — no DB query, no Cloudinary API call.
+		/// Same inputs always produce the same URL deterministically.
+		/// </summary>
+		public string GetUrl(Guid schoolId, MediaType mediaType, string entityId, bool isTemporary = false)
+		{
+			var resourceTypeSegment = mediaType switch
+			{
+				MediaType.Video => "video",
+				MediaType.Audio => "audio",
+				MediaType.Image => "image",
+				MediaType.Document => "document",
+				_ => "raw"
+			};
+
+			// Reconstruct the exact same key used during upload
+			var structuredKey = $"{schoolId}/{resourceTypeSegment}/{entityId}";
+
+			var folderTemplate = isTemporary
+				? _settings.Settings.FolderStructure.TempPending
+				: _settings.Settings.FolderStructure.Permanent;
+
+			var folder = folderTemplate.Replace("{schoolId}", schoolId.ToString());
+			var fullPublicId = $"{folder}/{structuredKey}";
+
+			// Use appropriate URL builder per type
+			return mediaType switch
+			{
+				MediaType.Video or MediaType.Audio =>
+					_cloudinary.Api.UrlVideoUp.BuildUrl(fullPublicId),
+
+				MediaType.Image =>
+					_cloudinary.Api.UrlImgUp.BuildUrl(fullPublicId),
+
+				_ =>
+					_cloudinary.Api.Url.ResourceType("raw").BuildUrl(fullPublicId)
+			};
 		}
 
 		#endregion
