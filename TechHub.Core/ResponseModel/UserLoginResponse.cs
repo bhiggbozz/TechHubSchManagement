@@ -27,6 +27,7 @@ namespace TechHub.Core.ResponseModel
 		public string Location { get; set; }
 		public int CountryId { get; set; }
 		public int StateId { get; set; }
-		public string Address { get; set; }
+		public string? Address { get; set; }
+		public string? LogoUrl { get; set; }
 	}
 }
