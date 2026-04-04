@@ -7,7 +7,6 @@ using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel.classroom;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
-using TechhubMS.util;
 
 namespace TechhubMS.Controllers;
 

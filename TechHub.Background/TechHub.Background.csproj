@@ -15,6 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\TeachHub.QuestionBank\TechHub.QuestionBank.csproj" />
     <ProjectReference Include="..\TechHub.Core\TechHub.Core.csproj" />
     <ProjectReference Include="..\TechHub.Service\TechHub.Service.csproj" />
   </ItemGroup>

@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using TechHub.Core;
 using TechHub.Core.Entities;
+using TechHub.Core.Model;
 using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.classroom;
@@ -9,7 +10,6 @@ using TechHub.Core.ViewModel.school;
 using TechHub.QuestionBank.Core.Helpers;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
-using TechhubMS.util;
 
 namespace TechhubMS.Controllers
 {
@@ -188,5 +188,55 @@ namespace TechhubMS.Controllers
 			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
 
+
+		[HttpPost("topics")]
+		public async Task<IActionResult> CreateTopic(
+		[FromBody] CreateTopicViewModel model)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.CreateTopic(model, userClaims);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
+		/// <summary>
+		/// Get all topics for a subject
+		/// GET api/subtopic/topics/{subjectId}
+		/// </summary>
+		[HttpGet("topics/{subjectId:guid}")]
+		public async Task<IActionResult> GetTopics(Guid subjectId)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.GetTopics(subjectId, userClaims);
+			return Ok(result);
+		}
+
+		// ── SUBTOPIC ─────────────────────────────────────────────
+
+		/// <summary>
+		/// Create a new subtopic under a topic
+		/// POST api/subtopic/subtopics
+		/// </summary>
+		[HttpPost("subtopics")]
+		public async Task<IActionResult> CreateSubTopic(
+			[FromBody] CreateSubTopicViewModel model)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.CreateSubTopic(model, userClaims);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
+		/// <summary>
+		/// Get all subtopics for a topic
+		/// GET api/subtopic/subtopics/{topicId}
+		/// </summary>
+		[HttpGet("subtopics/{topicId:guid}")]
+		public async Task<IActionResult> GetSubTopics(Guid topicId)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.GetSubTopics(topicId, userClaims);
+			return Ok(result);
+		}
 	}
+
 }
+

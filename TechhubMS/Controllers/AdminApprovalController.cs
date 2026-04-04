@@ -3,9 +3,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System;
+using TechHub.Core.Model;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
-using TechhubMS.util;
 namespace TechhubMS.Controllers;
 
 

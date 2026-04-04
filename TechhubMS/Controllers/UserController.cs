@@ -1,12 +1,12 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TechHub.Core;
+using TechHub.Core.Model;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.Users;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
 using TechhubMS.Middleware.Services;
-using TechhubMS.util;
 
 namespace TechhubMS.Controllers
 {
