@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using TechHub.Core.Model;
 using TechHub.QuestionBank.Core.ViewModel;
 using TechHub.QuestionBank.Services.interfaces;
-using TechhubMS.util;
 
 namespace TechHub.QuestionBank.Controllers;
 

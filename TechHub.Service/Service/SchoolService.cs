@@ -16,6 +16,7 @@ using System.Threading.Tasks;
 using System.Xml.Serialization;
 using TechHub.Core;
 using TechHub.Core.Constant;
+using TechHub.Core.DTO;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Helper;
@@ -24,10 +25,12 @@ using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.classroom;
 using TechHub.Core.ViewModel.school;
+using TechHub.QuestionBank.Core.DTO;
 using TechHub.Service.Interface;
 using TechHub.Service.Service.DatabaseService;
 using TechhubMS.util;
 using static System.Formats.Asn1.AsnWriter;
+using SubjectDto = TechHub.Core.ResponseModel.SubjectDto;
 
 
 namespace TechHub.Service.Service
@@ -40,6 +43,9 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<Subjects> _subjectCommandRespository;
 		private readonly ICommandRespository<ClassroomSubject> _classroomSubjectCommandRespository;
 		private readonly ICommandRespository<ClassroomTeacher> _classroomTeacherCommandRepository;
+		private readonly ICommandRespository<Topic> _topicCommandRepository;
+		private readonly ICommandRespository<SubTopic> _subTopicCommandRepository;
+
 
 
 		private readonly IQueryRepository<State> _queryrepositoryState;
@@ -49,6 +55,10 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<Classroom> _studentClassQueryRespository;
 		private readonly IQueryRepository<ClassroomSubject> _classroomSubjectQueryRespository;
 		private readonly IQueryRepository<ClassroomTeacher> _classroomTeacherQueryRespository;
+		private readonly IQueryRepository<Topic> _topicQueryRepository;
+		private readonly IQueryRepository<SubTopic> _subTopicQueryRepository;
+
+
 
 
 		private readonly IConfiguration _configuration;
@@ -64,21 +74,26 @@ namespace TechHub.Service.Service
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IQueryRepository<Users> queryrepositoryUser, IQueryRepository<Classroom> studentClassQueryRespository,
 		    ICommandRespository<Subjects> subjectCommandRespository, IQueryRepository<ClassroomTeacher> classroomTeacherQueryRespository, 
 		    ICommandRespository<ClassroomTeacher> classroomTeacherCommandRepository, IQueryRepository<School> schQueryRepository, ICloudinaryService cloudinaryService,
-			IQueryRepository<Subjects> queryrepositorySubject,IConfiguration configuration, ILogger logger)
+			IQueryRepository<Subjects> queryrepositorySubject, ICommandRespository<Topic> topicCommandRepository, IQueryRepository<Topic> topicQueryRepository, ICommandRespository<SubTopic> subTopicCommandRepository,
+			IQueryRepository<SubTopic> subTopicQueryRepository,IConfiguration configuration, ILogger logger)
 		{
 			_schCommandRespository = schCommandRespository;
 			_queryrepositoryState = queryRepositoryState;
 			_schCodeCommandRespository= schCodeCommandRespository;
 			_studentClassCommandRespository = studentClassCommandRespository;
 			_subjectCommandRespository = subjectCommandRespository;
+			_topicCommandRepository = topicCommandRepository;
 			_queryrepositorySubject = queryrepositorySubject;
 			_studentClassQueryRespository = studentClassQueryRespository;
+			_subTopicCommandRepository = subTopicCommandRepository;
 
 			_classroomSubjectCommandRespository = classroomSubjectCommandRespository;
 			_classroomSubjectQueryRespository = classroomSubjectQueryRespository;
 			_classroomTeacherCommandRepository = classroomTeacherCommandRepository;
 			_classroomTeacherQueryRespository = classroomTeacherQueryRespository;
 			_schQueryRepository = schQueryRepository;
+			_topicQueryRepository = topicQueryRepository;
+			_subTopicQueryRepository = subTopicQueryRepository;
 
 
 			_configuration = configuration;
@@ -957,9 +972,7 @@ namespace TechHub.Service.Service
 		/// Get existing subjects to prevent duplicates
 		/// </summary>
 	
-		private async Task<List<(string Name, string Category, string ClassCategory)>> GetExistingSubjects(
-			List<SubjectsDetails> subjects,
-			Guid schoolId)
+		private async Task<List<(string Name, string Category, string ClassCategory)>> GetExistingSubjects(List<SubjectsDetails> subjects,Guid schoolId)
 		{
 			try
 			{
@@ -2200,6 +2213,59 @@ namespace TechHub.Service.Service
 			}
 		}
 		#endregion
+
+
+
+		public async Task<TopicListResponse> GetTopics(Guid subjectId,AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new TopicListResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				var query = $@"
+					SELECT Id, SubjectId, Name, IsActive
+					FROM Topic
+					WHERE SubjectId = '{subjectId}'
+					AND   SchoolId  = '{schoolId}'
+					AND   IsDeleted = 0
+					AND   IsActive  = 1
+					ORDER BY Name ASC";
+
+				var results = await _topicQueryRepository.GetByQuery(query, DatabaseTarget.QuestionBank);
+
+				var topics = results?.Select(t => new TopicDto
+				{
+					Id = t.Id,
+					SubjectId = t.SubjectId,
+					Name = t.Name,
+					IsActive = t.IsActive
+				}).ToList() ?? new List<TopicDto>();
+
+				return new TopicListResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Topics retrieved successfully",
+					Status = "successful",
+					Topics = topics
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error getting topics");
+				return new TopicListResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving topics",
+					Status = "failed"
+				};
+			}
+		}
 		/// <summary>
 		/// Get existing subjects for the school to prevent duplicates
 		/// </summary>
@@ -3241,6 +3307,218 @@ namespace TechHub.Service.Service
 				#endregion
 			}
 		}
+
+		public async Task<CreateTopicResponse> CreateTopic(CreateTopicViewModel model,AuthenticatedUserClaims userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			{
+				try
+				{
+					_logger.Information(
+						"Creating topic - Name: {Name}, SubjectId: {SubjectId}",
+						model.Name, model.SubjectId);
+
+					if (!Guid.TryParse(userClaims.UserId, out var userId))
+						return StringSanitizer.Fail<CreateTopicResponse>("Invalid user identification");
+
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+						return StringSanitizer.Fail<CreateTopicResponse>("Invalid school identification");
+
+					if (string.IsNullOrWhiteSpace(model.Name))
+						return StringSanitizer.Fail<CreateTopicResponse>("Topic name is required");
+
+					if (model.Name.Length > 200)
+						return StringSanitizer.Fail<CreateTopicResponse>("Topic name cannot exceed 200 characters");
+
+					if (model.SubjectId == Guid.Empty)
+						return StringSanitizer.Fail<CreateTopicResponse>("Subject is required");
+
+					// Verify subject exists and belongs to this school
+					var subject = await _queryrepositorySubject.Get(model.SubjectId, DatabaseTarget.QuestionBank);
+
+					if (subject == null || !subject.IsActive || subject.SchoolId != schoolId)
+						return StringSanitizer.Fail<CreateTopicResponse>("Subject not found");
+
+					// Duplicate check within this subject
+					var duplicateQuery = $@"
+						SELECT TOP 1 Id FROM Topic
+						WHERE SubjectId = '{model.SubjectId}'
+						AND   SchoolId  = '{schoolId}'
+						AND   IsDeleted = 0
+						AND   Name      = '{StringSanitizer.Sanitize(model.Name)}'";
+
+					var existing = await _topicQueryRepository.GetByQuery(
+						duplicateQuery, DatabaseTarget.QuestionBank);
+
+					if (existing?.Any() == true)
+						return StringSanitizer.Fail<CreateTopicResponse>("A topic with this name already exists in this subject");
+
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+					var topic = new Topic
+					{
+						Id = Guid.NewGuid(),
+						SubjectId = model.SubjectId,
+						SchoolId = schoolId,
+						Name = model.Name.Trim(),
+						IsActive = true,
+						IsDeleted = false,
+						CreatedAt = now,
+						CreatedBy = userId
+					};
+
+					await _topicCommandRepository.Create(topic, DatabaseTarget.QuestionBank);
+
+					_logger.Information("Topic created - TopicId: {TopicId}", topic.Id);
+
+					return new CreateTopicResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Topic created successfully",
+						Status = "successful",
+						TopicId = topic.Id
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error creating topic");
+					return StringSanitizer.Error<CreateTopicResponse>();
+				}
+			}
+		}
+
+
+		public async Task<CreateSubTopicResponse> CreateSubTopic(CreateSubTopicViewModel model,AuthenticatedUserClaims userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			{
+				try
+				{
+					_logger.Information("Creating subtopic - Name: {Name}, TopicId: {TopicId}",model.Name, model.TopicId);
+
+					if (!Guid.TryParse(userClaims.UserId, out var userId))
+						return StringSanitizer.Fail<CreateSubTopicResponse>("Invalid user identification");
+
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+						return StringSanitizer.Fail<CreateSubTopicResponse>("Invalid school identification");
+
+					if (string.IsNullOrWhiteSpace(model.Name))
+						return StringSanitizer.Fail<CreateSubTopicResponse>("SubTopic name is required");
+
+					if (model.Name.Length > 200)
+						return StringSanitizer.Fail<CreateSubTopicResponse>("SubTopic name cannot exceed 200 characters");
+
+					if (model.TopicId == Guid.Empty)
+						return StringSanitizer.Fail<CreateSubTopicResponse>("Topic is required");
+
+					// Verify topic exists and belongs to this school
+					var topic = await _topicQueryRepository.Get(model.TopicId, DatabaseTarget.QuestionBank);
+
+					if (topic == null || topic.IsDeleted || topic.SchoolId != schoolId)
+						return StringSanitizer.Fail<CreateSubTopicResponse>("Topic not found");
+
+					// Duplicate check within this topic
+					var duplicateQuery = $@"
+						SELECT TOP 1 Id FROM SubTopic
+						WHERE TopicId   = '{model.TopicId}'
+						AND   SchoolId  = '{schoolId}'
+						AND   IsDeleted = 0
+						AND   Name      = '{StringSanitizer.Sanitize(model.Name)}'";
+
+					var existing = await _subTopicQueryRepository.GetByQuery(duplicateQuery, DatabaseTarget.QuestionBank);
+
+					if (existing?.Any() == true)
+						return StringSanitizer.Fail<CreateSubTopicResponse>("A subtopic with this name already exists in this topic");
+
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+					var subTopic = new SubTopic
+					{
+						Id = Guid.NewGuid(),
+						TopicId = model.TopicId,
+						SchoolId = schoolId,
+						Name = model.Name.Trim(),
+						IsActive = true,
+						IsDeleted = false,
+						CreatedAt = now,
+						CreatedBy = userId
+					};
+
+					await _subTopicCommandRepository.Create(subTopic, DatabaseTarget.QuestionBank);
+
+					_logger.Information("SubTopic created - SubTopicId: {SubTopicId}", subTopic.Id);
+
+					return new CreateSubTopicResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "SubTopic created successfully",
+						Status = "successful",
+						SubTopicId = subTopic.Id
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error creating subtopic");
+					return StringSanitizer.Error<CreateSubTopicResponse>();
+				}
+			}
+		}
+
+
+		/// <summary>
+		/// Get all active subtopics for a topic
+		/// </summary>
+		public async Task<SubTopicListResponse> GetSubTopics(Guid topicId,AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new SubTopicListResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				var query = $@"
+					SELECT Id, TopicId, Name, IsActive
+					FROM SubTopic
+					WHERE TopicId   = '{topicId}'
+					AND   SchoolId  = '{schoolId}'
+					AND   IsDeleted = 0
+					AND   IsActive  = 1
+					ORDER BY Name ASC";
+
+				var results = await _subTopicQueryRepository.GetByQuery(query, DatabaseTarget.QuestionBank);
+
+				var subTopics = results?.Select(st => new SubTopicDto
+				{
+					Id = st.Id,
+					TopicId = st.TopicId,
+					Name = st.Name,
+					IsActive = st.IsActive
+				}).ToList() ?? new List<SubTopicDto>();
+
+				return new SubTopicListResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "SubTopics retrieved successfully",
+					Status = "successful",
+					SubTopics = subTopics
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error getting subtopics");
+				return new SubTopicListResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving subtopics",
+					Status = "failed"
+				};
+			}
+		}
+
 
 		private async Task<ClassroomTeacher?> GetClassroomTeacherAssignment(Guid classroomId, Guid teacherId)
 		{

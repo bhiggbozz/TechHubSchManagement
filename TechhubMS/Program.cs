@@ -6,12 +6,9 @@ using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using Serilog.Events;
 using System.Text;
+using TechHub.Background.Services;
 using TechHub.Core.Configuration;
 using TechHub.Core.Profiles;
-using TechHub.Core.Utilities;
-using TechHub.Service.Interface;
-using TechHub.Service.Service;
-using TechHub.Service.Service.DatabaseService;
 using TechhubMS;
 using TechhubMS.Middleware;
 
@@ -54,6 +51,7 @@ try
 				.AllowAnyHeader()
 				.AllowAnyMethod());
 	});
+	builder.Services.AddHostedService<QuestionJobWorker>();
 
 	// Multi-tenant services
 	builder.Services.AddMultiTenantServices(builder.Configuration);

@@ -1,7 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using System.Reflection.Metadata;
 using System.Text.Json;
-using TechhubMS.util;
+using TechHub.Core.Model;
 
 namespace TechhubMS.Middleware
 {

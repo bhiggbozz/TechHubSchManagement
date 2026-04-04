@@ -10,6 +10,7 @@ using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.classroom;
 using TechHub.Core.ViewModel.school;
+using TechHub.QuestionBank.Core.DTO;
 
 namespace TechHub.Service.Interface
 {
@@ -37,7 +38,16 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> UpdateClassroomTeachers(UpdateClassroomTeachersViewModel updateClassroomTeachersViewModel,AuthenticatedUserClaims userInfo);
 		Task<BaseResponse> UpdateSchoolLogoAsync(IFormFile logo, AuthenticatedUserClaims userClaims);
 
+		Task<CreateTopicResponse> CreateTopic(CreateTopicViewModel model,AuthenticatedUserClaims userClaims);
 
-		//Task<SubjectDetailResponse> GetSubjectById(Guid subjectId,AuthenticatedUserClaims userInfo);
+		Task<TopicListResponse> GetTopics(Guid subjectId,AuthenticatedUserClaims userClaims);
+
+		// SubTopic
+		Task<CreateSubTopicResponse> CreateSubTopic(CreateSubTopicViewModel model,AuthenticatedUserClaims userClaims);
+
+		Task<SubTopicListResponse> GetSubTopics(Guid topicId,AuthenticatedUserClaims userClaims);
+
+
+		//Task<SubjectDetailResponse> GetSubjectById(Guid subjectId, AuthenticatedUserClaims userInfo);
 	}
 }
