@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace TechHub.QuestionBank.Core.Entities;
 
-public class QuestionOption
+public class QuestionOptions
 {
 	public Guid Id { get; set; }
 	public Guid QuestionId { get; set; }

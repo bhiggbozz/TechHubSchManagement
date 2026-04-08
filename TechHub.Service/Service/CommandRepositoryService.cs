@@ -48,6 +48,8 @@ namespace TechHub.Service.Service
 
 		}
 
+		
+
 		public async Task Create(Dictionary<string, object> obj)
 		{
 			ArgumentNullException.ThrowIfNull(nameof(_config));
@@ -118,8 +120,11 @@ namespace TechHub.Service.Service
 
 		}
 
-        public async Task Create(SqlTransaction transaction, SqlConnection connection, TEntity entity)
+		
+
+		public async Task Create(SqlTransaction transaction, SqlConnection connection, TEntity entity)
         {
+
             ArgumentNullException.ThrowIfNull(nameof(_config));
             try
             {
@@ -148,7 +153,38 @@ namespace TechHub.Service.Service
 
         }
 
-        public async Task UpdateTableColumnById( string columnToUpdateName, string keyColumnName, object columnToUpdateValue, object KeyColumnValue)
+		public async Task Create(SqlTransaction transaction, SqlConnection connection, TEntity entity, DatabaseTarget target)
+		{
+			var connectionString = _resolver.Resolve(target);
+			ArgumentNullException.ThrowIfNull(nameof(connectionString));
+			try
+			{
+
+				using var conn = new SqlConnection(connectionString);
+				conn.Open();
+				var tableName = typeof(TEntity).Name;
+				var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
+				var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+				await conn.ExecuteAsync(query, sqlParameter, transaction);
+				//using var conn = new SqlConnection(_config);
+				//conn.Open();
+				//var tableName = typeof(TEntity).Name;
+				//var query = QueryBuilder<TEntity>.InsertQuery(obj, tableName);
+				//using var command = new SqlCommand(query, connection, transaction)
+				//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+				// await connection.ExecuteAsync(query, null, transaction);
+				// await command.ExecuteScalarAsync();
+			}
+			catch (Exception ex)
+			{
+				throw;
+			}
+
+			//var sqlQuery =  
+
+		}
+
+		public async Task UpdateTableColumnById( string columnToUpdateName, string keyColumnName, object columnToUpdateValue, object KeyColumnValue)
 		{
 			using var conn = new SqlConnection(_config);
 			conn.Open();
@@ -333,6 +369,23 @@ namespace TechHub.Service.Service
 		}
 
 		public async Task UpdateTableColumnById(Dictionary<string, object> obj, KeyValuePair<string, object> keyValue, DatabaseTarget target)
+		{
+			var connectionString = _resolver.Resolve(target);
+			using var conn = new SqlConnection(connectionString);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var query = QueryBuilder<TEntity>.UpdateQueryWithSingleColumnName(obj, keyValue.Key, tableName);
+			var parameter = new DynamicParameters();
+			foreach (var key in obj.Keys)
+			{
+				parameter.Add($"@{key}", obj[key]);
+			}
+
+			parameter.Add($"@{keyValue.Key}", keyValue.Value);
+			await conn.ExecuteAsync(query, parameter);
+		}
+
+		public async Task UpdateTableColumnById(SqlTransaction transaction, SqlConnection connection,Dictionary<string, object> obj, KeyValuePair<string, object> keyValue, DatabaseTarget target)
 		{
 			var connectionString = _resolver.Resolve(target);
 			using var conn = new SqlConnection(connectionString);

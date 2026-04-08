@@ -162,4 +162,44 @@ CREATE INDEX IX_ScanSessions_Status
 ALTER TABLE Questions
     ADD SnapshotUrl      NVARCHAR(MAX) NULL,
         SnapshotPublicId NVARCHAR(500) NULL;
+---------------------------------------------------------
+
+ALTER TABLE QuestionJob
+ADD ExtractedCount INT NOT NULL DEFAULT 0;
+
+CREATE TABLE QuestionJob (
+    Id            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+    SchoolId      UNIQUEIDENTIFIER NOT NULL,
+    SubTopicId    UNIQUEIDENTIFIER NOT NULL,
+    TeacherId     UNIQUEIDENTIFIER NOT NULL,
+    QuestionId    UNIQUEIDENTIFIER NULL,
+    QuestionType  NVARCHAR(20)     NOT NULL,
+    HasImages     BIT              NOT NULL DEFAULT 0,
+    TempImagePath NVARCHAR(500)    NULL,
+    Status        NVARCHAR(20)     NOT NULL DEFAULT 'Pending',
+    FailureReason NVARCHAR(500)    NULL,
+    AttemptCount  INT              NOT NULL DEFAULT 0,
+    CreatedAt     NVARCHAR(19)     NOT NULL,
+    CompletedAt   NVARCHAR(19)     NULL,
+    CONSTRAINT PK_QuestionJob PRIMARY KEY (Id)
+);
+
+-- PART 5: Indexes
+--CREATE INDEX IX_Topic_SubjectId          ON Topic(SubjectId);
+--CREATE INDEX IX_SubTopic_TopicId         ON SubTopic(TopicId);
+--CREATE INDEX IX_Subject_SchoolId         ON Subjects(SchoolId);
+--CREATE INDEX IX_Topic_SchoolId           ON Topic(SchoolId);
+--CREATE INDEX IX_SubTopic_SchoolId        ON SubTopic(SchoolId);
+--CREATE INDEX IX_Questions_SubTopicId     ON Questions(SubTopicId);
+--CREATE INDEX IX_Questions_JobId          ON Questions(JobId);
+CREATE INDEX IX_QuestionJob_Status       ON QuestionJob(Status);
+CREATE INDEX IX_QuestionJob_TeacherId_Status ON QuestionJob(TeacherId, Status);
+CREATE INDEX IX_QuestionJob_SchoolId     ON QuestionJob(SchoolId);
+--------------------------------------------------------------------------------
+
+ALTER TABLE Questions
+ALTER COLUMN TopicId UNIQUEIDENTIFIER NULL;
+
+ALTER TABLE Questions  
+ALTER COLUMN SubjectId UNIQUEIDENTIFIER NULL;
 

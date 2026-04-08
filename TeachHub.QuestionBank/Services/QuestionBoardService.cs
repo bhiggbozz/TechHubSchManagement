@@ -19,12 +19,12 @@ namespace TechHub.QuestionBank.Services;
 
 public class QuestionBoardService : IQuestionBoardService
 {
-	private readonly IQueryRepository<Question> _questionQueryRepo;
-	private readonly ICommandRespository<Question> _questionCommandRepo;
+	private readonly IQueryRepository<Questions> _questionQueryRepo;
+	private readonly ICommandRespository<Questions> _questionCommandRepo;
 	private readonly ICloudinaryService _cloudinaryService;
 	private readonly ILogger _logger;
 
-	public QuestionBoardService(IQueryRepository<Question> questionQueryRepo, ICommandRespository<Question> questionCommandRepo,
+	public QuestionBoardService(IQueryRepository<Questions> questionQueryRepo, ICommandRespository<Questions> questionCommandRepo,
 		 ICloudinaryService cloudinaryService,ILogger logger)
 	{
 		_questionQueryRepo = questionQueryRepo;

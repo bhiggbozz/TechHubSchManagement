@@ -3334,7 +3334,7 @@ namespace TechHub.Service.Service
 						return StringSanitizer.Fail<CreateTopicResponse>("Subject is required");
 
 					// Verify subject exists and belongs to this school
-					var subject = await _queryrepositorySubject.Get(model.SubjectId, DatabaseTarget.QuestionBank);
+					var subject = await _queryrepositorySubject.Get(model.SubjectId, DatabaseTarget.Core);
 
 					if (subject == null || !subject.IsActive || subject.SchoolId != schoolId)
 						return StringSanitizer.Fail<CreateTopicResponse>("Subject not found");
@@ -3347,8 +3347,7 @@ namespace TechHub.Service.Service
 						AND   IsDeleted = 0
 						AND   Name      = '{StringSanitizer.Sanitize(model.Name)}'";
 
-					var existing = await _topicQueryRepository.GetByQuery(
-						duplicateQuery, DatabaseTarget.QuestionBank);
+					var existing = await _topicQueryRepository.GetByQuery(duplicateQuery, DatabaseTarget.Core);
 
 					if (existing?.Any() == true)
 						return StringSanitizer.Fail<CreateTopicResponse>("A topic with this name already exists in this subject");
@@ -3367,7 +3366,7 @@ namespace TechHub.Service.Service
 						CreatedBy = userId
 					};
 
-					await _topicCommandRepository.Create(topic, DatabaseTarget.QuestionBank);
+					await _topicCommandRepository.Create(topic, DatabaseTarget.Core);
 
 					_logger.Information("Topic created - TopicId: {TopicId}", topic.Id);
 
@@ -3412,7 +3411,7 @@ namespace TechHub.Service.Service
 						return StringSanitizer.Fail<CreateSubTopicResponse>("Topic is required");
 
 					// Verify topic exists and belongs to this school
-					var topic = await _topicQueryRepository.Get(model.TopicId, DatabaseTarget.QuestionBank);
+					var topic = await _topicQueryRepository.Get(model.TopicId, DatabaseTarget.Core);
 
 					if (topic == null || topic.IsDeleted || topic.SchoolId != schoolId)
 						return StringSanitizer.Fail<CreateSubTopicResponse>("Topic not found");
@@ -3425,7 +3424,7 @@ namespace TechHub.Service.Service
 						AND   IsDeleted = 0
 						AND   Name      = '{StringSanitizer.Sanitize(model.Name)}'";
 
-					var existing = await _subTopicQueryRepository.GetByQuery(duplicateQuery, DatabaseTarget.QuestionBank);
+					var existing = await _subTopicQueryRepository.GetByQuery(duplicateQuery, DatabaseTarget.Core);
 
 					if (existing?.Any() == true)
 						return StringSanitizer.Fail<CreateSubTopicResponse>("A subtopic with this name already exists in this topic");
@@ -3444,7 +3443,7 @@ namespace TechHub.Service.Service
 						CreatedBy = userId
 					};
 
-					await _subTopicCommandRepository.Create(subTopic, DatabaseTarget.QuestionBank);
+					await _subTopicCommandRepository.Create(subTopic, DatabaseTarget.Core);
 
 					_logger.Information("SubTopic created - SubTopicId: {SubTopicId}", subTopic.Id);
 

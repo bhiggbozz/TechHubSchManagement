@@ -21,19 +21,19 @@ namespace TechHub.QuestionBank.Services;
 
 public class QuestionService : IQuestionService
 {
-	private readonly IQueryRepository<Question> _questionQueryRepo;
-	private readonly ICommandRespository<Question> _questionCommandRepo;
-	private readonly IQueryRepository<QuestionOption> _optionQueryRepo;
-	private readonly ICommandRespository<QuestionOption> _optionCommandRepo;
+	private readonly IQueryRepository<Questions> _questionQueryRepo;
+	private readonly ICommandRespository<Questions> _questionCommandRepo;
+	private readonly IQueryRepository<QuestionOptions> _optionQueryRepo;
+	private readonly ICommandRespository<QuestionOptions> _optionCommandRepo;
 	private readonly IQueryRepository<ScanSession> _scanSessionQueryRepo;
 	private readonly ICommandRespository<ScanSession> _scanSessionCommandRepo;
 	private readonly ILogger _logger;
 
 	public QuestionService(
-		IQueryRepository<Question> questionQueryRepo,
-		ICommandRespository<Question> questionCommandRepo,
-		IQueryRepository<QuestionOption> optionQueryRepo,
-		ICommandRespository<QuestionOption> optionCommandRepo,
+		IQueryRepository<Questions> questionQueryRepo,
+		ICommandRespository<Questions> questionCommandRepo,
+		IQueryRepository<QuestionOptions> optionQueryRepo,
+		ICommandRespository<QuestionOptions> optionCommandRepo,
 		IQueryRepository<ScanSession> scanSessionQueryRepo,
 		ICommandRespository<ScanSession> scanSessionCommandRepo,
 		ILogger logger)
@@ -260,7 +260,7 @@ public class QuestionService : IQuestionService
 
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
-				var question = new Question
+				var question = new Questions
 				{
 					Id = Guid.NewGuid(),
 					SchoolId = schoolId,
@@ -315,7 +315,7 @@ public class QuestionService : IQuestionService
 				{
 					foreach (var optionModel in model.Options)
 					{
-						var option = new QuestionOption
+						var option = new QuestionOptions
 						{
 							Id = Guid.NewGuid(),
 							QuestionId = question.Id,
@@ -712,7 +712,7 @@ public class QuestionService : IQuestionService
 					// Insert fresh options
 					foreach (var optionModel in model.Options)
 					{
-						var option = new QuestionOption
+						var option = new QuestionOptions
 						{
 							Id = Guid.NewGuid(),
 							QuestionId = model.QuestionId,
@@ -881,7 +881,7 @@ public class QuestionService : IQuestionService
 				}
 
 
-				var options = new List<QuestionOption>();
+				var options = new List<QuestionOptions>();
 
 				if (question.QuestionType == QuestionType.MultipleChoice)
 				{
@@ -896,7 +896,7 @@ public class QuestionService : IQuestionService
 					var optionResults = await _optionQueryRepo.GetByQuery(
 							optionsQuery, DatabaseTarget.QuestionBank);
 
-					options = optionResults?.ToList() ?? new List<QuestionOption>();
+					options = optionResults?.ToList() ?? new List<QuestionOptions>();
 				}
 
 				var isOwner = question.CreatedBy == userId;
@@ -1518,7 +1518,7 @@ public class QuestionService : IQuestionService
 
 					var optionResults = await _optionQueryRepo.GetByQuery(optionsQuery,DatabaseTarget.QuestionBank);
 
-					var options = optionResults?.ToList() ?? new List<QuestionOption>();
+					var options = optionResults?.ToList() ?? new List<QuestionOptions>();
 
 					if (options.Count < 2)
 					{
@@ -1587,7 +1587,7 @@ public class QuestionService : IQuestionService
 	/// IsCorrect hidden from students
 	/// Permission flags set based on role and ownership
 	/// </summary>
-	private QuestionDto MapToDto(Question question,List<QuestionOption> options,bool isOwner,bool isAdmin,bool isStudent)
+	private QuestionDto MapToDto(Questions question,List<QuestionOptions> options,bool isOwner,bool isAdmin,bool isStudent)
 	{
 		#region
 		return new QuestionDto
@@ -1661,7 +1661,7 @@ public class QuestionService : IQuestionService
 	/// Only fields needed for list display
 	/// Keeps list response memory efficient
 	/// </summary>
-	private QuestionSummaryDto MapToSummaryDto(Question question)
+	private QuestionSummaryDto MapToSummaryDto(Questions question)
 	{
 		#region
 		return new QuestionSummaryDto
@@ -2383,7 +2383,7 @@ public class QuestionService : IQuestionService
 				foreach (var q in pendingQuestions)
 				{
 					// Fetch options for MCQ questions
-					var options = new List<QuestionOption>();
+					var options = new List<QuestionOptions>();
 
 					if (q.QuestionType == (int)QuestionType.MultipleChoice)
 					{
@@ -2401,7 +2401,7 @@ public class QuestionService : IQuestionService
 								DatabaseTarget.QuestionBank);
 
 						options = optionResults?.ToList()
-							?? new List<QuestionOption>();
+							?? new List<QuestionOptions>();
 					}
 
 					// Determine confidence level label

@@ -871,6 +871,16 @@ namespace TechHub.Service.Service
 
 			return await UploadImageAsync(imageStream,mediaKey,folder);
 		}
+
+		/// <summary>
+		/// Builds a secure URL directly from a known Cloudinary PublicId
+		/// Used when you already have the full publicId — no reconstruction needed
+		/// Example: background worker downloading temp image by its stored publicId
+		/// </summary>
+		public string GetRawUrl(string publicId)
+		{
+			return _cloudinary.Api.UrlImgUp.Secure(true).BuildUrl(publicId);
+		}
 	}
 
 	#region Result Classes
