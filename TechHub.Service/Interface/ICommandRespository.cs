@@ -27,6 +27,9 @@ namespace TechHub.Service.Interface
 		Task Create(T entity, DatabaseTarget target);
 		Task UpdateTableColumnById(string columnToUpdateName, string keyColumnName, object columnToUpdateValue, object KeyColumnValue, DatabaseTarget target);
 		Task UpdateTableColumnById(Dictionary<string, object> obj, KeyValuePair<string, object> keyValue, DatabaseTarget target);
+		Task UpdateTableColumnById(SqlTransaction transaction, SqlConnection connection, Dictionary<string, object> obj, KeyValuePair<string, object> keyValue, DatabaseTarget target);
+
+		Task Create(SqlTransaction transaction, SqlConnection connection, T entity, DatabaseTarget target);
 
 
 	}

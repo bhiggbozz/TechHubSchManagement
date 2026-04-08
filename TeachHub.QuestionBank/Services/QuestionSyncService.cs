@@ -19,15 +19,15 @@ namespace TechHub.QuestionBank.Services;
 
 public class QuestionSyncService : IQuestionSyncService
 {
-	private readonly IQueryRepository<Question> _questionQueryRepo;
-	private readonly ICommandRespository<Question> _questionCommandRepo;
-	private readonly IQueryRepository<QuestionOption> _optionQueryRepo;
-	private readonly ICommandRespository<QuestionOption> _optionCommandRepo;
+	private readonly IQueryRepository<Questions> _questionQueryRepo;
+	private readonly ICommandRespository<Questions> _questionCommandRepo;
+	private readonly IQueryRepository<QuestionOptions> _optionQueryRepo;
+	private readonly ICommandRespository<QuestionOptions> _optionCommandRepo;
 	private readonly IQuestionService _questionService;
 	private readonly ILogger _logger;
 
-	public QuestionSyncService(IQueryRepository<Question> questionQueryRepo,ICommandRespository<Question> questionCommandRepo,IQueryRepository<QuestionOption> optionQueryRepo,
-		ICommandRespository<QuestionOption> optionCommandRepo,IQuestionService questionService,ILogger logger)
+	public QuestionSyncService(IQueryRepository<Questions> questionQueryRepo,ICommandRespository<Questions> questionCommandRepo,IQueryRepository<QuestionOptions> optionQueryRepo,
+		ICommandRespository<QuestionOptions> optionCommandRepo,IQuestionService questionService,ILogger logger)
 	{
 		_questionQueryRepo = questionQueryRepo;
 		_questionCommandRepo = questionCommandRepo;
@@ -762,7 +762,7 @@ public class QuestionSyncService : IQuestionSyncService
 	/// Used in conflict detail — no options loaded
 	/// Full detail fetched separately if needed
 	/// </summary>
-	private QuestionDto MapQueryResultToDto(Question question)
+	private QuestionDto MapQueryResultToDto(Questions question)
 	{
 		return new QuestionDto
 		{

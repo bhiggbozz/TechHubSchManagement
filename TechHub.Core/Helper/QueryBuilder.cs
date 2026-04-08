@@ -74,20 +74,59 @@ namespace TechHub.Core.Helper
 				throw new ArgumentNullException(nameof(obj));
 
 			var parameters = new DynamicParameters();
-			PropertyInfo[] properties = obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+			PropertyInfo[] properties = obj.GetType()
+				.GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
 			foreach (var property in properties)
 			{
-				// Get the property value; use DBNull.Value if null.
-				var value = property.GetValue(obj) ?? DBNull.Value;
+				var value = property.GetValue(obj);
+				var propertyType = property.PropertyType;
 
-				// Add the parameter using the property name as the parameter name.
-				parameters.Add(property.Name, value);
+				// Handle nullable types
+				var underlyingType = Nullable.GetUnderlyingType(propertyType);
+				var isNullable = underlyingType != null;
+
+				if (value == null)
+				{
+					// Null value — add as DBNull with correct db type
+					// This prevents the DBNull cast exception Dapper throws
+					// for nullable Guid, nullable int, nullable DateTime etc
+					if (isNullable && underlyingType == typeof(Guid))
+					{
+						parameters.Add(property.Name,null,DbType.Guid);
+					}
+					else if (isNullable && underlyingType == typeof(int))
+					{
+						parameters.Add(property.Name,null,DbType.Int32);
+					}
+					else if (isNullable && underlyingType == typeof(DateTime))
+					{
+						parameters.Add(property.Name,null,DbType.DateTime);
+					}
+					else if (isNullable && underlyingType == typeof(bool))
+					{
+						parameters.Add(property.Name,null,DbType.Boolean);
+					}
+					else if (isNullable && underlyingType == typeof(decimal))
+					{
+						parameters.Add(property.Name,null,DbType.Decimal);
+					}
+					else
+					{
+						// String and all other reference types
+						parameters.Add(property.Name, null);
+					}
+				}
+				else
+				{
+					// Non-null value — add directly
+					// Dapper handles all concrete types correctly
+					parameters.Add(property.Name, value);
+				}
 			}
 
 			return parameters;
 		}
-
 		public static string InsertQueryWithReturnedID(Dictionary<string, object> data, string tableName)
 		{
 			var queries = new StringBuilder();

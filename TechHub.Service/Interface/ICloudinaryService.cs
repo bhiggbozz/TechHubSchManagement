@@ -91,6 +91,7 @@ public interface ICloudinaryService
 	string GenerateSignature(System.Collections.Generic.SortedDictionary<string, object> uploadParams);
 	Task<CloudinaryUploadResult> UploadSchoolLogoAsync(Stream imageStream,string fileName,Guid schoolId);
 	string GetUrl(Guid schoolId, MediaType mediaType, string entityId, bool isTemporary = false);
+	string GetRawUrl(string publicId);
 
 }
 

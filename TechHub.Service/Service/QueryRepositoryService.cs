@@ -294,7 +294,7 @@ namespace TechHub.Service.Service
 		public async Task<IEnumerable<QuestionQueryResult>> GetByQueryForQuestion(string query, DatabaseTarget target)
 		{
 			var connectionString = _resolver.Resolve(target);
-			using var conn = new SqlConnection(_config);
+			using var conn = new SqlConnection(connectionString);
 			conn.Open();
 			var tableName = typeof(TEntity).Name;
 			//var query = QueryBuilder<TEntity>.GenerateGetbyIdQuery();
@@ -303,9 +303,18 @@ namespace TechHub.Service.Service
 			return result;
 		}
 
-		public Task<TEntity?> Get(Guid id, DatabaseTarget target)
+		public async Task<TEntity?> Get(Guid id, DatabaseTarget target)
 		{
-			throw new NotImplementedException();
+			var connectionString = _resolver.Resolve(target);
+			using var conn = new SqlConnection(connectionString);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var query = QueryBuilder<TEntity>.GenerateGetbyIdQuery();
+			var sqlParameter = new DynamicParameters();
+			sqlParameter.Add($"@Id", id);
+			//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(id);
+			var result = await conn.QueryFirstOrDefaultAsync<TEntity>(query, sqlParameter);
+			return result;
 		}
 
 		//public async Task<TEntity?> SelectAllBySingleColumn(KeyValuePair<string, object> values)

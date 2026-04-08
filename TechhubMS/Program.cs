@@ -9,6 +9,7 @@ using System.Text;
 using TechHub.Background.Services;
 using TechHub.Core.Configuration;
 using TechHub.Core.Profiles;
+using TechHub.QuestionBank.Controllers;
 using TechhubMS;
 using TechhubMS.Middleware;
 
@@ -55,6 +56,8 @@ try
 
 	// Multi-tenant services
 	builder.Services.AddMultiTenantServices(builder.Configuration);
+	builder.Services.AddControllers()
+	.AddApplicationPart(typeof(QuestionJobController).Assembly);
 
 	var app = builder.Build();
 
