@@ -55,7 +55,7 @@ namespace TechHub.Core.Models
 		/// Optional: Connection string for database-per-tenant
 		/// </summary>
 		[MaxLength(500)]
-		public string? ConnectionString { get; set; }
+		public string? ConnectionString { get; set; } = string.Empty;
 
 		/// <summary>
 		/// When the tenant was created
