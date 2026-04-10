@@ -493,7 +493,6 @@ namespace TechHub.Service.Service
 							};
 					}
 
-					await scope.CommitAsync();
 
 					// ✅ FIX 5: Removed redundant IsGuid variable — schoolId already parsed above
 					var code = await GetSchoolCode(schoolId);
@@ -505,8 +504,9 @@ namespace TechHub.Service.Service
 						{ "@@Password", tempPassword }, // ✅ same password saved to DB
 						{ "@@Link", _configuration["App:BaseUrl"] + "/" + code }
 					};
+					await scope.CommitAsync();
 
-					var emailTemplate = await _emailService.GetRenderedTemplate(EmailTemplateKey.WelcomeUser, placeholders);
+					var emailTemplate = await _emailService.GetRenderedTemplate((int)EmailTemplateKey.WelcomeUser, placeholders);
 					if (emailTemplate != null)
 					{
 						_ = Task.Run(async () =>

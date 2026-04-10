@@ -32,7 +32,7 @@ public class EmailService : IEmailService
         _logger = logger;
 	}
 
-	public async Task<string> GetRenderedTemplate(EmailTemplateKey key, Dictionary<string, string> placeholders)
+	public async Task<string> GetRenderedTemplate(int key, Dictionary<string, string> placeholders)
 	{
 		var query = $@"SELECT * FROM EmailTemplates WHERE TemplateKey = '{key}' AND IsActive = 1";
 
