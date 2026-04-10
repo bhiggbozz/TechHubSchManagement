@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TechHub.Core.ResponseModel;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
-using TechHub.Core.ResponseModel;
 
 namespace TechHub.Service.Interface
 {
