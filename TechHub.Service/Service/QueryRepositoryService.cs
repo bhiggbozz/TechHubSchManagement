@@ -10,6 +10,7 @@ using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Helper;
 using TechHub.Core.Model;
+using TechHub.Core.ResponseModel;
 using TechHub.Core.Utilities;
 using TechHub.Service.Interface;
 using static Dapper.SqlMapper;
@@ -315,6 +316,45 @@ namespace TechHub.Service.Service
 			//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(id);
 			var result = await conn.QueryFirstOrDefaultAsync<TEntity>(query, sqlParameter);
 			return result;
+		}
+		public async Task<IEnumerable<TeacherResponseModel>> GetTeachersBySchoolAsync(Guid schoolId, DatabaseTarget target)
+		{
+			var sql = @"
+				SELECT 
+					u.Id,
+					u.FirstName,
+					u.LastName,
+					u.UserName,
+					u.EmailAddress,
+					u.RoleId,
+					u.IsActive,
+					u.CreationDate
+				FROM Users u
+				WHERE u.SchoolId = @SchoolId
+				AND u.IsActive = 1
+				AND u.RoleId IN (@SubjectTeacherRole, @HeadTeacherRole)
+				ORDER BY u.FirstName ASC";
+
+			var connectionString = _resolver.Resolve(target);
+			using var conn = new SqlConnection(connectionString);
+			var teachers = await conn.QueryAsync<dynamic>(sql, new
+			{
+				SchoolId = schoolId,
+				SubjectTeacherRole = (int)UserRole.SubjectTeacher,
+				HeadTeacherRole = (int)UserRole.HeadTeacher
+			});
+
+			return teachers.Select(t => new TeacherResponseModel
+			{
+				Id = t.Id,
+				FirstName = t.FirstName,
+				LastName = t.LastName,
+				UserName = t.UserName,
+				EmailAddress = t.EmailAddress,
+				Role = ((UserRole)t.RoleId).ToString(),
+				IsActive = t.IsActive,
+				CreationDate = t.CreationDate
+			});
 		}
 
 		//public async Task<TEntity?> SelectAllBySingleColumn(KeyValuePair<string, object> values)

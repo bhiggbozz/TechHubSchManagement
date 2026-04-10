@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
+using TechHub.Core.ResponseModel;
 
 namespace TechHub.Service.Interface
 {
@@ -30,6 +31,7 @@ namespace TechHub.Service.Interface
 		Task<TEntity?> Get(Guid id, DatabaseTarget target);
 		Task<int> CountAsync(string query, DatabaseTarget target);
 		Task<IEnumerable<QuestionQueryResult>> GetByQueryForQuestion(string query, DatabaseTarget target);
+		Task<IEnumerable<TeacherResponseModel>> GetTeachersBySchoolAsync(Guid schoolId, DatabaseTarget target);
 
 	}
 }

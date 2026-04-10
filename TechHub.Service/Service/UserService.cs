@@ -1438,6 +1438,103 @@ namespace TechHub.Service.Service
 		}
 
 
+		public async Task<BaseResponse> GetTeachersBySchool(AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				// Validate claims
+				if (string.IsNullOrEmpty(userClaims.SchoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Authentication information is missing",
+						Status = "failed"
+					};
+				}
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId format in token",
+						Status = "failed"
+					};
+				}
+
+				// Validate role
+				if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true,
+					out UserRole userRole))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid role format in token",
+						Status = "failed"
+					};
+				}
+
+				// Only Admin and SuperAdmin can view all teachers
+				if (userRole != UserRole.Administrator &&
+					userRole != UserRole.SuperAdministrator)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You are not authorized to view teachers",
+						Status = "failed"
+					};
+				}
+
+				var teachers = await _queryrepositoryUser.GetTeachersBySchoolAsync(schoolId, DatabaseTarget.Core);
+
+				var teacherList = teachers.ToList();
+
+				_logger.Information(
+					"Teachers fetched - SchoolId: {SchoolId}, Count: {Count}",
+					schoolId,
+					teacherList.Count);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = teacherList.Any()
+						? $"{teacherList.Count} teacher(s) found"
+						: "No teachers found for this school",
+					Status = "successful",
+					Data = teacherList
+				};
+			}
+			catch (SqlException ex)
+			{
+				_logger.Error(ex,
+					"SQL error fetching teachers - SchoolId: {SchoolId}",
+					userClaims.SchoolId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "Database error occurred while fetching teachers",
+					Status = "failed"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Unexpected error fetching teachers - SchoolId: {SchoolId}",
+					userClaims.SchoolId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+
 		private async Task<string> GetSchoolCode(Guid schoolId)
 		{
 			try

@@ -174,6 +174,21 @@ namespace TechhubMS.Controllers
 			var result = await _userService.RevokeAdminPermissions(adminUserId, userClaims);
 			return Ok(result);
 		}
+
+		/// <summary>
+		/// Get all teachers for the authenticated user's school
+		/// </summary>
+		[HttpGet("teachers")]
+		[Authorize]
+		public async Task<IActionResult> GetTeachers()
+		{
+			var userClaims = User.GetAuthenticatedUserClaims(); 
+			var response = await _userService.GetTeachersBySchool(userClaims);
+
+			return Ok(response);
+		}
+
+
 	}
 
 }
