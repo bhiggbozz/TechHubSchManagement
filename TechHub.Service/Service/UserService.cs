@@ -264,7 +264,6 @@ namespace TechHub.Service.Service
 		public async Task<BaseResponse> CreateUser(UserViewModelV2 userViewModel, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
-			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
 			{
 				try
 				{
@@ -274,7 +273,6 @@ namespace TechHub.Service.Service
 					if (userViewModel is null)
 					{
 						_logger.Warning("user details cannot be null");
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -287,7 +285,6 @@ namespace TechHub.Service.Service
 					if (string.IsNullOrEmpty(userClaims.SchoolId) || string.IsNullOrEmpty(userClaims.UserId))
 					{
 						_logger.Warning("Create User called with missing authentication information");
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Unauthorized,
@@ -300,7 +297,6 @@ namespace TechHub.Service.Service
 					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
 					{
 						_logger.Warning("Invalid SchoolId format in token - SchoolId: {SchoolId}", userClaims.SchoolId);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -312,7 +308,6 @@ namespace TechHub.Service.Service
 					if (!Guid.TryParse(userClaims.UserId, out var createdBy))
 					{
 						_logger.Warning("Invalid UserId format in token - UserId: {UserId}", userClaims.UserId);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -321,10 +316,10 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					if (!int.TryParse(userClaims.Role, out int userRole))
+					// ✅ FIX 1: Use Enum.TryParse instead of int.TryParse
+					if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true, out UserRole userRole))
 					{
 						_logger.Warning("Invalid role format in token - Role: {Role}", userClaims.Role);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -334,10 +329,13 @@ namespace TechHub.Service.Service
 					}
 
 					// Validation 4: Check user role (must be Admin or SuperAdmin)
-					if (userRole != (int)UserRole.Administrator && userRole != (int)UserRole.SuperAdministrator)
+					// ✅ FIX 2: No more int casting needed
+					if (userRole != UserRole.Administrator && userRole != UserRole.SuperAdministrator)
 					{
-						_logger.Warning("Unauthorized user creation attempt - UserId: {UserId}, Role: {Role}", createdBy, ((UserRole)userRole).ToString());
-
+						_logger.Warning(
+							"Unauthorized user creation attempt - UserId: {UserId}, Role: {Role}",
+							createdBy,
+							userRole.ToString());
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Forbidden,
@@ -351,7 +349,6 @@ namespace TechHub.Service.Service
 					if (creator is null)
 					{
 						_logger.Warning("Creator user does not exist - UserId: {UserId}", createdBy);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -363,7 +360,6 @@ namespace TechHub.Service.Service
 					if (!creator.IsActive)
 					{
 						_logger.Warning("Inactive user attempted to create user - UserId: {UserId}", createdBy);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Forbidden,
@@ -372,17 +368,16 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					if (userRole == (int)UserRole.Administrator)
+					// ✅ FIX 3: No more int casting needed
+					if (userRole == UserRole.Administrator)
 					{
-						var hasPermission = await this.HasPermission(createdBy,schoolId,AdminPermission.CreateUsers );
-
+						var hasPermission = await this.HasPermission(createdBy, schoolId, AdminPermission.CreateUsers);
 						if (!hasPermission)
 						{
 							_logger.Warning(
-								"Admin lacks CreateClasses permission - AdminId: {AdminId}, TargetRole: {TargetRole}",
+								"Admin lacks CreateUsers permission - AdminId: {AdminId}, TargetRole: {TargetRole}",
 								createdBy,
 								userViewModel.Role.ToString());
-
 							return new BaseResponse
 							{
 								ResponseCode = ResponseCode.Forbidden,
@@ -392,7 +387,7 @@ namespace TechHub.Service.Service
 						}
 
 						_logger.Information(
-							"Admin has CreateClasses permission - AdminId: {AdminId}",
+							"Admin has CreateUsers permission - AdminId: {AdminId}",
 							createdBy);
 					}
 
@@ -409,7 +404,6 @@ namespace TechHub.Service.Service
 							"Role validation failed - Role: {Role}, Error: {Error}",
 							userViewModel.Role.ToString(),
 							roleValidation.ErrorMessage);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -426,7 +420,6 @@ namespace TechHub.Service.Service
 							"User already exists - Username: {Username}, Email: {Email}",
 							userViewModel.UserName,
 							userViewModel.EmailAddress);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Conflict,
@@ -437,7 +430,9 @@ namespace TechHub.Service.Service
 
 					// ===== USER CREATION SECTION =====
 
-					// Create the main user entity
+					// ✅ FIX 4: Generate temp password ONCE — reuse same variable everywhere
+					var tempPassword = GenerateTempPassword();
+
 					var newUser = new Users
 					{
 						Id = Guid.NewGuid(),
@@ -445,28 +440,30 @@ namespace TechHub.Service.Service
 						LastName = userViewModel.LastName.Trim(),
 						UserName = userViewModel.UserName.Trim(),
 						EmailAddress = userViewModel.EmailAddress.Trim().ToLower(),
-						HashPassword = userViewModel.HashPassword,
+						HashPassword = HashPassword(tempPassword),
 						RoleId = (int)userViewModel.Role,
 						SchoolId = schoolId,
 						CreatedBy = createdBy,
 						IsActive = true
 					};
-					var tempPassword = GenerateTempPassword();
+
 					var userDict = new Dictionary<string, object>
-					{
-						{ "Id", newUser.Id },
-						{ "FirstName", newUser.FirstName },
-						{ "LastName", newUser.LastName },
-						{ "UserName", newUser.UserName },
-						{ "Email", newUser.EmailAddress },
-						{ "HashPassword", HashPassword(tempPassword) },
-						{ "RoleId", newUser.RoleId },
-						{ "SchoolId", newUser.SchoolId },
-						{ "CreatedBy", newUser.CreatedBy },
-						{ "IsActive", newUser.IsActive },
-						{ "CreationDate", newUser.CreationDate },
-						{ "ModifiedDate", newUser.ModifiedDate }
-					};
+			{
+				{ "Id", newUser.Id },
+				{ "FirstName", newUser.FirstName },
+				{ "LastName", newUser.LastName },
+				{ "UserName", newUser.UserName },
+				{ "EmailAddress", newUser.EmailAddress },
+				{ "HashPassword", newUser.HashPassword }, // ✅ use hashed value from newUser
+                { "RoleId", newUser.RoleId },
+				{ "SchoolId", newUser.SchoolId },
+				{ "CreatedBy", newUser.CreatedBy },
+				{ "IsActive", newUser.IsActive },
+				{ "CreationDate", newUser.CreationDate },
+				{ "ModifiedDate", newUser.ModifiedDate },
+				{ "HasAccess", false }
+
+			};
 
 					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
 
@@ -487,7 +484,6 @@ namespace TechHub.Service.Service
 
 						default:
 							_logger.Warning("Invalid user role - Role: {Role}", userViewModel.Role);
-
 							await scope.RollbackAsync();
 							return new BaseResponse
 							{
@@ -498,25 +494,35 @@ namespace TechHub.Service.Service
 					}
 
 					await scope.CommitAsync();
-					var IsGuid = Guid.TryParse(userClaims.SchoolId, out Guid schCode);
-					var code = await GetSchoolCode(schCode);
+
+					// ✅ FIX 5: Removed redundant IsGuid variable — schoolId already parsed above
+					var code = await GetSchoolCode(schoolId);
 
 					var placeholders = new Dictionary<string, string>
 					{
-						{ "@@Name",$"{newUser.FirstName} {newUser.LastName}" },
+						{ "@@Name", $"{newUser.FirstName} {newUser.LastName}" },
 						{ "@@UserName", newUser.UserName },
-						{ "@@Password", GenerateTempPassword() },
-						{ "@@Link", _configuration["App:BaseUrl"]+"/"+ code}
+						{ "@@Password", tempPassword }, // ✅ same password saved to DB
+						{ "@@Link", _configuration["App:BaseUrl"] + "/" + code }
 					};
+
 					var emailTemplate = await _emailService.GetRenderedTemplate(EmailTemplateKey.WelcomeUser, placeholders);
-					if(emailTemplate != null)
+					if (emailTemplate != null)
 					{
-						//send email notification to user 
-						_ = Task.Run(async () => await _emailService.SendAsync(newUser.EmailAddress, $"{newUser.FirstName} {newUser.LastName}", "User Profiled", emailTemplate));
-						_logger.Information("User created successfully - UserId: {UserId}, Username: {Username}, Role: {Role}, CreatedBy: {CreatedBy}",
-							newUser.Id,newUser.UserName,userViewModel.Role.ToString(),createdBy);
+						_ = Task.Run(async () =>
+							await _emailService.SendAsync(
+								newUser.EmailAddress,
+								$"{newUser.FirstName} {newUser.LastName}",
+								"User Profiled",
+								emailTemplate));
+
+						_logger.Information(
+							"User created successfully - UserId: {UserId}, Username: {Username}, Role: {Role}, CreatedBy: {CreatedBy}",
+							newUser.Id,
+							newUser.UserName,
+							userViewModel.Role.ToString(),
+							createdBy);
 					}
-					
 
 					return new BaseResponse
 					{
@@ -537,7 +543,9 @@ namespace TechHub.Service.Service
 				catch (SqlException ex)
 				{
 					_logger.Error(
-						ex,"SQL error occurred while creating user - Username: {Username}", userViewModel?.UserName);
+						ex,
+						"SQL error occurred while creating user - Username: {Username}",
+						userViewModel?.UserName);
 
 					if (ex.Message.ToLower().Contains("duplicate"))
 					{
@@ -799,7 +807,7 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					if (!int.TryParse(userInfo.Role, out int userRole))
+					if (!Enum.TryParse<UserRole>(userInfo.Role, ignoreCase: true, out UserRole userRole))
 					{
 						_logger.Warning("Invalid role format in token - Role: {Role}", userInfo.Role);
 
@@ -812,8 +820,8 @@ namespace TechHub.Service.Service
 					}
 
 					// Only Admins and SuperAdmins can do this
-					if (userRole != (int)UserRole.Administrator &&
-						userRole != (int)UserRole.SuperAdministrator)
+					if (userRole != UserRole.Administrator &&
+						userRole != UserRole.SuperAdministrator)
 					{
 						_logger.Warning(
 							"Unauthorized class registration attempt - UserId: {UserId}, Role: {Role}",
@@ -829,7 +837,7 @@ namespace TechHub.Service.Service
 					}
 
 					// SuperAdministrators always have permission
-					if (userRole == (int)UserRole.Administrator)
+					if (userRole == UserRole.Administrator)
 					{
 						var hasPermission = await this.HasPermission(createdBy,schoolId,AdminPermission.CreateClasses);
 
@@ -1088,7 +1096,7 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					if (!int.TryParse(userClaims.Role, out int userRole))
+					if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true, out UserRole userRole))
 					{
 						_logger.Warning("Invalid role format - Role: {Role}", userClaims.Role);
 
@@ -1159,7 +1167,7 @@ namespace TechHub.Service.Service
 
 					bool isSelfEdit = updateUserViewModel.Id == modifiedBy;
 
-					if (userRole != (int)UserRole.Administrator && userRole != (int)UserRole.SuperAdministrator)
+					if (userRole != UserRole.Administrator && userRole != UserRole.SuperAdministrator)
 					{
 						// Non-admins can only edit themselves
 						if (!isSelfEdit)
@@ -1188,7 +1196,7 @@ namespace TechHub.Service.Service
 						if (!isSelfEdit)
 						{
 							// SuperAdministrators always have permission
-							if (userRole == (int)UserRole.Administrator)
+							if (userRole == UserRole.Administrator)
 							{
 								var hasPermission = await this.HasPermission(
 									modifiedBy,
@@ -1230,7 +1238,7 @@ namespace TechHub.Service.Service
 
 					// Validation 8: SuperAdmin restrictions
 					if (existingUser.RoleId == (int)UserRole.SuperAdministrator &&
-						userRole != (int)UserRole.SuperAdministrator)
+						userRole != UserRole.SuperAdministrator)
 					{
 						_logger.Warning(
 							"Non-SuperAdmin attempted to edit SuperAdmin - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}",
@@ -1273,9 +1281,9 @@ namespace TechHub.Service.Service
 					// ===== UPDATE SECTION =====
 
 					var updateDict = new Dictionary<string, object>
-			{
-				{ "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") }
-			};
+					{
+						{ "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") }
+					};
 
 					var updatedFields = new List<string>();
 
@@ -1322,7 +1330,7 @@ namespace TechHub.Service.Service
 					{
 						// Validate role change permissions
 						if (updateUserViewModel.RoleId.Value == (int)UserRole.SuperAdministrator &&
-							userRole != (int)UserRole.SuperAdministrator)
+							userRole != UserRole.SuperAdministrator)
 						{
 							_logger.Warning(
 								"Unauthorized SuperAdmin promotion attempt - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}",
