@@ -2268,16 +2268,21 @@ namespace TechHub.Service.Service
 					break;
 
 				case UserRole.SubjectTeacher:
-				case UserRole.HeadTeacher:
-					if (!userViewModel.UserClassroomsId.Any())
-					{
-						return (false, "Teachers must be assigned to at least one classroom");
-					}
 					if (!userViewModel.UserSubjects.Any())
 					{
 						return (false, "Teachers must be assigned to at least one subject");
 					}
 					break;
+			case UserRole.HeadTeacher:
+				//	if (!userViewModel.UserClassroomsId.Any())
+				//	{
+				//		return (false, "Teachers must be assigned to at least one classroom");
+				//	}
+				//	if (!userViewModel.UserSubjects.Any())
+				//	{
+				//		return (false, "Teachers must be assigned to at least one subject");
+				//	}
+				//	break;
 
 				case UserRole.Administrator:
 				case UserRole.SuperAdministrator:
