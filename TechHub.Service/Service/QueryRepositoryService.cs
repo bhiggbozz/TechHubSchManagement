@@ -32,7 +32,7 @@ namespace TechHub.Service.Service
 			_config = _configuration.GetConnectionString("DbConnectionString") ?? null;
 			ArgumentNullException.ThrowIfNullOrEmpty(nameof(_config));
 		}
-
+		 
 		public async Task<TEntity?> Get(Guid id)
 		{
 			
