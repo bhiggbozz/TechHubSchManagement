@@ -11,7 +11,7 @@ namespace TechHub.Service.Service
     {
 		//Task SendEmailAsync(string to, string subject, string body, bool isHtml = true);
 		//Task SendEmailAsync(List<string> to, string subject, string body, bool isHtml = true);
-		Task<string> GetRenderedTemplate(EmailTemplateKey key, Dictionary<string, string> placeholders);
+		Task<string> GetRenderedTemplate(int key, Dictionary<string, string> placeholders);
 		Task SendAsync(string toEmail,string toName,string subject,string htmlBody);
 	}
 }

@@ -136,13 +136,12 @@ public class TenantService : ITenantService
 			var sql = @"
                 SELECT 
                     SchoolId as TenantId,
-                    SchoolCode as Identifier,
+                    Identifier,
                     SchoolId,
-                    SchoolName as Name,
+					ConnectionString,
                     IsActive,
-                    ConnectionString,
                     CreatedDate as CreatedAt
-                FROM Schools 
+                FROM TenantInfo 
                 WHERE SchoolId = @SchoolId 
                 AND IsActive = 1";
 
