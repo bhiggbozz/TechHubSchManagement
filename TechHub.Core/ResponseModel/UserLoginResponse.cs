@@ -17,6 +17,8 @@ namespace TechHub.Core.ResponseModel
 		public bool FirstTimeLogin { get; set; }
 		public string Token { get; set; }
 		public int TokenExpiresIn { get; set; }
+		public string RefreshToken { get; set; }
+		public DateTime RefreshTokenExpiry { get; set; }
 
 		public SchoolResponseModel? SchoolInfo { get; set; }
 	}

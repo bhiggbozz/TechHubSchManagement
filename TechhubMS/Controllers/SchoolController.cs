@@ -236,6 +236,8 @@ namespace TechhubMS.Controllers
 			var result = await _schoolService.GetSubTopics(topicId, userClaims);
 			return Ok(result);
 		}
+
+		
 	}
 
 }

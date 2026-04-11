@@ -30,6 +30,9 @@ namespace TechHub.Service.Interface
 		Task UpdateTableColumnById(SqlTransaction transaction, SqlConnection connection, Dictionary<string, object> obj, KeyValuePair<string, object> keyValue, DatabaseTarget target);
 
 		Task Create(SqlTransaction transaction, SqlConnection connection, T entity, DatabaseTarget target);
+		Task RevokeToken(SqlTransaction transaction, SqlConnection connection,Guid tokenId, string replacedByToken = null);
+
+		Task RevokeAllTokensForUser(SqlTransaction transaction, SqlConnection connection,Guid userId);
 
 
 	}

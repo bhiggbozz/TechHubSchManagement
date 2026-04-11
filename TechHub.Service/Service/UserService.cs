@@ -14,6 +14,7 @@ using System.Numerics;
 using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 using System.Text;
 using System.Threading.Tasks;
@@ -33,6 +34,7 @@ using TechHub.Service.Extension;
 using TechHub.Service.Interface;
 using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
+using TechHub.Service.util;
 using TechhubMS;
 using TechhubMS.util;
 using static System.Net.Mime.MediaTypeNames;
@@ -53,15 +55,19 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<StudentCourses> _studentCourseCommandRepository;
 		private readonly ICommandRespository<Classroom> _classroomCommandRespository;
 		private readonly ICommandRespository<AdminPermissions> _adminPermissionsCommandRepository;
+		private readonly ICommandRespository<RefreshTokens> _commandRepoRefreshToken;
 
 		private readonly IQueryRepository<School> _queryrepositorySchool;
 		private readonly IQueryRepository<SchoolCode> _schCodeQueryRespository;
+		private readonly IQueryRepository<TenantInfo> _tenantQueryRespository;
 		private readonly IQueryRepository<Classroom> _classroomQueryRespository;
 		private readonly IQueryRepository<StudentCourses> _studentCoursesQueryRespository;
 		private readonly IQueryRepository<AdminPermissions> _adminPermissionsQueryRespository;
+		private readonly IQueryRepository<RefreshTokens> _queryRepoRefreshToken;
 
 
-		
+
+		private readonly JwtTokenGenerator _jwtTokenGenerator;
 		private readonly IConfiguration _configuration;
 		private readonly IMapper _mapper;
 		private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
@@ -75,9 +81,10 @@ namespace TechHub.Service.Service
 			IQueryRepository<School> queryrepositorySchool, IQueryRepository<SchoolCode> schCodeQueryRespository, ICommandRespository<StudentCourses> studentCourseCommandRepository,
 			ICommandRespository<Classroom> classroomCommandRespository, IQueryRepository<Classroom> classroomQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration, ICommandRespository<StudentClassroom> commandRepositoryStudentClassroom, ICommandRespository<TeacherClassroom> commandRepositoryTeacherClassroom,
-			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject,
-			ICommandRespository<AdminPermissions> adminPermissionsCommandRepository, ITenantService tenantService,
-			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,IMapper mapper, ILogger logger, IEmailService emailService)
+			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, IQueryRepository<TenantInfo> tenantQueryRespository,
+			ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, ICommandRespository<RefreshTokens> commandRepoRefreshToken,
+			ICommandRespository<AdminPermissions> adminPermissionsCommandRepository, IQueryRepository<RefreshTokens> queryRepoRefreshToken,ITenantService tenantService,
+			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
@@ -90,16 +97,21 @@ namespace TechHub.Service.Service
 			_commandRepositoryStudentClassroom = commandRepositoryStudentClassroom;
 			_commandRepositoryTeacherClassroom = commandRepositoryTeacherClassroom;
 			_commandRepositoryTeacherSubject = commandRepositoryTeacherSubject;
+
+			_tenantQueryRespository = tenantQueryRespository;
 			_commandRepositoryMinorSubject = commandRepositoryMinorSubject;
 			_classroomCommandRespository = classroomCommandRespository;
 			_classroomQueryRespository = classroomQueryRespository;
 			_adminPermissionsCommandRepository = adminPermissionsCommandRepository;
 			_adminPermissionsQueryRespository = adminPermissionsQueryRespository;
+			_commandRepoRefreshToken = commandRepoRefreshToken;
+			_queryRepoRefreshToken = queryRepoRefreshToken;
 
 			_emailService = emailService;
 			_logger = logger;
 			_configuration = configuration;
 			_tenantService = tenantService;
+			_jwtTokenGenerator = jwtTokenGenerator;
 
 			_mapper = mapper;
 			_connString = _configuration.GetConnectionString("DbConnectionString") ?? throw new ArgumentNullException("Db COnfig is null");
@@ -111,6 +123,8 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
+				// ===== VALIDATION =====
+
 				if (loginViewModel is null)
 				{
 					return new BaseResponse
@@ -121,7 +135,7 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				if (tenant == null)
+				if (tenant is null)
 				{
 					return new BaseResponse
 					{
@@ -131,28 +145,57 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				string schQuery = $"select * from SchoolCode where Code = '{loginViewModel.Inst}'";
-
-				if (schQuery == null)
+				if (string.IsNullOrWhiteSpace(loginViewModel.Username) ||
+					string.IsNullOrWhiteSpace(loginViewModel.HashPassword))
 				{
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Wrong institution code",
+						ResponseMessage = "Username and password are required",
 						Status = "failed"
 					};
 				}
 
+				if (string.IsNullOrWhiteSpace(loginViewModel.Inst))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Institution code is required",
+						Status = "failed"
+					};
+				}
+
+				// ===== VALIDATE INSTITUTION CODE AGAINST DB =====
+
+				//var schoolCode = await  _tenantQueryRespository.GetByPropertyName("Identifier", loginViewModel.Inst, DatabaseTarget.Core);
+				//if (schoolCode is null)
+				//{
+				//	_logger.Warning(
+				//		"Login attempt with invalid institution code - Inst: {Inst}",
+				//		loginViewModel.Inst);
+				//	return new BaseResponse
+				//	{
+				//		ResponseCode = ResponseCode.BadRequest,
+				//		ResponseMessage = "Invalid institution code",
+				//		Status = "failed"
+				//	};
+				//}
+
+				// ===== FETCH USER =====
+
 				var loginUserInput = new Dictionary<string, object>
 				{
-					{ "UserName", loginViewModel.Username },
+					{ "UserName",   loginViewModel.Username },
 					{ "SchoolCode", loginViewModel.Inst }
 				};
 
 				var user = await _queryrepositoryUser.GetBy(loginUserInput);
-
 				if (user is null)
 				{
+					_logger.Warning(
+						"Login attempt for non-existent user - Username: {Username}, Inst: {Inst}",
+						loginViewModel.Username, loginViewModel.Inst);
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Unauthorized,
@@ -161,26 +204,26 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				var loginUser = _mapper.Map<LoginHistory>(loginViewModel);
-				loginUser.UserId = user.Id;
-				loginUser.RoleId = user.RoleId;
+				// ===== FIRST TIME LOGIN =====
 
 				var lastThreeLogins = await LastLoginHistorys(user.Id);
-
-				// First time login
 				if (!lastThreeLogins.Any())
 				{
-					loginUser.PasswordFailed = false;
-					await _commandRepositoryLoginHistory.Create(loginUser);
+					_logger.Information(
+						"First time login - UserId: {UserId}", user.Id);
 
-					var schoolResponse = new SchoolResponseModel
+					var loginHistoryFirst = new LoginHistory
 					{
-						Id = user.SchoolId
+						UserId = user.Id,
+						RoleId = user.RoleId,
+						PasswordFailed = false
 					};
+
+					await _commandRepositoryLoginHistory.Create(loginHistoryFirst);
 
 					return new UserLoginResponse
 					{
-						SchoolInfo = schoolResponse,
+						SchoolInfo = new SchoolResponseModel { Id = user.SchoolId },
 						FirstTimeLogin = true,
 						ResponseCode = ResponseCode.successful,
 						ResponseMessage = "First time login",
@@ -188,12 +231,25 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				// Check for 3 consecutive failed logins
-				var lstThreeLoginsFailed = lastThreeLogins.Where(c => c.PasswordFailed == true).ToList();
+				// ===== ACCOUNT LOCK CHECK (before password verification) =====
 
-				if (lstThreeLoginsFailed.Count() == 3)
+				var consecutiveFailures = lastThreeLogins
+					.Where(c => c.PasswordFailed == true)
+					.ToList();
+
+				if (consecutiveFailures.Count >= 3)
 				{
-					await _commandRepositoryUser.UpdateTableColumnById(nameof(user.IsActive), nameof(user.Id), false, user.Id);
+					// Ensure account is locked in DB if not already
+					if (user.IsActive)
+					{
+						await _commandRepositoryUser.UpdateTableColumnById(
+							nameof(user.IsActive), nameof(user.Id), false, user.Id);
+
+						_logger.Warning(
+							"Account locked due to 3 consecutive failed logins - UserId: {UserId}",
+							user.Id);
+					}
+
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Forbidden,
@@ -202,9 +258,10 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				// Check if account is active
 				if (!user.IsActive)
 				{
+					_logger.Warning(
+						"Login attempt on inactive account - UserId: {UserId}", user.Id);
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Forbidden,
@@ -213,11 +270,24 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				// Verify password
+				// ===== PASSWORD VERIFICATION =====
+
+				var loginHistory = new LoginHistory
+				{
+					UserId = user.Id,
+					RoleId = user.RoleId,
+					PasswordFailed = false
+				};
+
 				if (loginViewModel.HashPassword != user.HashPassword)
 				{
-					loginUser.PasswordFailed = true;
-					await _commandRepositoryLoginHistory.Create(loginUser);
+					loginHistory.PasswordFailed = true;
+					await _commandRepositoryLoginHistory.Create(loginHistory);
+
+					_logger.Warning(
+						"Failed login attempt - UserId: {UserId}, Username: {Username}",
+						user.Id, user.UserName);
+
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Unauthorized,
@@ -226,13 +296,43 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				loginUser.PasswordFailed = false;
-				await _commandRepositoryLoginHistory.Create(loginUser);
+				// ===== SUCCESSFUL LOGIN — issue tokens atomically =====
 
 				var schInfo = await _queryrepositorySchool.Get(tenant.SchoolId);
 				var mappedSchInfo = _mapper.Map<SchoolResponseModel>(schInfo);
+				//var accessToken = GenerateJwtToken(user, tenant.SchoolId.ToString(), mappedSchInfo);
+				var accessToken = _jwtTokenGenerator.Generate(user, tenant.SchoolId.ToString(), mappedSchInfo);
 
-				var token = GenerateJwtToken(user, tenant.SchoolId.ToString(), mappedSchInfo);
+				string refreshTokenValue;
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					// Write login history
+					await _commandRepositoryLoginHistory.Create(
+						scope.Transaction, scope.Connection, loginHistory);
+
+					// Issue and store refresh token
+					refreshTokenValue = await GenerateAndStoreRefreshToken(scope.Transaction, scope.Connection,user.Id, user.SchoolId);
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Failed to commit login transaction - UserId: {UserId}", user.Id);
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx,
+							"Rollback failed during login - UserId: {UserId}", user.Id);
+					}
+					throw;
+				}
+
+				_logger.Information(
+					"Login successful - UserId: {UserId}, Username: {Username}, Role: {RoleId}",
+					user.Id, user.UserName, user.RoleId);
 
 				return new UserLoginResponse
 				{
@@ -243,7 +343,8 @@ namespace TechHub.Service.Service
 					EmailAddress = user.EmailAddress,
 					IsActive = user.IsActive,
 					SchoolInfo = mappedSchInfo,
-					Token = token,
+					Token = accessToken,
+					RefreshToken = refreshTokenValue,           // ✅ new
 					TokenExpiresIn = 3600,
 					ResponseCode = ResponseCode.successful,
 					ResponseMessage = "Login successful",
@@ -252,7 +353,10 @@ namespace TechHub.Service.Service
 			}
 			catch (Exception ex)
 			{
-				// TODO: Log exception here
+				_logger.Error(ex,
+					"Unexpected error during login - Username: {Username}",
+					loginViewModel?.Username);
+
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
@@ -261,6 +365,33 @@ namespace TechHub.Service.Service
 				};
 			}
 		}
+
+		private async Task<string> GenerateAndStoreRefreshToken(SqlTransaction transaction, SqlConnection connection,Guid userId, Guid schoolId)
+		{
+			var tokenValue = GenerateSecureRefreshToken();
+			var expiryDays = int.Parse(_configuration["Jwt:RefreshTokenExpiryDays"] ?? "7");
+
+			var refreshToken = new RefreshTokens
+			{
+				Id = Guid.NewGuid(),
+				UserId = userId,
+				SchoolId = schoolId,
+				Token = tokenValue,
+				ExpiresAt = DateTime.UtcNow.AddDays(expiryDays),
+				CreatedAt = DateTime.UtcNow,
+				IsRevoked = false
+			};
+
+			await _commandRepoRefreshToken.Create(transaction, connection, refreshToken);
+			return tokenValue;
+		}
+
+		//private static string GenerateSecureRefreshToken()
+		//{
+		//	var bytes = new byte[64];
+		//	RandomNumberGenerator.Fill(bytes);
+		//	return Convert.ToBase64String(bytes);
+		//}
 		public async Task<BaseResponse> CreateUser(UserViewModelV2 userViewModel, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
@@ -612,7 +743,156 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public async Task<BaseResponse> RefreshToken(string incomingToken)
+		{
+			try
+			{
+				if (string.IsNullOrWhiteSpace(incomingToken))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Refresh token is required",
+						Status = "failed"
+					};
 
+				var stored = await _queryRepoRefreshToken.GetByToken(incomingToken);
+				if (stored is null)
+				{
+					_logger.Warning("Refresh token not found - Token: {Token}", incomingToken);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid refresh token",
+						Status = "failed"
+					};
+				}
+
+				if (stored.IsRevoked)
+				{
+					_logger.Warning(
+						"Revoked token reuse detected - UserId: {UserId}", stored.UserId);
+
+					using var revokeScope = _dbTransactionScopeFactory.Create("DbConnectionString");
+					try
+					{
+						await _commandRepoRefreshToken.RevokeAllTokensForUser(revokeScope.Transaction, revokeScope.Connection, stored.UserId);
+						await revokeScope.CommitAsync();
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(ex, "Failed to revoke token family - UserId: {UserId}", stored.UserId);
+						try { await revokeScope.RollbackAsync(); }
+						catch (Exception rbEx) { _logger.Error(rbEx, "Rollback failed"); }
+					}
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Refresh token has already been used or revoked",
+						Status = "failed"
+					};
+				}
+				
+				if (stored.ExpiresAt > DateTime.Now)
+				{
+					_logger.Warning(
+						"Expired refresh token - UserId: {UserId}", stored.UserId);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Refresh token has expired, please log in again",
+						Status = "failed"
+					};
+				}
+
+				var user = await _queryrepositoryUser.Get(stored.UserId);
+				if (user is null || !user.IsActive)
+				{
+					_logger.Warning("Refresh for inactive/missing user - UserId: {UserId}", stored.UserId);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "User account is inactive or does not exist",
+						Status = "failed"
+					};
+				}
+
+				// Load school info for token generation — same as login
+				var schInfo = await _queryrepositorySchool.Get(user.SchoolId);
+				var mappedSchInfo = _mapper.Map<SchoolResponseModel>(schInfo);
+
+				// ✅ Reuse the existing private method directly — no IJwtService needed
+				var newAccessToken = GenerateJwtToken(user, user.SchoolId.ToString(), mappedSchInfo);
+				var newRefreshValue = GenerateSecureRefreshToken();
+
+				var expiryDays = int.Parse(_configuration["Jwt:RefreshTokenExpiryDays"] ?? "7");
+
+				var newRefreshToken = new RefreshTokens
+				{
+					Id = Guid.NewGuid(),
+					UserId = user.Id,
+					SchoolId = stored.SchoolId,
+					Token = newRefreshValue,
+					ExpiresAt = DateTime.UtcNow.AddDays(expiryDays),
+					CreatedAt = DateTime.UtcNow,
+					IsRevoked = false
+				};
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					await _commandRepoRefreshToken.RevokeToken(
+						scope.Transaction, scope.Connection,
+						stored.Id, replacedByToken: newRefreshValue);
+
+					await _commandRepoRefreshToken.Create(
+						scope.Transaction, scope.Connection, newRefreshToken);
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Failed to rotate refresh token - UserId: {UserId}", user.Id);
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx) { _logger.Error(rbEx, "Rollback failed during rotation"); }
+					throw;
+				}
+
+				_logger.Information(
+					"Token refreshed - UserId: {UserId}", user.Id);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Token refreshed successfully",
+					Status = "successful",
+					Data = new
+					{
+						AccessToken = newAccessToken,
+						RefreshToken = newRefreshValue,
+						RefreshTokenExpiry = newRefreshToken.ExpiresAt,
+						TokenExpiresIn = 3600
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error during token refresh");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred during token refresh",
+					Status = "failed"
+				};
+			}
+		}
+
+		private static string GenerateSecureRefreshToken()
+		{
+			var bytes = new byte[64];
+			RandomNumberGenerator.Fill(bytes);
+			return Convert.ToBase64String(bytes);
+		}
 
 		//public async Task<BaseResponse> SaveClassTeacherUser(UserViewModel userViewModel)
 		//{
