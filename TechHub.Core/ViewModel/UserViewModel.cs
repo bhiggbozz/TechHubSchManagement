@@ -36,6 +36,8 @@ namespace TechHub.Core.ViewModel
 		public bool IsActive { get; set; }
 		public bool HasAccess { get; set; }
 		public string? UserName { get; set; }
+		public string? DOB { get; set; }
+
 		public Guid SchoolId { get; set; }
 		public UserRole Role { get; set; }
 		public List<Guid> UserClassroomsId { get; set; } = new List<Guid>();
