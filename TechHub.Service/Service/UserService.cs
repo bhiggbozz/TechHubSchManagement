@@ -316,7 +316,6 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					// ✅ FIX 1: Use Enum.TryParse instead of int.TryParse
 					if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true, out UserRole userRole))
 					{
 						_logger.Warning("Invalid role format in token - Role: {Role}", userClaims.Role);
@@ -329,7 +328,6 @@ namespace TechHub.Service.Service
 					}
 
 					// Validation 4: Check user role (must be Admin or SuperAdmin)
-					// ✅ FIX 2: No more int casting needed
 					if (userRole != UserRole.Administrator && userRole != UserRole.SuperAdministrator)
 					{
 						_logger.Warning(
@@ -368,7 +366,7 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					// ✅ FIX 3: No more int casting needed
+					// Validation 6: Check Admin permission
 					if (userRole == UserRole.Administrator)
 					{
 						var hasPermission = await this.HasPermission(createdBy, schoolId, AdminPermission.CreateUsers);
@@ -386,9 +384,7 @@ namespace TechHub.Service.Service
 							};
 						}
 
-						_logger.Information(
-							"Admin has CreateUsers permission - AdminId: {AdminId}",
-							createdBy);
+						_logger.Information("Admin has Create Users permission - AdminId: {AdminId}", createdBy);
 					}
 
 					_logger.Information(
@@ -430,7 +426,6 @@ namespace TechHub.Service.Service
 
 					// ===== USER CREATION SECTION =====
 
-					// ✅ FIX 4: Generate temp password ONCE — reuse same variable everywhere
 					var tempPassword = GenerateTempPassword();
 
 					var newUser = new Users
@@ -448,67 +443,103 @@ namespace TechHub.Service.Service
 					};
 
 					var userDict = new Dictionary<string, object>
-			{
-				{ "Id", newUser.Id },
-				{ "FirstName", newUser.FirstName },
-				{ "LastName", newUser.LastName },
-				{ "UserName", newUser.UserName },
-				{ "EmailAddress", newUser.EmailAddress },
-				{ "HashPassword", newUser.HashPassword }, // ✅ use hashed value from newUser
-                { "RoleId", newUser.RoleId },
-				{ "SchoolId", newUser.SchoolId },
-				{ "CreatedBy", newUser.CreatedBy },
-				{ "IsActive", newUser.IsActive },
-				{ "CreationDate", newUser.CreationDate },
-				{ "ModifiedDate", newUser.ModifiedDate },
-				{ "HasAccess", false }
+					{
+						{ "Id",             newUser.Id },
+						{ "FirstName",      newUser.FirstName },
+						{ "LastName",       newUser.LastName },
+						{ "UserName",       newUser.UserName },
+						{ "EmailAddress",   newUser.EmailAddress },
+						{ "HashPassword",   newUser.HashPassword },
+						{ "RoleId",         newUser.RoleId },
+						{ "SchoolId",       newUser.SchoolId },
+						{ "CreatedBy",      newUser.CreatedBy },
+						{ "IsActive",       newUser.IsActive },
+						{ "CreationDate",   newUser.CreationDate },
+						{ "ModifiedDate",   newUser.ModifiedDate },
+						{ "HasAccess",      false }
+					};
 
-			};
+					// ===== TRANSACTIONAL SECTION =====
+
+					// Declared outside the inner try so they are accessible after commit
+					Dictionary<string, string> placeholders = null;
+					string emailTemplate = null;
 
 					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
 
-					await _commandRepositoryUser.Create(scope.Transaction, scope.Connection, userDict);
-
-					switch (userViewModel.Role)
+					try
 					{
-						case UserRole.Student:
-							await CreateStudentAssociations(scope, newUser.Id, userViewModel, schoolId, createdBy);
-							break;
+						await _commandRepositoryUser.Create(scope.Transaction, scope.Connection, userDict);
 
-						case UserRole.SubjectTeacher:
-						case UserRole.HeadTeacher:
-						case UserRole.Administrator:
-						case UserRole.SuperAdministrator:
-							await CreateTeacherAssociations(scope, newUser.Id, userViewModel, schoolId, createdBy);
-							break;
+						switch (userViewModel.Role)
+						{
+							case UserRole.Student:
+								await CreateStudentAssociations(scope, newUser.Id, userViewModel, schoolId, createdBy);
+								break;
 
-						default:
-							_logger.Warning("Invalid user role - Role: {Role}", userViewModel.Role);
+							case UserRole.SubjectTeacher:
+							case UserRole.HeadTeacher:
+							case UserRole.Administrator:
+							case UserRole.SuperAdministrator:
+								await CreateTeacherAssociations(scope, newUser.Id, userViewModel, schoolId, createdBy);
+								break;
+
+							default:
+								_logger.Warning("Invalid user role - Role: {Role}", userViewModel.Role);
+								await scope.RollbackAsync();
+								return new BaseResponse
+								{
+									ResponseCode = ResponseCode.BadRequest,
+									ResponseMessage = $"Invalid user role: {userViewModel.Role}",
+									Status = "failed"
+								};
+						}
+
+						// Build placeholders before commit so any failure here still triggers rollback
+						var code = await GetSchoolCode(schoolId);
+						placeholders = new Dictionary<string, string>
+						{
+							{ "@@Name",     $"{newUser.FirstName} {newUser.LastName}" },
+							{ "@@UserName", newUser.UserName },
+							{ "@@Password", tempPassword },
+							{ "@@Link",     _configuration["App:BaseUrl"] + "/" + code }
+						};
+
+						await scope.CommitAsync();
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(
+							ex,
+							"Rolling back transaction due to error during user creation - Username: {Username}",
+							newUser.UserName);
+
+						try
+						{
 							await scope.RollbackAsync();
-							return new BaseResponse
-							{
-								ResponseCode = ResponseCode.BadRequest,
-								ResponseMessage = $"Invalid user role: {userViewModel.Role}",
-								Status = "failed"
-							};
+						}
+						catch (Exception rollbackEx)
+						{
+							// Log rollback failure but do not rethrow —
+							// the original exception is what we surface to the outer handler
+							_logger.Error(
+								rollbackEx,
+								"Rollback failed - Username: {Username}",
+								newUser.UserName);
+						}
+
+						throw; // Bubble up to outer SqlException / Exception handlers
 					}
 
+					// ===== POST-COMMIT SECTION =====
+					// Only reached when commit succeeded
 
-					// ✅ FIX 5: Removed redundant IsGuid variable — schoolId already parsed above
-					var code = await GetSchoolCode(schoolId);
+					emailTemplate = await _emailService.GetRenderedTemplate(
+						(int)EmailTemplateKey.WelcomeUser, placeholders);
 
-					var placeholders = new Dictionary<string, string>
-					{
-						{ "@@Name", $"{newUser.FirstName} {newUser.LastName}" },
-						{ "@@UserName", newUser.UserName },
-						{ "@@Password", tempPassword }, // ✅ same password saved to DB
-						{ "@@Link", _configuration["App:BaseUrl"] + "/" + code }
-					};
-					await scope.CommitAsync();
-
-					var emailTemplate = await _emailService.GetRenderedTemplate((int)EmailTemplateKey.WelcomeUser, placeholders);
 					if (emailTemplate != null)
 					{
+						// Fire-and-forget — email failure must never affect the success response
 						_ = Task.Run(async () =>
 							await _emailService.SendAsync(
 								newUser.EmailAddress,
