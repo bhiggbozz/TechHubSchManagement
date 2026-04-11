@@ -14,6 +14,7 @@ using TechHub.QuestionBank.Services;
 using TechHub.Service.Interface;
 using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
+using TechHub.Service.util;
 using TechhubMS.Middleware.Interface;
 using TechhubMS.Middleware.Services;
 using UserService = TechHub.Service.Service.UserService;
@@ -56,10 +57,13 @@ namespace TechhubMS
 			services.AddScoped<IBackgroundJobService, BackgroundJobService>();
 
 			services.AddScoped<IEmailService, EmailService>();
+			//services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+
 
 			//services.AddScoped<IAdminPermissionsService, AdminPermissionsService>();
 
 			services.AddSingleton<IConnectionStringResolver, ConnectionStringResolver> ();
+			services.AddSingleton<JwtTokenGenerator>();
 
 			// Register QuestionBank module
 			services.AddQuestionBankServices();

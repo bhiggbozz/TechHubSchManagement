@@ -128,22 +128,28 @@ namespace TechHub.Service.Service
             ArgumentNullException.ThrowIfNull(nameof(_config));
             try
             {
+				
+					var tableName = typeof(TEntity).Name;
+					var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
+					var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+					await connection.ExecuteAsync(query, sqlParameter, transaction);
+				
 
-                using var conn = new SqlConnection(_config);
-                conn.Open();
-                var tableName = typeof(TEntity).Name;
-                var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
-                var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-                await conn.ExecuteAsync(query, sqlParameter, transaction);
-                //using var conn = new SqlConnection(_config);
-                //conn.Open();
-                //var tableName = typeof(TEntity).Name;
-                //var query = QueryBuilder<TEntity>.InsertQuery(obj, tableName);
-                //using var command = new SqlCommand(query, connection, transaction)
-                //var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-               // await connection.ExecuteAsync(query, null, transaction);
-                // await command.ExecuteScalarAsync();
-            }
+				//using var conn = new SqlConnection(_config);
+				//conn.Open();
+				//var tableName = typeof(TEntity).Name;
+				//var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
+				//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+				//await conn.ExecuteAsync(query, sqlParameter, transaction);
+				//using var conn = new SqlConnection(_config);
+				//conn.Open();
+				//var tableName = typeof(TEntity).Name;
+				//var query = QueryBuilder<TEntity>.InsertQuery(obj, tableName);
+				//using var command = new SqlCommand(query, connection, transaction)
+				//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+				// await connection.ExecuteAsync(query, null, transaction);
+				// await command.ExecuteScalarAsync();
+			}
             catch (Exception ex)
             {
                 throw;
@@ -400,6 +406,41 @@ namespace TechHub.Service.Service
 
 			parameter.Add($"@{keyValue.Key}", keyValue.Value);
 			await conn.ExecuteAsync(query, parameter);
+		}
+
+		public async Task RevokeToken(
+	SqlTransaction transaction, SqlConnection connection,
+	Guid tokenId, string replacedByToken = null)
+		{
+			const string sql = @"
+        UPDATE RefreshTokens
+        SET IsRevoked       = 1,
+            RevokedAt       = @RevokedAt,
+            ReplacedByToken = @ReplacedByToken
+        WHERE Id = @Id";
+
+			var parameter = new DynamicParameters();
+			parameter.Add("@Id", tokenId);
+			parameter.Add("@RevokedAt", DateTime.UtcNow);
+			parameter.Add("@ReplacedByToken", replacedByToken);
+
+			await connection.ExecuteAsync(sql, parameter, transaction);
+		}
+
+		public async Task RevokeAllTokensForUser(SqlTransaction transaction, SqlConnection connection,Guid userId)
+		{
+			const string sql = @"
+				UPDATE RefreshTokens
+				SET IsRevoked = 1,
+					RevokedAt = @RevokedAt
+				WHERE UserId    = @UserId
+				  AND IsRevoked = 0";
+
+			var parameter = new DynamicParameters();
+			parameter.Add("@UserId", userId);
+			parameter.Add("@RevokedAt", DateTime.UtcNow);
+
+			await connection.ExecuteAsync(sql, parameter, transaction);
 		}
 
 

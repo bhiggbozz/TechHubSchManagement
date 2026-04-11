@@ -187,6 +187,20 @@ namespace TechhubMS.Controllers
 
 			return Ok(response);
 		}
+		[HttpPost("refresh-token")]
+		[AllowAnonymous]
+		public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
+		{
+			var result = await _userService.RefreshToken(request.RefreshToken);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.BadRequest => BadRequest(result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => StatusCode(500, result)
+			};
+		}
 
 
 	}

@@ -26,12 +26,12 @@ namespace TechHub.Core.Helper
 		public static string GenerateInsertQuery<TEntity>(string tableName, TEntity obj)
 		{
 			var properties = typeof(TEntity).GetProperties()
-									  .Select(p => p.Name)
-									  .ToList();
+				.Where(p => p.CanWrite) 
+				.Select(p => p.Name)
+				.ToList();
 
 			string columnNames = string.Join(", ", properties);
 			string parameterNames = string.Join(", ", properties.Select(p => $"@{p}"));
-
 			return $"INSERT INTO {tableName} ({columnNames}) VALUES ({parameterNames});";
 		}
 		public static string GenerateUpdateQuery<TEntity>(string tableName, TEntity obj, string keyColumn)
@@ -74,53 +74,37 @@ namespace TechHub.Core.Helper
 				throw new ArgumentNullException(nameof(obj));
 
 			var parameters = new DynamicParameters();
+
 			PropertyInfo[] properties = obj.GetType()
-				.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+				.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+				.Where(p => p.CanWrite) 
+				.ToArray();
 
 			foreach (var property in properties)
 			{
 				var value = property.GetValue(obj);
 				var propertyType = property.PropertyType;
 
-				// Handle nullable types
 				var underlyingType = Nullable.GetUnderlyingType(propertyType);
 				var isNullable = underlyingType != null;
 
 				if (value == null)
 				{
-					// Null value — add as DBNull with correct db type
-					// This prevents the DBNull cast exception Dapper throws
-					// for nullable Guid, nullable int, nullable DateTime etc
 					if (isNullable && underlyingType == typeof(Guid))
-					{
-						parameters.Add(property.Name,null,DbType.Guid);
-					}
+						parameters.Add(property.Name, null, DbType.Guid);
 					else if (isNullable && underlyingType == typeof(int))
-					{
-						parameters.Add(property.Name,null,DbType.Int32);
-					}
+						parameters.Add(property.Name, null, DbType.Int32);
 					else if (isNullable && underlyingType == typeof(DateTime))
-					{
-						parameters.Add(property.Name,null,DbType.DateTime);
-					}
+						parameters.Add(property.Name, null, DbType.DateTime);
 					else if (isNullable && underlyingType == typeof(bool))
-					{
-						parameters.Add(property.Name,null,DbType.Boolean);
-					}
+						parameters.Add(property.Name, null, DbType.Boolean);
 					else if (isNullable && underlyingType == typeof(decimal))
-					{
-						parameters.Add(property.Name,null,DbType.Decimal);
-					}
+						parameters.Add(property.Name, null, DbType.Decimal);
 					else
-					{
-						// String and all other reference types
 						parameters.Add(property.Name, null);
-					}
 				}
 				else
 				{
-					// Non-null value — add directly
-					// Dapper handles all concrete types correctly
 					parameters.Add(property.Name, value);
 				}
 			}

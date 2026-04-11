@@ -79,6 +79,19 @@ namespace TechHub.Service.Service
 			return result;
 		}
 
+		public async Task<TEntity?> GetByPropertyName(string propertyName, string value, DatabaseTarget target)
+		{
+			var connectionString = _resolver.Resolve(target);
+			using var conn = new SqlConnection(connectionString);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var query = QueryBuilder<TEntity>.GenerateGetQueryByProperties(propertyName);
+			var parameter = new DynamicParameters();
+			parameter.Add($"@{propertyName}", value);
+			var result = await conn.QueryFirstOrDefaultAsync<TEntity>(query, parameter);
+			return result;
+		}
+
 		public async Task<TEntity?> GetBy(Dictionary<string, object> inputValues)
 		{
 			using var conn = new SqlConnection(_config);
@@ -355,6 +368,16 @@ namespace TechHub.Service.Service
 				IsActive = t.IsActive,
 				CreationDate = t.CreationDate
 			});
+		}
+
+		public async Task<TEntity?> GetByToken(string token)
+		{
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			const string sql = "SELECT * FROM RefreshTokens WHERE Token = @Token";
+			var parameter = new DynamicParameters();
+			parameter.Add("@Token", token);
+			return await conn.QueryFirstOrDefaultAsync<TEntity>(sql, parameter);
 		}
 
 		//public async Task<TEntity?> SelectAllBySingleColumn(KeyValuePair<string, object> values)

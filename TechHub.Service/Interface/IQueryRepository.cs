@@ -32,6 +32,8 @@ namespace TechHub.Service.Interface
 		Task<int> CountAsync(string query, DatabaseTarget target);
 		Task<IEnumerable<QuestionQueryResult>> GetByQueryForQuestion(string query, DatabaseTarget target);
 		Task<IEnumerable<TeacherResponseModel>> GetTeachersBySchoolAsync(Guid schoolId, DatabaseTarget target);
+		Task<TEntity?> GetByToken(string token);
+		Task<TEntity?> GetByPropertyName(string propertyName, string value, DatabaseTarget target);
 
 	}
 }

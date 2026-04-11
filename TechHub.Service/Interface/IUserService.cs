@@ -34,6 +34,7 @@ namespace TechHub.Service.Interface
 		
 		Task<bool> HasPermission(Guid adminUserId,Guid schoolId,AdminPermission permission);
 		Task<BaseResponse> GetTeachersBySchool(AuthenticatedUserClaims userClaims);
+		Task<BaseResponse> RefreshToken(string incomingToken);
 
 	}
 }

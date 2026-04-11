@@ -115,4 +115,24 @@ CREATE INDEX IX_QuestionJob_Status ON QuestionJob(Status);
 -- Background worker picks up Pending jobs
  
 CREATE INDEX IX_QuestionJob_SchoolId ON QuestionJob(SchoolId);
+
+----------------------------------------------------------------------
+
+CREATE TABLE RefreshTokens (
+    Id            UNIQUEIDENTIFIER  NOT NULL DEFAULT NEWID() PRIMARY KEY,
+    UserId        UNIQUEIDENTIFIER  NOT NULL,
+    SchoolId      UNIQUEIDENTIFIER  NOT NULL,
+    Token         NVARCHAR(500)     NOT NULL,
+    ExpiresAt     DATETIME2         NOT NULL,
+    CreatedAt     DATETIME2         NOT NULL DEFAULT GETUTCDATE(),
+    RevokedAt     DATETIME2         NULL,
+    ReplacedByToken NVARCHAR(500)   NULL,   -- for rotation tracking
+    IsRevoked     BIT               NOT NULL DEFAULT 0,
+
+    CONSTRAINT FK_RefreshTokens_Users FOREIGN KEY (UserId)
+        REFERENCES Users(Id) ON DELETE CASCADE
+);
+
+CREATE INDEX IX_RefreshTokens_Token  ON RefreshTokens (Token);
+CREATE INDEX IX_RefreshTokens_UserId ON RefreshTokens (UserId);
  
