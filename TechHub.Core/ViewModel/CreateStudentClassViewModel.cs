@@ -18,9 +18,7 @@ namespace TechHub.Core.ViewModel
 		[Required(ErrorMessage = "Classroom name is required")]
 		[StringLength(100, ErrorMessage = "Name cannot exceed 100 characters")]
 		public string Name { get; set; }
-		[Required(ErrorMessage = "Teacher name is required")]
-		[StringLength(100, ErrorMessage = "Teacher name cannot exceed 100 characters")]
-		public string TeacherName { get; set; }
+		
 		[Required]
 		public int NoOfStudents { get; set; }
 	}

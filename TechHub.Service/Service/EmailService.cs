@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Utilities;
+// OR
 using TechHub.Service.Interface;
 //using SmtpClient = MailKit.Net.Smtp.SmtpClient;
 
@@ -23,6 +24,10 @@ public class EmailService : IEmailService
 	private readonly IQueryRepository<EmailTemplate>_templateRepository;
 	private readonly IConfiguration _configuration;
 	private readonly ILogger _logger;
+
+	private readonly string _apiToken;
+	private readonly string _fromEmail;
+	private readonly string _fromName;
 	// private readonly IRepository<SentEmail> _emailRepository;
 	public EmailService( IQueryRepository<EmailTemplate> templateRepository, IConfiguration configuration, ILogger logger)
     {
@@ -30,6 +35,12 @@ public class EmailService : IEmailService
         _templateRepository = templateRepository;
         _configuration = configuration;
         _logger = logger;
+
+		_apiToken = _configuration["EmailSettings:ApiToken"] ?? throw new ArgumentNullException("EmailSettings:ApiToken is not configured");
+
+		_fromEmail = _configuration["EmailSettings:FromEmail"] ?? throw new ArgumentNullException("EmailSettings:FromEmail is not configured");
+
+		_fromName = _configuration["EmailSettings:FromName"] ?? "TechHub";
 	}
 
 	public async Task<string> GetRenderedTemplate(int key, Dictionary<string, string> placeholders)
@@ -50,13 +61,45 @@ public class EmailService : IEmailService
 
 		return html;
 	}
+
+	//public async Task SendAsync(string toEmail,string toName,string subject,string htmlBody)
+	//{
+	//	try
+	//	{
+	//		using var mailtrapClientFactory = new MailtrapClientFactory(_apiToken);
+
+	//		var mailtrapClient = mailtrapClientFactory
+	//			.CreateClient();
+
+	//		var request = SendEmailRequest
+	//			.Create()
+	//			.From(_fromEmail, _fromName)
+	//			.To(toEmail, toName)
+	//			.Subject(subject)
+	//			.Html(htmlBody);
+	//		// ✅ HTML email not Text
+
+	//		var response = await mailtrapClient
+	//			.Email()
+	//			.Send(request);
+
+	//		_logger.Information(
+	//			"Email sent to {Email} Subject: {Subject}",toEmail, subject);
+	//	}
+	//	catch (Exception ex)
+	//	{
+	//		_logger.Error(
+	//			ex,"Failed to send email to {Email}",
+	//			toEmail);
+	//	}
+	//}
 	public async Task SendAsync(string toEmail, string toName, string subject, string htmlBody)
 	{
 		try
 		{
-			using var client = new SmtpClient(_configuration["EmailSettings:Host"],int.Parse(_configuration["EmailSettings:Port"]!))
+			using var client = new SmtpClient(_configuration["EmailSettings:Host"], int.Parse(_configuration["EmailSettings:Port"]!))
 			{
-				Credentials = new NetworkCredential(_configuration["EmailSettings:Username"],_configuration["EmailSettings:Password"]),
+				Credentials = new NetworkCredential(_configuration["EmailSettings:Username"], _configuration["EmailSettings:Password"]),
 				EnableSsl = true
 			};
 
@@ -74,13 +117,13 @@ public class EmailService : IEmailService
 
 			await client.SendMailAsync(mailMessage);
 
-			_logger.Information("Email sent to {Email} Subject: {Subject}",toEmail, subject);
+			_logger.Information("Email sent to {Email} Subject: {Subject}", toEmail, subject);
 		}
 		catch (Exception ex)
 		{
 			_logger.Error(
 				ex,
-				"Failed to send email to {Email}",toEmail);
+				"Failed to send email to {Email}", toEmail);
 			// Don't throw — email failure
 			// should not block user creation
 		}

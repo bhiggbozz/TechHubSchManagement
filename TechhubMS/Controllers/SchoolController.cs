@@ -67,7 +67,7 @@ namespace TechhubMS.Controllers
 		}
 
 		[HttpPost("[action]")]
-		public async Task<ActionResult<BaseResponse>> RegisterClassroomSubect(CreateClassroomViewModel createClassroomSubject)
+		public async Task<ActionResult<BaseResponse>> RegisterClassroomSubject(CreateClassroomViewModel createClassroomSubject)
 		{
 			var schoolIdClaim = User.GetAuthenticatedUserClaims();
 

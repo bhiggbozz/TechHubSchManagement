@@ -8,7 +8,7 @@ using TechHub.Core.Enum;
 
 namespace TechHub.Core.ViewModel
 {
-	public class CreateSubjectViewModel : CreateBaseViewModel
+	public class CreateSubjectViewModel 
 	{
 		[Required(ErrorMessage = "At least one subject is required")]
 		[MinLength(1, ErrorMessage = "Subject list cannot be empty")]
