@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace TechHub.Core.ViewModel
 {
-	public class CreateStudentClassViewModel : CreateBaseViewModel
+	public class CreateStudentClassViewModel
 	{
 		[Required]
 		[MinLength(1, ErrorMessage = "At least one classroom is required")]

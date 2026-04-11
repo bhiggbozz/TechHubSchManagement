@@ -344,7 +344,7 @@ namespace TechHub.Service.Service
 					IsActive = user.IsActive,
 					SchoolInfo = mappedSchInfo,
 					Token = accessToken,
-					RefreshToken = refreshTokenValue,           // ✅ new
+					RefreshToken = refreshTokenValue,          
 					TokenExpiresIn = 3600,
 					ResponseCode = ResponseCode.successful,
 					ResponseMessage = "Login successful",
@@ -570,7 +570,8 @@ namespace TechHub.Service.Service
 						RoleId = (int)userViewModel.Role,
 						SchoolId = schoolId,
 						CreatedBy = createdBy,
-						IsActive = true
+						IsActive = true, 
+						DOB = userViewModel.DOB
 					};
 
 					var userDict = new Dictionary<string, object>
@@ -587,7 +588,9 @@ namespace TechHub.Service.Service
 						{ "IsActive",       newUser.IsActive },
 						{ "CreationDate",   newUser.CreationDate },
 						{ "ModifiedDate",   newUser.ModifiedDate },
-						{ "HasAccess",      false }
+						{ "HasAccess",      false },
+						{ "DOB",      newUser.DOB }
+
 					};
 
 					// ===== TRANSACTIONAL SECTION =====

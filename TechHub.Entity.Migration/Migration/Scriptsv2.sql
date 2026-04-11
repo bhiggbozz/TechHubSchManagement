@@ -135,4 +135,5 @@ CREATE TABLE RefreshTokens (
 
 CREATE INDEX IX_RefreshTokens_Token  ON RefreshTokens (Token);
 CREATE INDEX IX_RefreshTokens_UserId ON RefreshTokens (UserId);
- 
+ ---------------------------------------------------------------------
+   Alter table Users Add DOB Datetime null
