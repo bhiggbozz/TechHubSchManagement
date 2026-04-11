@@ -36,7 +36,7 @@ public class EmailService : IEmailService
         _configuration = configuration;
         _logger = logger;
 
-		_apiToken = _configuration["EmailSettings:ApiToken"] ?? throw new ArgumentNullException("EmailSettings:ApiToken is not configured");
+		//_apiToken = _configuration["EmailSettings:ApiToken"] ?? throw new ArgumentNullException("EmailSettings:ApiToken is not configured");
 
 		_fromEmail = _configuration["EmailSettings:FromEmail"] ?? throw new ArgumentNullException("EmailSettings:FromEmail is not configured");
 
