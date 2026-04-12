@@ -210,7 +210,6 @@ namespace TechHub.Service.Service
 		public async Task<BaseResponse> CreateStudentClassV2(CreateStudentClassViewModel createStudentClassViewModel, AuthenticatedUserClaims userInfo)
 		{
 			using (LogContext.PushProperty("RequestedBy", userInfo.UserId))
-			//using (LogContext.PushProperty("TenantId", userInfo.TenantIdentifier))
 			{
 				try
 				{
@@ -218,7 +217,6 @@ namespace TechHub.Service.Service
 					if (createStudentClassViewModel is null)
 					{
 						_logger.Warning("Create classroom request with null data");
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -231,7 +229,6 @@ namespace TechHub.Service.Service
 					if (!createStudentClassViewModel.classrooms.Any())
 					{
 						_logger.Warning("Create classroom request with empty classrooms list");
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -290,8 +287,9 @@ namespace TechHub.Service.Service
 						schoolId);
 
 					var classroomsToCreate = new List<Dictionary<string, object>>();
-					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+					var subjectsToCreate = new List<Dictionary<string, object>>();
 					var classroomNames = new List<string>();
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
 					foreach (var classroomView in createStudentClassViewModel.classrooms)
 					{
@@ -299,7 +297,6 @@ namespace TechHub.Service.Service
 						if (string.IsNullOrWhiteSpace(classroomView.Name))
 						{
 							_logger.Warning("Classroom name is empty");
-
 							return new BaseResponse
 							{
 								ResponseCode = ResponseCode.BadRequest,
@@ -308,92 +305,7 @@ namespace TechHub.Service.Service
 							};
 						}
 
-						// Validation 8: Check TeacherId
-						//if (classroomView.TeacherId == Guid.Empty)
-						//{
-						//	_logger.Warning("TeacherId is empty for classroom: {ClassroomName}", classroomView.Name);
-
-						//	return new BaseResponse
-						//	{
-						//		ResponseCode = ResponseCode.BadRequest,
-						//		ResponseMessage = $"TeacherId is required for classroom '{classroomView.Name}'",
-						//		Status = "failed"
-						//	};
-						//}
-
-						// Validation 9: Check if teacher exists and belongs to same school
-						//var teacher = await _queryrepositoryUser.Get(classroomView.TeacherId);
-
-						//if (teacher == null)
-						//{
-						//	_logger.Warning(
-						//		"Teacher not found - TeacherId: {TeacherId}, ClassroomName: {ClassroomName}",
-						//		classroomView.TeacherId,
-						//		classroomView.Name);
-
-						//	return new BaseResponse
-						//	{
-						//		ResponseCode = ResponseCode.NotFound,
-						//		ResponseMessage = $"Teacher not found for classroom '{classroomView.Name}'",
-						//		Status = "failed"
-						//	};
-						//}
-
-						// Validation 10: Check if teacher belongs to same school
-						//if (teacher.SchoolId != schoolId)
-						//{
-						//	_logger.Warning(
-						//		"Teacher belongs to different school - TeacherId: {TeacherId}, TeacherSchoolId: {TeacherSchoolId}, RequestSchoolId: {RequestSchoolId}",
-						//		classroomView.TeacherId,
-						//		teacher.SchoolId,
-						//		schoolId);
-
-						//	return new BaseResponse
-						//	{
-						//		ResponseCode = ResponseCode.Forbidden,
-						//		ResponseMessage = $"Teacher for classroom '{classroomView.Name}' belongs to a different school",
-						//		Status = "failed"
-						//	};
-						//}
-
-						// Validation 11: Check if teacher is active
-						//if (!teacher.IsActive)
-						//{
-						//	_logger.Warning(
-						//		"Teacher is not active - TeacherId: {TeacherId}, ClassroomName: {ClassroomName}",
-						//		classroomView.TeacherId,
-						//		classroomView.Name);
-
-						//	return new BaseResponse
-						//	{
-						//		ResponseCode = ResponseCode.BadRequest,
-						//		ResponseMessage = $"Teacher for classroom '{classroomView.Name}' is not active",
-						//		Status = "failed"
-						//	};
-						//}
-
-						// Validation 12: Check if teacher role is valid
-						//var teacherRole = (UserRole)teacher.RoleId;
-						//if (teacherRole != UserRole.SubjectTeacher &&
-						//	teacherRole != UserRole.HeadTeacher &&
-						//	teacherRole != UserRole.Administrator &&
-						//	teacherRole != UserRole.SuperAdministrator)
-						//{
-						//	_logger.Warning(
-						//		"User is not a teacher - UserId: {UserId}, Role: {Role}, ClassroomName: {ClassroomName}",
-						//		classroomView.Name,
-						//		teacherRole,
-						//		classroomView.Name);
-
-						//	return new BaseResponse
-						//	{
-						//		ResponseCode = ResponseCode.BadRequest,
-						//		ResponseMessage = $"User assigned to classroom '{classroomView.Name}' is not a teacher",
-						//		Status = "failed"
-						//	};
-						//}
-
-						// Validation 13: Check for duplicate classroom name
+						// Validation 8: Check for duplicate classroom name
 						var duplicateCheck = await CheckDuplicateClassroom(classroomView.Name.Trim(), schoolId);
 						if (duplicateCheck)
 						{
@@ -401,7 +313,6 @@ namespace TechHub.Service.Service
 								"Duplicate classroom name - Name: {ClassroomName}, SchoolId: {SchoolId}",
 								classroomView.Name,
 								schoolId);
-
 							return new BaseResponse
 							{
 								ResponseCode = ResponseCode.Conflict,
@@ -411,37 +322,76 @@ namespace TechHub.Service.Service
 						}
 
 						var classroomId = Guid.NewGuid();
+
 						var classroomDict = new Dictionary<string, object>
 						{
-							{ "Id", classroomId },
-							{ "Name", classroomView.Name.Trim() },
+							{ "Id",           classroomId },
+							{ "Name",         classroomView.Name.Trim() },
 							{ "NoOfStudents", classroomView.NoOfStudents },
 							{ "CreationDate", now },
 							{ "ModifiedDate", now },
-							{ "CreatedBy", createdBy },
-							{ "SchoolId", schoolId },
-							{ "IsActive", true }
+							{ "CreatedBy",    createdBy },
+							{ "SchoolId",     schoolId },
+							{ "IsActive",     true }
 						};
 
 						classroomsToCreate.Add(classroomDict);
 						classroomNames.Add(classroomView.Name.Trim());
 
+						foreach (var subjectId in classroomView.SubjectIds)
+						{
+							subjectsToCreate.Add(new Dictionary<string, object>
+							{
+								{ "Id",           Guid.NewGuid() },
+								{ "ClassroomId",  classroomId },
+								{ "SubjectId",    subjectId },
+								{ "SchoolId",     schoolId },
+								{ "Createdby",    createdBy },
+								{ "CreationDate", now },
+								{ "ModifiedDate", now },
+								{ "IsActive",     true }
+							});
+						}
+
 						_logger.Debug(
-							"Prepared classroom for creation - Id: {ClassroomId}, Name: {ClassroomName}, TeacherId: {TeacherId}",
+							"Prepared classroom for creation - Id: {ClassroomId}, Name: {ClassroomName}, SubjectCount: {SubjectCount}",
 							classroomId,
-							classroomView.Name
-							);
+							classroomView.Name,
+							classroomView.SubjectIds.Count);
 					}
 
-					// ✅ Use batch insert (single SQL statement)
 					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
 
-					await _studentClassCommandRespository.CreateBatchAsync(
-						scope.Transaction,
-						scope.Connection,
-						classroomsToCreate);
+					try
+					{
+						// Insert classrooms
+						await _studentClassCommandRespository.CreateBatchAsync(
+							scope.Transaction, scope.Connection, classroomsToCreate);
 
-					await scope.CommitAsync();
+						// Insert classroom subjects — only if any were provided
+						if (subjectsToCreate.Any())
+						{
+							await _classroomSubjectCommandRespository.CreateBatchAsync(
+								scope.Transaction, scope.Connection, subjectsToCreate);
+						}
+
+						await scope.CommitAsync();
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(
+							ex,
+							"Rolling back transaction during classroom creation - SchoolId: {SchoolId}",
+							schoolId);
+
+						try { await scope.RollbackAsync(); }
+						catch (Exception rbEx)
+						{
+							_logger.Error(rbEx, "Rollback failed - SchoolId: {SchoolId}", schoolId);
+						}
+
+						throw;
+					}
 
 					_logger.Information(
 						"Successfully created {ClassroomCount} classroom(s) - Names: {ClassroomNames}",
@@ -457,7 +407,8 @@ namespace TechHub.Service.Service
 						{
 							ClassroomsCreated = classroomsToCreate.Count,
 							ClassroomIds = classroomsToCreate.Select(c => c["Id"]).ToList(),
-							ClassroomNames = classroomNames
+							ClassroomNames = classroomNames,
+							SubjectsAssigned = subjectsToCreate.Count
 						}
 					};
 				}

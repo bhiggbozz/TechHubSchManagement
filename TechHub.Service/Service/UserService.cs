@@ -497,6 +497,65 @@ namespace TechHub.Service.Service
 						};
 					}
 
+					if ((userViewModel.Role == UserRole.SubjectTeacher || userViewModel.Role == UserRole.ClassTeacher) && userViewModel.LineManagerId.HasValue)
+					{
+						var lineManager = await _queryrepositoryUser.Get(userViewModel.LineManagerId.Value);
+						if (lineManager is null)
+						{
+							_logger.Warning(
+								"Line manager does not exist - LineManagerId: {LineManagerId}",
+								userViewModel.LineManagerId.Value);
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = "Assigned line manager does not exist",
+								Status = "failed"
+							};
+						}
+
+						if (!lineManager.IsActive)
+						{
+							_logger.Warning(
+								"Line manager is inactive - LineManagerId: {LineManagerId}",
+								userViewModel.LineManagerId.Value);
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = "Assigned line manager is not active",
+								Status = "failed"
+							};
+						}
+
+						// ✅ Ensure line manager is actually a HeadTeacher
+						if (lineManager.RoleId != (int)UserRole.HeadTeacher)
+						{
+							_logger.Warning(
+								"Invalid line manager role - LineManagerId: {LineManagerId}, Role: {Role}",
+								userViewModel.LineManagerId.Value,
+								lineManager.RoleId);
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = "Line manager must be a Head Teacher",
+								Status = "failed"
+							};
+						}
+
+						// ✅ Ensure line manager belongs to same school
+						if (lineManager.SchoolId != schoolId)
+						{
+							_logger.Warning(
+								"Line manager belongs to different school - LineManagerId: {LineManagerId}",
+								userViewModel.LineManagerId.Value);
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = "Line manager must belong to the same school",
+								Status = "failed"
+							};
+						}
+					}
+
 					// Validation 6: Check Admin permission
 					if (userRole == UserRole.Administrator)
 					{
@@ -571,7 +630,9 @@ namespace TechHub.Service.Service
 						SchoolId = schoolId,
 						CreatedBy = createdBy,
 						IsActive = true, 
-						DOB = userViewModel.DOB
+						DOB = userViewModel.DOB,
+						LineManager = userViewModel.LineManagerId
+						
 					};
 
 					var userDict = new Dictionary<string, object>
@@ -589,7 +650,8 @@ namespace TechHub.Service.Service
 						{ "CreationDate",   newUser.CreationDate },
 						{ "ModifiedDate",   newUser.ModifiedDate },
 						{ "HasAccess",      false },
-						{ "DOB",      newUser.DOB }
+						{ "DOB",      newUser.DOB },
+						{ "LineManagerId", newUser.LineManager.HasValue ? (object)newUser.LineManager.Value: DBNull.Value }
 
 					};
 
@@ -612,6 +674,9 @@ namespace TechHub.Service.Service
 								break;
 
 							case UserRole.SubjectTeacher:
+							case UserRole.ClassTeacher:
+								
+
 							case UserRole.HeadTeacher:
 							case UserRole.Administrator:
 							case UserRole.SuperAdministrator:
@@ -2586,6 +2651,13 @@ namespace TechHub.Service.Service
 					{
 						return (false, "Teachers must be assigned to at least one subject");
 					}
+					if (userViewModel.LineManagerId is null)
+						return (false, "A line manager must be assigned for Subject Teachers");
+					break;
+				case UserRole.ClassTeacher:
+					
+					if (userViewModel.LineManagerId is null)
+						return (false, "A line manager must be assigned for Subject Teachers");
 					break;
 			case UserRole.HeadTeacher:
 				//	if (!userViewModel.UserClassroomsId.Any())

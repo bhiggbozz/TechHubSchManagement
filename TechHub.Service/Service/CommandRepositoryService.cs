@@ -3,6 +3,8 @@ using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
+using System.Data;
+
 //using System.Data.SqlClient;
 using System.Linq;
 using System.Reflection.Metadata;
@@ -99,28 +101,37 @@ namespace TechHub.Service.Service
 
 		public async Task Create(SqlTransaction transaction, SqlConnection connection, Dictionary<string, object> obj)
 		{
-			ArgumentNullException.ThrowIfNull(nameof(_config));
 			try
 			{
-				//using var conn = new SqlConnection(_config);
-				//conn.Open();
 				var tableName = typeof(TEntity).Name;
 				var query = QueryBuilder<TEntity>.InsertQuery(obj, tableName);
-				//using var command = new SqlCommand(query, connection, transaction)
-				//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-				await connection.ExecuteAsync(query, null, transaction);
-				// await command.ExecuteScalarAsync();
+
+				var parameter = new DynamicParameters();
+				foreach (var key in obj.Keys)
+				{
+					var value = obj[key];
+
+					if (value is DBNull || value == null)
+						parameter.Add($"@{key}", null);
+					else if (value is bool boolValue)
+						parameter.Add($"@{key}", boolValue, DbType.Boolean);
+					else if (value is Guid guidValue)
+						parameter.Add($"@{key}", guidValue, DbType.Guid);
+					else if (value is DateTime dateValue)
+						parameter.Add($"@{key}", dateValue, DbType.DateTime2);
+					else
+						parameter.Add($"@{key}", value);
+				}
+
+				await connection.ExecuteAsync(query, parameter, transaction);
 			}
 			catch (Exception ex)
 			{
 				throw;
 			}
-
-			//var sqlQuery =  
-
 		}
 
-		
+
 
 		public async Task Create(SqlTransaction transaction, SqlConnection connection, TEntity entity)
         {

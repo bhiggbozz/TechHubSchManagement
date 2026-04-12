@@ -37,6 +37,8 @@ namespace TechHub.Core.ViewModel
 		public bool HasAccess { get; set; }
 		public string? UserName { get; set; }
 		public string? DOB { get; set; }
+		public Guid? LineManagerId { get; set; }
+
 
 		public Guid SchoolId { get; set; }
 		public UserRole Role { get; set; }
