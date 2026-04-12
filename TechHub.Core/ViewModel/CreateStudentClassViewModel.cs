@@ -19,7 +19,9 @@ namespace TechHub.Core.ViewModel
 		[StringLength(100, ErrorMessage = "Name cannot exceed 100 characters")]
 		public string Name { get; set; }
 		
-		[Required]
 		public int NoOfStudents { get; set; }
+		[Required(ErrorMessage = "At least one subject has to be registered for this class")]
+		public List<Guid> SubjectIds { get; set; } = new List<Guid>();
+
 	}
 }

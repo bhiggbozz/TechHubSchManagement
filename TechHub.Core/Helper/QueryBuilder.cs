@@ -158,47 +158,19 @@ namespace TechHub.Core.Helper
 
 		public static string InsertQuery(Dictionary<string, object> data, string tableName)
 		{
-			var queries = new StringBuilder();
-			var sb = new StringBuilder($"insert into {tableName} (  ");
-			int count = data.Count;
+			var sb = new StringBuilder($"INSERT INTO {tableName} (");
 
-			foreach (var item in data.Keys)
-			{
-				count -= 1;
-				sb.Append($"{item}");
-				if (count == 0)
-				{
-					sb.Append(" )");
-				}
-				else
-				{
-					sb.Append(",");
-				}
+			var keys = data.Keys.ToList();
 
+			// Column names
+			sb.Append(string.Join(", ", keys));
+			sb.Append(") VALUES (");
 
-			}
-			sb.Append(" values ( ");
-			int count2 = data.Count;
+			// Parameter placeholders — NOT inline values
+			sb.Append(string.Join(", ", keys.Select(k => $"@{k}")));
+			sb.Append(")");
 
-			foreach (var item in data.Keys)
-			{
-				count2 -= 1;
-				sb.Append($"'{data[item]}'");
-				if (count2 == 0)
-				{
-					sb.Append(" )");
-				}
-				else
-				{
-					sb.Append(",");
-				}
-
-			}
-			//sb.Append(" \nSELECT SCOPE_IDENTITY();");
-			var query = sb.ToString();
-			return query;
-
-
+			return sb.ToString();
 		}
 
 		public static string InsertQueryV2(Dictionary<string, object> data, string tableName)
