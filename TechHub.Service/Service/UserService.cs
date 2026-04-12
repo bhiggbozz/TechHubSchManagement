@@ -861,7 +861,7 @@ namespace TechHub.Service.Service
 					};
 				}
 				
-				if (stored.ExpiresAt > DateTime.Now)
+				if (stored.ExpiresAt <= DateTime.Now)
 				{
 					_logger.Warning(
 						"Expired refresh token - UserId: {UserId}", stored.UserId);
