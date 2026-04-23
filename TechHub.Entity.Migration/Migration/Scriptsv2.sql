@@ -139,3 +139,87 @@ CREATE INDEX IX_RefreshTokens_UserId ON RefreshTokens (UserId);
    Alter table Users Add DOB Datetime null
 ------------------------------------------------
 ALTER TABLE Users ADD LineManagerId UNIQUEIDENTIFIER NULL;
+
+---------------------------------------------------------------
+
+-- Lesson content submission
+CREATE TABLE LessonContent (
+    Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+    SchoolId     UNIQUEIDENTIFIER NOT NULL,
+    ClassroomId  UNIQUEIDENTIFIER NOT NULL,
+    SubjectId    UNIQUEIDENTIFIER NOT NULL,
+    TopicId      UNIQUEIDENTIFIER NOT NULL,
+    SubTopic     NVARCHAR(200)    NOT NULL,
+    Aim          NVARCHAR(500)    NOT NULL,
+    Description  NVARCHAR(2000)   NOT NULL,
+    Status       NVARCHAR(30)     NOT NULL DEFAULT 'PendingApproval',
+    CreatedBy    UNIQUEIDENTIFIER NOT NULL,
+    ApprovedBy   UNIQUEIDENTIFIER NULL,
+    RejectedBy   UNIQUEIDENTIFIER NULL,
+    RejectionReason NVARCHAR(500) NULL,
+    CreatedAt    DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+    ModifiedAt   DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+    ApprovedAt   DATETIME2        NULL,
+
+    CONSTRAINT FK_LessonContent_Classroom FOREIGN KEY (ClassroomId) 
+        REFERENCES Classroom(Id),
+    CONSTRAINT FK_LessonContent_CreatedBy FOREIGN KEY (CreatedBy)   
+        REFERENCES Users(Id)
+);
+
+-- Individual media files per lesson
+CREATE TABLE LessonMedia (
+    Id               UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+    LessonContentId  UNIQUEIDENTIFIER NOT NULL,
+    SchoolId         UNIQUEIDENTIFIER NOT NULL,
+    FileName         NVARCHAR(300)    NOT NULL,
+    OriginalFileName NVARCHAR(300)    NOT NULL,
+    FileExtension    NVARCHAR(20)     NOT NULL,
+    MediaType        NVARCHAR(20)     NOT NULL, -- Video,Audio,PDF,Image,Document
+    FileSizeBytes    BIGINT           NOT NULL,
+    CloudinaryUrl    NVARCHAR(1000)   NOT NULL,
+    PublicId         NVARCHAR(500)    NOT NULL,
+    Duration         INT              NULL,      -- seconds, video/audio only
+    Status           NVARCHAR(20)     NOT NULL DEFAULT 'Ready',
+    DisplayOrder     INT              NOT NULL DEFAULT 0,
+    CreatedAt        DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+    IsActive         BIT              NOT NULL DEFAULT 1,
+
+    CONSTRAINT FK_LessonMedia_LessonContent FOREIGN KEY (LessonContentId) 
+        REFERENCES LessonContent(Id) ON DELETE CASCADE
+);
+
+CREATE INDEX IX_LessonContent_ClassroomId  
+    ON LessonContent (ClassroomId, Status);
+CREATE INDEX IX_LessonContent_CreatedBy    
+    ON LessonContent (CreatedBy);
+CREATE INDEX IX_LessonMedia_LessonContentId 
+    ON LessonMedia (LessonContentId);
+    ---------------------------------------------------
+    CREATE TABLE ApprovalRequests (
+    Id              UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+    SchoolId        UNIQUEIDENTIFIER NOT NULL,
+    RequestedBy     UNIQUEIDENTIFIER NOT NULL,
+    ApproverId      UNIQUEIDENTIFIER NOT NULL,
+    OperationType   NVARCHAR(50)     NOT NULL,
+    EntityType      NVARCHAR(50)     NOT NULL,
+    EntityId        UNIQUEIDENTIFIER NULL,
+    Payload         NVARCHAR(MAX)    NOT NULL,
+    Status          NVARCHAR(20)     NOT NULL DEFAULT 'Pending',
+    RejectionReason NVARCHAR(500)    NULL,
+    CreatedAt       DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+    RespondedAt     DATETIME2        NULL,
+    ExpiresAt       DATETIME2        NOT NULL,
+
+    CONSTRAINT FK_ApprovalRequests_RequestedBy 
+        FOREIGN KEY (RequestedBy) REFERENCES Users(Id),
+    CONSTRAINT FK_ApprovalRequests_ApproverId  
+        FOREIGN KEY (ApproverId)  REFERENCES Users(Id)
+);
+
+CREATE INDEX IX_ApprovalRequests_ApproverId  
+    ON ApprovalRequests (ApproverId, Status);
+CREATE INDEX IX_ApprovalRequests_RequestedBy 
+    ON ApprovalRequests (RequestedBy);
+CREATE INDEX IX_ApprovalRequests_EntityId    
+    ON ApprovalRequests (EntityId);

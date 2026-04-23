@@ -1571,7 +1571,6 @@ namespace TechHub.Service.Service
 					}
 					else
 					{
-						// ✅ NEW VALIDATION: Admin/SuperAdmin editing OTHER users
 						if (!isSelfEdit)
 						{
 							// SuperAdministrators always have permission
