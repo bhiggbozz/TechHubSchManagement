@@ -45,18 +45,28 @@ public class EmailService : IEmailService
 
 	public async Task<string> GetRenderedTemplate(int key, Dictionary<string, string> placeholders)
 	{
-		var query = $@"SELECT * FROM EmailTemplates WHERE TemplateKey = '{key}' AND IsActive = 1";
-
+		var query = $@"SELECT * FROM EmailTemplates 
+                      WHERE TemplateKey = '{key}' 
+                      AND   IsActive    = 1";
 		var template = await _templateRepository.GetByQuery(query);
+
+		if (template is null || !template.Any())
+		{
+			_logger.Warning(
+				"Email template not found - TemplateKey: {Key}", key);
+			return null;
+		}
 
 		var html = template.First().HtmlBody;
 
-		// Replace placeholders
+		if (string.IsNullOrWhiteSpace(html))
+			return null;
+
+		// ✅ placeholder.Key already contains @@ prefix
+		// just replace it directly — no curly braces
 		foreach (var placeholder in placeholders)
 		{
-			html = html.Replace(
-				$"{{{{{placeholder.Key}}}}}",
-				placeholder.Value);
+			html = html.Replace(placeholder.Key, placeholder.Value);
 		}
 
 		return html;
