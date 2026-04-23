@@ -202,6 +202,16 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		[HttpGet("GetUsersByRole")]
+		[Authorize(Roles = "SuperAdministrator,Administrator")]
+		[ProducesResponseType(typeof(BaseResponse), 200)]
+		public async Task<ActionResult<BaseResponse>> GetUsersByRole(int? roleId,[FromQuery] int pageNumber = 1,[FromQuery] int pageSize = 50)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.GetUsersByRole(userClaims, roleId, pageNumber, pageSize);
+			return Ok(result);
+		}
+
 
 	}
 

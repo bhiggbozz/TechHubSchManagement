@@ -5,7 +5,9 @@ using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
+using TechHub.Core.ViewModel;
 using TechHub.Service.Service;
+using MediaType = TechHub.Core.Enum.MediaType;
 
 namespace TechHub.Service.Interface;
 /// <summary>
@@ -92,6 +94,7 @@ public interface ICloudinaryService
 	Task<CloudinaryUploadResult> UploadSchoolLogoAsync(Stream imageStream,string fileName,Guid schoolId);
 	string GetUrl(Guid schoolId, MediaType mediaType, string entityId, bool isTemporary = false);
 	string GetRawUrl(string publicId);
+	CloudinarySignatureResponse GenerateUploadSignature(Guid schoolId, Guid teacherId);
 
 }
 

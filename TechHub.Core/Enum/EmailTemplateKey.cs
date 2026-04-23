@@ -12,6 +12,8 @@ public enum EmailTemplateKey
 	PasswordReset,
 	AccountLocked,
 	EmailVerification,
-	AdminCreated
+	AdminCreated,
+	LessonApprovalRequest,
+	LessonApprovalOutcome
 }
 

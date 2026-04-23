@@ -1,0 +1,76 @@
+﻿using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using System.Text;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+
+namespace TechHub.Core.ViewModel;
+
+// What frontend sends after uploading to Cloudinary
+public class SubmitLessonViewModel
+{
+	[Required]
+	public Guid ClassroomId { get; set; }
+
+	[Required]
+	public Guid SubjectId { get; set; }
+
+	[Required]
+	public Guid TopicId { get; set; }
+
+	[Required]
+	[StringLength(200)]
+	public string SubTopic { get; set; }
+
+	[Required]
+	[StringLength(500)]
+	public string Aim { get; set; }
+
+	[Required]
+	[StringLength(2000)]
+	public string Description { get; set; }
+
+	// ✅ Frontend uploads to Cloudinary first, sends back URLs
+	//[Required]
+	//[MinLength(1, ErrorMessage = "At least one media file is required")]
+	public List<LessonMediaViewModel> MediaFiles { get; set; } = new();
+
+	// ✅ Bypass flag for approval replay
+	[JsonIgnore]
+	public bool BypassApproval { get; set; } = false;
+}
+
+public class LessonMediaViewModel
+{
+	[Required]
+	public string FileName { get; set; }
+
+	[Required]
+	public string OriginalFileName { get; set; }
+
+	[Required]
+	public string FileExtension { get; set; }
+
+	[Required]
+	public string CloudinaryUrl { get; set; }
+
+	[Required]
+	public string PublicId { get; set; }
+
+	public long FileSizeBytes { get; set; }
+	public int? Duration { get; set; }  // seconds — frontend can detect
+	public int DisplayOrder { get; set; }
+}
+
+public class CloudinarySignatureResponse
+{
+	public string Signature { get; set; }
+	public string ApiKey { get; set; }
+	public string CloudName { get; set; }
+	public long Timestamp { get; set; }
+	public string Folder { get; set; }
+	public string UploadPreset { get; set; }
+}
+

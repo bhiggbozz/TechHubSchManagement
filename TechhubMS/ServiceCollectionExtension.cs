@@ -57,6 +57,7 @@ namespace TechhubMS
 			services.AddScoped<IBackgroundJobService, BackgroundJobService>();
 
 			services.AddScoped<IEmailService, EmailService>();
+			services.AddScoped<ILessonService, LessonService>();
 			//services.AddScoped<IRefreshTokenService, RefreshTokenService>();
 
 

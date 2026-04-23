@@ -3,6 +3,7 @@
 using CloudinaryDotNet;
 using CloudinaryDotNet.Actions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Serilog;
 using System.Security.Cryptography;
@@ -12,6 +13,7 @@ using TechHub.Core.Configuration;
 using TechHub.Core.Enum;
 using TechHub.Core.Enums;
 using TechHub.Core.Model;
+using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.school;
 using TechHub.Service.Interface;
 using TechhubMS.util;
@@ -23,12 +25,14 @@ namespace TechHub.Service.Service
 		private readonly Cloudinary _cloudinary;
 		private readonly ILogger _logger;
 		private readonly CloudinarySettings _settings;
+		private readonly IConfiguration _configuration;
 
-		public CloudinaryService(IOptions<CloudinarySettings> options,ILogger logger)
+		public CloudinaryService(IOptions<CloudinarySettings> options,ILogger logger, IConfiguration configuration)
 		{
 	
 			_settings = options.Value;
 			_logger = logger;
+			_configuration = configuration;
 
 			// Validate configuration
 			if (string.IsNullOrEmpty(_settings.CloudName) || string.IsNullOrEmpty(_settings.ApiKey) || string.IsNullOrEmpty(_settings.ApiSecret))
@@ -880,6 +884,33 @@ namespace TechHub.Service.Service
 		public string GetRawUrl(string publicId)
 		{
 			return _cloudinary.Api.UrlImgUp.Secure(true).BuildUrl(publicId);
+		}
+
+		public CloudinarySignatureResponse GenerateUploadSignature(Guid schoolId, Guid teacherId)
+		{
+			var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+			var apiSecret = _configuration["Cloudinary:ApiSecret"];
+			var apiKey = _configuration["Cloudinary:ApiKey"];
+			var cloudName = _configuration["Cloudinary:CloudName"];
+			var folder = $"techhub/{schoolId}/lessons";
+
+			// Build signature string
+			var signatureString = $"folder={folder}&timestamp={timestamp}{apiSecret}";
+
+			// SHA1 hash
+			using var sha1 = System.Security.Cryptography.SHA1.Create();
+			var bytes = System.Text.Encoding.UTF8.GetBytes(signatureString);
+			var hash = sha1.ComputeHash(bytes);
+			var signature = Convert.ToHexString(hash).ToLower();
+
+			return new CloudinarySignatureResponse
+			{
+				Signature = signature,
+				ApiKey = apiKey,
+				CloudName = cloudName,
+				Timestamp = timestamp,
+				Folder = folder
+			};
 		}
 	}
 
