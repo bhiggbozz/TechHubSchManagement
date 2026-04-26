@@ -223,3 +223,8 @@ CREATE INDEX IX_ApprovalRequests_RequestedBy
     ON ApprovalRequests (RequestedBy);
 CREATE INDEX IX_ApprovalRequests_EntityId    
     ON ApprovalRequests (EntityId);
+
+
+    ------------------------------------------------------------------------
+    ALTER TABLE LessonContent 
+ADD QuizId UNIQUEIDENTIFIER NULL;

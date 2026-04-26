@@ -31,6 +31,7 @@ public class SubmitLessonViewModel
 	[Required]
 	[StringLength(2000)]
 	public string Description { get; set; }
+	public bool IsDraft { get; set; }
 
 	// ✅ Frontend uploads to Cloudinary first, sends back URLs
 	//[Required]
@@ -40,6 +41,8 @@ public class SubmitLessonViewModel
 	// ✅ Bypass flag for approval replay
 	[JsonIgnore]
 	public bool BypassApproval { get; set; } = false;
+
+	public Guid? QuizId { get; set; }
 }
 
 public class LessonMediaViewModel

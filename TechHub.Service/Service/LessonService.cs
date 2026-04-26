@@ -50,8 +50,7 @@ public class LessonService : ILessonService
 				return BadRequest("Invalid role in token");
 
 			// Only teachers can submit lessons
-			if (userRole != UserRole.SubjectTeacher &&
-				userRole != UserRole.HeadTeacher)
+			if (userRole != UserRole.SubjectTeacher && userRole != UserRole.HeadTeacher)
 			{
 				_logger.Warning(
 					"Unauthorized lesson submission - UserId: {UserId}, Role: {Role}",
@@ -69,20 +68,44 @@ public class LessonService : ILessonService
 			if (classroom is null || classroom.SchoolId != schoolId)
 				return NotFound("Classroom not found");
 
-			// Validate media files
-			if (!model.MediaFiles.Any())
-				return BadRequest("At least one media file is required");
+			//if (model.QuizId.HasValue)
+			//{
+			//	var quiz = await _quizQuery.Get(model.QuizId.Value);
+			//	if (quiz is null)
+			//		return BadRequest("Quiz not found in question bank");
 
-			foreach (var file in model.MediaFiles)
+			//	if (quiz.SchoolId != schoolId)
+			//		return Forbidden("Quiz does not belong to your school");
+			//}
+
+			// Validate media files
+			//if (!model.MediaFiles.Any())
+			//	return BadRequest("At least one media file is required");
+			if (!model.IsDraft)
 			{
-				if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) ||
-					string.IsNullOrWhiteSpace(file.PublicId))
+				if (!model.MediaFiles.Any())
+					return BadRequest("At least one media file is required");
+
+				foreach (var file in model.MediaFiles)
 				{
-					return BadRequest(
-						$"Invalid media file data for {file.OriginalFileName}");
+					if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) ||
+						string.IsNullOrWhiteSpace(file.PublicId))
+						return BadRequest(
+							$"Invalid media file data for {file.OriginalFileName}");
+				}
+			}
+			else
+			{
+				foreach (var file in model.MediaFiles)
+				{
+					if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) ||
+						string.IsNullOrWhiteSpace(file.PublicId))
+						return BadRequest(
+							$"Invalid media file data for {file.OriginalFileName}");
 				}
 			}
 
+			
 			var now = DateTime.UtcNow;
 			var lessonId = Guid.NewGuid();
 
@@ -104,7 +127,8 @@ public class LessonService : ILessonService
 				{ "RejectionReason", DBNull.Value },
 				{ "CreatedAt",   now },
 				{ "ModifiedAt",  now },
-				{ "ApprovedAt",  DBNull.Value }
+				{ "ApprovedAt",  DBNull.Value },
+				{ "QuizId",  model.QuizId.HasValue ? (object)model.QuizId.Value : DBNull.Value }
 			};
 
 			// ===== BUILD MEDIA DICTS =====
@@ -140,18 +164,16 @@ public class LessonService : ILessonService
 			try
 			{
 				// 1. Save lesson
-				await _lessonCommand.Create(
-					scope.Transaction, scope.Connection, lessonDict);
+				await _lessonCommand.Create(scope.Transaction, scope.Connection, lessonDict);
 
 				// 2. Save all media files
-				await _mediaCommand.CreateBatchAsync(
-					scope.Transaction, scope.Connection, mediaDicts);
+				await _mediaCommand.CreateBatchAsync(scope.Transaction, scope.Connection, mediaDicts);
 
 				// 3. Create approval request in same transaction
 				approvalId = Guid.NewGuid();
 				var approverId = teacher.LineManager;
 
-				if (!model.BypassApproval && approverId.HasValue)
+				if (!model.IsDraft && !model.BypassApproval && approverId.HasValue)
 				{
 					var expiryDays = int.Parse(
 						_configuration["Approvals:ExpiryDays"] ?? "3");
@@ -173,6 +195,40 @@ public class LessonService : ILessonService
 						{ "RespondedAt",   DBNull.Value },
 						{ "ExpiresAt",     now.AddDays(expiryDays) }
 					};
+				
+
+					//if (!model.IsDraft && !model.BypassApproval)
+					//{
+					//	var approverId = teacher.LineManager;
+
+					//	if (approverId.HasValue)
+					//	{
+					//		approvalId = Guid.NewGuid();
+					//		var expiryDays = int.Parse(
+					//			_configuration["Approvals:ExpiryDays"] ?? "3");
+
+					//		var approvalDict = new Dictionary<string, object>
+					//		{
+					//			{ "Id",              approvalId },
+					//			{ "SchoolId",        schoolId },
+					//			{ "RequestedBy",     teacherId },
+					//			{ "ApproverId",      approverId.Value },
+					//			{ "OperationType",   OperationType.SubmitLesson },
+					//			{ "EntityType",      "LessonContent" },
+					//			{ "EntityId",        lessonId },
+					//			{ "Payload",         System.Text.Json.JsonSerializer
+					//									 .Serialize(model) },
+					//			{ "Status",          ApprovalStatus.Pending },
+					//			{ "RejectionReason", DBNull.Value },
+					//			{ "CreatedAt",       now },
+					//			{ "RespondedAt",     DBNull.Value },
+					//			{ "ExpiresAt",       now.AddDays(expiryDays) }
+					//		};
+
+					//		await _approvalCommand.Create(
+					//			scope.Transaction, scope.Connection, approvalDict);
+						
+					//}
 
 					await _approvalCommand.Create(
 						scope.Transaction, scope.Connection, approvalDict);

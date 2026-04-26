@@ -43,6 +43,17 @@ public class LessonController : ControllerBase
 			? Ok(result) : BadRequest(result);
 	}
 
+	[HttpPost("draft")]
+	//[Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+	public async Task<IActionResult> SaveDraft([FromBody] SubmitLessonViewModel model)
+	{
+		model.IsDraft = true;   
+		model.BypassApproval = false;
+		var claims = GetClaims();
+		var result = await _lessonService.SubmitLesson(model, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
 	[HttpGet("classroom/{classroomId}")]
 	public async Task<IActionResult> GetLessonsByClassroom(Guid classroomId)
 	{
