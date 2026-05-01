@@ -88,13 +88,13 @@ namespace TechhubMS.Controllers
 		}
 
 		[HttpPost("update-password/newUser")]
-		[Authorize]
+		[AllowAnonymous]
 		public async Task<IActionResult> UpdatePasswordForO([FromBody] UpdatePasswordViewModelV2 model)
 		{
 			//var claims = User.GetAuthenticatedUserClaims();
-			var tenant = await _tenantService.GetTenantBySchoolIdAsync(model.SchoolId);
+			//var tenant = await _tenantService.GetTenantBySchoolIdAsync(model.SchoolId);
 
-			var result = await _userService.UpdatePasswordFirstTime(model, tenant);
+			var result = await _userService.UpdatePasswordFirstTime(model);
 			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
 

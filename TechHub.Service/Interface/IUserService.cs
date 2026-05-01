@@ -23,7 +23,9 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> EditUser(UpdateUserView userViewModel, AuthenticatedUserClaims? claims);
 
 		Task<BaseResponse> updatePassword(UpdatePasswordViewModel updatePasswordViewModel, AuthenticatedUserClaims claims);
-		Task<BaseResponse> UpdatePasswordFirstTime(UpdatePasswordViewModelV2 updatePasswordViewModel, TenantInfo tenant);
+		Task<BaseResponse> UpdatePasswordFirstTime(UpdatePasswordViewModelV2 updatePasswordViewModel);
+		//Task<BaseResponse> UpdatePasswordFirstTime(UpdatePasswordViewModelV2 updatePasswordViewModel, TenantInfo tenant);
+
 
 		Task<BaseResponse> GetUserById(Guid userId, AuthenticatedUserClaims? claims);
 		Task<BaseResponse> AssignAdminPermissions( AssignAdminPermissionsViewModel model,AuthenticatedUserClaims userClaims);
