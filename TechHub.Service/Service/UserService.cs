@@ -1143,7 +1143,7 @@ namespace TechHub.Service.Service
 			}
 		}
 
-		public async Task<BaseResponse> UpdatePasswordFirstTime(UpdatePasswordViewModelV2 model, TenantInfo tenant)
+		public async Task<BaseResponse> UpdatePasswordFirstTime(UpdatePasswordViewModelV2 model)
 		{
 			try
 			{
@@ -1155,13 +1155,13 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				if (tenant is null)
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid tenant information",
-						Status = "failed"
-					};
+				//if (tenant is null)
+				//	return new BaseResponse
+				//	{
+				//		ResponseCode = ResponseCode.BadRequest,
+				//		ResponseMessage = "Invalid tenant information",
+				//		Status = "failed"
+				//	};
 
 				if (string.IsNullOrWhiteSpace(model.username))
 					return new BaseResponse
@@ -1191,7 +1191,7 @@ namespace TechHub.Service.Service
 				var loginUserInput = new Dictionary<string, object>
 				{
 					{ "UserName", model.username },
-					{ "SchoolId", tenant.SchoolId }
+					{ "SchoolId", model.SchoolId }
 				};
 
 				var user = await _queryrepositoryUser.GetBy(loginUserInput);
@@ -1249,7 +1249,7 @@ namespace TechHub.Service.Service
 				{
 					{ "HashPassword", model.HashPassword },
 					{ "ModifiedDate", now },
-					{ "SchoolId",     tenant.SchoolId }
+					{ "SchoolId",     model.SchoolId }
 				};
 
 				var updateKeyValue = new KeyValuePair<string, object>("Id", user.Id);
@@ -1267,10 +1267,10 @@ namespace TechHub.Service.Service
 				};
 
 				// Generate tokens to log them in immediately after password update
-				var schInfo = await _queryrepositorySchool.Get(tenant.SchoolId);
+				var schInfo = await _queryrepositorySchool.Get(model.SchoolId);
 				var mappedSchInfo = _mapper.Map<SchoolResponseModel>(schInfo);
 				var accessToken = _jwtTokenGenerator.Generate(
-					user, tenant.SchoolId.ToString(), mappedSchInfo);
+					user, model.SchoolId.ToString(), mappedSchInfo);
 
 				string refreshTokenValue;
 
