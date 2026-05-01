@@ -973,146 +973,384 @@ namespace TechHub.Service.Service
 
 		//public async Task ValidateIfUserHasAccessToRemovedClasses(List<Guid> classes, )
 
-		public async Task<BaseResponse> updatePassword(UpdatePasswordViewModel updatePasswordViewModel, AuthenticatedUserClaims claims)
+		public async Task<BaseResponse> updatePassword(UpdatePasswordViewModel model, AuthenticatedUserClaims claims)
 		{
 			try
 			{
-				if (updatePasswordViewModel is null)
-				{
+				if (model is null)
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Password update request cannot be empty",
+						ResponseMessage = "Request cannot be empty",
 						Status = "failed"
 					};
-				}
 
-				if (string.IsNullOrEmpty(claims.SchoolId))
-				{
+				if (!Guid.TryParse(claims.UserId, out var userId))
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Unauthorized,
-						ResponseMessage = "SchoolId not found in authentication token",
+						ResponseMessage = "Invalid authentication",
 						Status = "failed"
 					};
-				}
 
 				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
-				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid authentication",
+						Status = "failed"
+					};
+
+				if (string.IsNullOrWhiteSpace(model.HashPassword))
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid SchoolId format in token",
+						ResponseMessage = "New password is required",
+						Status = "failed"
+					};
+
+				if (string.IsNullOrWhiteSpace(model.CurrentHashPassword))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Current password is required",
+						Status = "failed"
+					};
+
+				var user = await _queryrepositoryUser.Get(userId);
+				if (user is null || !user.IsActive)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "Account not found or is inactive",
+						Status = "failed"
+					};
+
+				var loginHistory = await LastLoginHistorys(user.Id);
+				if (loginHistory.Count() <= 1)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "Please use the first time login password update",
+						Status = "failed"
+					};
+
+				if (model.CurrentHashPassword != user.HashPassword)
+				{
+					_logger.Warning(
+						"Password update failed - wrong old password - UserId: {UserId}",
+						user.Id);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Current password is incorrect",
 						Status = "failed"
 					};
 				}
 
-				var selectQuery = $"SELECT * FROM Users WHERE SchoolId = @SchoolId AND UserName = @UserName";
-				var selectParams = new Dictionary<string, object>
-				{
-					{ "SchoolId", schoolId },
-					{ "UserName", updatePasswordViewModel.username }
-				};
-
-				// Find user
-				var user = await _queryrepositoryUser.SelectByColumns(selectQuery, selectParams);
-				if (user is null)
-				{
+				// ── Prevent reusing same password ────────────────────────────────────
+				if (model.HashPassword == user.HashPassword)
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "User not found or does not belong to your school",
+						ResponseMessage = "New password cannot be the same as your current password",
 						Status = "failed"
 					};
-				}
 
-				if (!string.IsNullOrEmpty(claims.UserId))
-				{
-					if (Guid.TryParse(claims.UserId, out var currentUserId))
-					{
-						if (user.Id != currentUserId && claims.Role != "Admin")
-						{
-							return new BaseResponse
-							{
-								ResponseCode = ResponseCode.Forbidden,
-								ResponseMessage = "You can only update your own password",
-								Status = "failed"
-							};
-						}
-					}
-				}
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
-				// Update password query
-				var updateQuery = $"UPDATE Users SET HashPassword = @HashPassword, ModifiedDate = @ModifiedDate " +
-								  $"WHERE Id = @Id AND SchoolId = @SchoolId";
+				var updateQuery = @"
+					UPDATE Users 
+					SET HashPassword = @HashPassword,
+						ModifiedDate = @ModifiedDate
+					WHERE Id       = @Id
+					AND   SchoolId = @SchoolId";
 
 				var updateParams = new Dictionary<string, object>
 				{
-					{ "HashPassword", updatePasswordViewModel.HashPassword },
-					{ "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") },
-					{ "SchoolId", schoolId },  // From claims
-					{ "UserName", updatePasswordViewModel.username }
+					{ "HashPassword", model.HashPassword },
+					{ "ModifiedDate", now },
+					{ "SchoolId",     schoolId }
 				};
 
 				var updateKeyValue = new KeyValuePair<string, object>("Id", user.Id);
 
-				// Create login history record
-				var loginHistory = new LoginHistory
-				{
-					Id = Guid.NewGuid(),
-					UserId = user.Id,
-					RoleId = user.RoleId,
-					PasswordFailed = false,
-					DeviceType = updatePasswordViewModel.DeviceType,
-					DeviceIp = updatePasswordViewModel.DeviceIp
-				};
-
 				var loginHistoryDict = new Dictionary<string, object>
 				{
-					{ "Id", loginHistory.Id },
-					{ "CreationDate", loginHistory.CreationDate },
-					{ "ModifiedDate", loginHistory.ModifiedDate },
-					{ "UserId", loginHistory.UserId },
-					{ "RoleId", loginHistory.RoleId },
-					{ "PasswordFailed", loginHistory.PasswordFailed },
-					{ "DeviceType", loginHistory.DeviceType },
-					{ "DeviceIp", loginHistory.DeviceIp }
+					{ "Id",            Guid.NewGuid() },
+					{ "CreationDate",  now },
+					{ "ModifiedDate",  now },
+					{ "UserId",        user.Id },
+					{ "RoleId",        user.RoleId },
+					{ "PasswordFailed", false },
+					{ "DeviceType",    model.DeviceType ?? string.Empty },
+					{ "DeviceIp",      model.DeviceIp   ?? string.Empty }
 				};
 
-				// Execute transaction
 				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
-				await _commandRepositoryUser.UpdateAsync(scope.Transaction, scope.Connection, updateQuery, updateParams, updateKeyValue);
-				await _commandRepositoryLoginHistory.Create(scope.Transaction, scope.Connection, loginHistoryDict);
-				await scope.CommitAsync();
+				try
+				{
+					await _commandRepositoryUser.UpdateAsync(
+						scope.Transaction, scope.Connection,
+						updateQuery, updateParams, updateKeyValue);
+
+					await _commandRepositoryLoginHistory.Create(
+						scope.Transaction, scope.Connection, loginHistoryDict);
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Rollback during password update - UserId: {UserId}", user.Id);
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx,
+							"Rollback failed - UserId: {UserId}", user.Id);
+					}
+					throw;
+				}
+
+				_logger.Information("Password updated successfully - UserId: {UserId}", user.Id);
 
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.successful,
-					ResponseMessage = "Password changed successfully",
+					ResponseMessage = "Password updated successfully",
 					Status = "successful"
 				};
 			}
 			catch (SqlException ex)
 			{
-				// Log exception here
+				_logger.Error(ex, "SQL error during password update");
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
-					ResponseMessage = "Database error occurred while updating password",
+					ResponseMessage = "Database error occurred",
 					Status = "failed"
 				};
 			}
 			catch (Exception ex)
 			{
-				// Log exception here
+				_logger.Error(ex, "Unexpected error during password update");
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
-					ResponseMessage = "An unexpected error occurred while updating password",
+					ResponseMessage = "An unexpected error occurred",
 					Status = "failed"
 				};
 			}
 		}
+
+		public async Task<BaseResponse> UpdatePasswordFirstTime(UpdatePasswordViewModelV2 model, TenantInfo tenant)
+		{
+			try
+			{
+				if (model is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Request cannot be empty",
+						Status = "failed"
+					};
+
+				if (tenant is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid tenant information",
+						Status = "failed"
+					};
+
+				if (string.IsNullOrWhiteSpace(model.username))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Username is required",
+						Status = "failed"
+					};
+
+				if (string.IsNullOrWhiteSpace(model.HashPassword))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "New password is required",
+						Status = "failed"
+					};
+
+				if (string.IsNullOrWhiteSpace(model.CurrentHashPassword))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Current password is required",
+						Status = "failed"
+					};
+
+				// ── Fetch user ───────────────────────────────────────────────────────
+				var loginUserInput = new Dictionary<string, object>
+				{
+					{ "UserName", model.username },
+					{ "SchoolId", tenant.SchoolId }
+				};
+
+				var user = await _queryrepositoryUser.GetBy(loginUserInput);
+				if (user is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Incorrect credentials",
+						Status = "failed"
+					};
+
+				var loginHistory = await LastLoginHistorys(user.Id);
+				if (loginHistory.Count() != 1)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "This endpoint is only for first time login",
+						Status = "failed"
+					};
+
+				// ── Verify old password matches ──────────────────────────────────────
+				if (model.CurrentHashPassword != user.HashPassword)
+				{
+					_logger.Warning(
+						"First time password update failed - wrong old password - UserId: {UserId}",
+						user.Id);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Current password is incorrect",
+						Status = "failed"
+					};
+				}
+
+				// ── Prevent reusing same password ────────────────────────────────────
+				if (model.HashPassword == user.HashPassword)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "New password cannot be the same as your current password",
+						Status = "failed"
+					};
+
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+				// ── Update password + log history + issue tokens atomically ──────────
+				var updateQuery = @"
+					UPDATE Users 
+					SET HashPassword = @HashPassword,
+						ModifiedDate = @ModifiedDate
+					WHERE Id       = @Id
+					AND   SchoolId = @SchoolId";
+
+				var updateParams = new Dictionary<string, object>
+				{
+					{ "HashPassword", model.HashPassword },
+					{ "ModifiedDate", now },
+					{ "SchoolId",     tenant.SchoolId }
+				};
+
+				var updateKeyValue = new KeyValuePair<string, object>("Id", user.Id);
+
+				var loginHistoryDict = new Dictionary<string, object>
+				{
+					{ "Id",            Guid.NewGuid() },
+					{ "CreationDate",  now },
+					{ "ModifiedDate",  now },
+					{ "UserId",        user.Id },
+					{ "RoleId",        user.RoleId },
+					{ "PasswordFailed", false },
+					{ "DeviceType",    model.DeviceType ?? string.Empty },
+					{ "DeviceIp",      model.DeviceIp   ?? string.Empty }
+				};
+
+				// Generate tokens to log them in immediately after password update
+				var schInfo = await _queryrepositorySchool.Get(tenant.SchoolId);
+				var mappedSchInfo = _mapper.Map<SchoolResponseModel>(schInfo);
+				var accessToken = _jwtTokenGenerator.Generate(
+					user, tenant.SchoolId.ToString(), mappedSchInfo);
+
+				string refreshTokenValue;
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					// Update password
+					await _commandRepositoryUser.UpdateAsync(
+						scope.Transaction, scope.Connection,
+						updateQuery, updateParams, updateKeyValue);
+
+					// Log history
+					await _commandRepositoryLoginHistory.Create(
+						scope.Transaction, scope.Connection, loginHistoryDict);
+
+					// Issue refresh token
+					refreshTokenValue = await GenerateAndStoreRefreshToken(
+						scope.Transaction, scope.Connection,
+						user.Id, user.SchoolId);
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Rollback during first time password update - UserId: {UserId}",
+						user.Id);
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx,
+							"Rollback failed - UserId: {UserId}", user.Id);
+					}
+					throw;
+				}
+
+				_logger.Information(
+					"First time password updated successfully - UserId: {UserId}",
+					user.Id);
+
+				// ── Return full login response — user is now logged in ───────────────
+				return new UserLoginResponse
+				{
+					FirstName = user.FirstName,
+					LastName = user.LastName,
+					RoleId = user.RoleId,
+					Id = user.Id,
+					EmailAddress = user.EmailAddress,
+					IsActive = user.IsActive,
+					SchoolInfo = mappedSchInfo,
+					Token = accessToken,
+					RefreshToken = refreshTokenValue,
+					TokenExpiresIn = 3600,
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Password updated successfully. You are now logged in.",
+					Status = "successful"
+				};
+			}
+			catch (SqlException ex)
+			{
+				_logger.Error(ex, "SQL error during first time password update");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "Database error occurred",
+					Status = "failed"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error during first time password update");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
 		private async Task<IEnumerable<LoginHistory?>> LastLoginHistorys(Guid userId)
 		{
 			//string tableName
