@@ -23,5 +23,6 @@ public class LessonMedia
 	public int DisplayOrder { get; set; }
 	public DateTime CreatedAt { get; set; }
 	public bool IsActive { get; set; }
+	public string? MetaData { get; set; }
 }
 

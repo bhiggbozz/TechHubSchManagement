@@ -21,6 +21,9 @@ public class SubmitLessonViewModel
 	public Guid TopicId { get; set; }
 
 	[Required]
+	public Guid SubTopicId { get; set; }
+
+	[Required]
 	[StringLength(200)]
 	public string SubTopic { get; set; }
 
@@ -65,6 +68,7 @@ public class LessonMediaViewModel
 	public long FileSizeBytes { get; set; }
 	public int? Duration { get; set; }  // seconds — frontend can detect
 	public int DisplayOrder { get; set; }
+	public string MetaData { get; set; } = string.Empty;
 }
 
 public class CloudinarySignatureResponse

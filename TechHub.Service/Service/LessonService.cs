@@ -117,7 +117,8 @@ public class LessonService : ILessonService
 				{ "ClassroomId", model.ClassroomId },
 				{ "SubjectId",   model.SubjectId },
 				{ "TopicId",     model.TopicId },
-				{ "SubTopic",    model.SubTopic.Trim() },
+				{ "SubTopicId",     model.SubTopicId },
+				{ "SubTopic",     string.Empty },
 				{ "Aim",         model.Aim.Trim() },
 				{ "Description", model.Description.Trim() },
 				{ "Status",      LessonStatus.PendingApproval },
@@ -153,10 +154,11 @@ public class LessonService : ILessonService
 											  ? file.DisplayOrder
 											  : index + 1 },
 					{ "CreatedAt",        now },
-					{ "IsActive",         true }
+					{ "IsActive",         true },
+					{ "MetaData",         file.MetaData },
+
 				}).ToList();
 
-			// ===== SAVE TO DB + FIRE APPROVAL SIMULTANEOUSLY =====
 
 			Guid approvalId;
 
@@ -176,7 +178,7 @@ public class LessonService : ILessonService
 				if (!model.IsDraft && !model.BypassApproval && approverId.HasValue)
 				{
 					var expiryDays = int.Parse(
-						_configuration["Approvals:ExpiryDays"] ?? "3");
+						_configuration["Approvals:ExpiryDays"] ?? "5");
 
 					var approvalDict = new Dictionary<string, object>
 					{
@@ -418,9 +420,7 @@ public class LessonService : ILessonService
 		}
 	}
 
-	public async Task<BaseResponse> RespondToLesson(
-		Guid lessonId, bool approved,
-		string rejectionReason, AuthenticatedUserClaims claims)
+	public async Task<BaseResponse> RespondToLesson(Guid lessonId, bool approved,string rejectionReason, AuthenticatedUserClaims claims)
 	{
 		try
 		{
@@ -577,6 +577,104 @@ public class LessonService : ILessonService
 		catch (Exception ex)
 		{
 			_logger.Error(ex, "Error fetching pending lessons");
+			return ServerError();
+		}
+	}
+
+	// ── Service method ───────────────────────────────────────────────────────────
+	public async Task<BaseResponse> GetLessonsByTeacher(AuthenticatedUserClaims claims,string? status = null,int pageNumber = 1,int pageSize = 50)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.UserId, out var teacherId))
+				return Unauthorized();
+
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			if (pageNumber < 1) pageNumber = 1;
+			if (pageSize < 1 || pageSize > 100) pageSize = 50;
+
+			// Validate status if provided
+			var validStatuses = new[]
+			{
+			//LessonStatus.Draft,
+				LessonStatus.PendingApproval,
+				LessonStatus.Approved,
+				LessonStatus.Rejected,
+				LessonStatus.Published
+			};
+
+			if (!string.IsNullOrWhiteSpace(status) &&
+				!validStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
+			{
+				return BadRequest($"Invalid status. Valid values: {string.Join(", ", validStatuses)}");
+			}
+
+			// Single query — get everything then count in memory
+			// Avoids multiple DB round trips
+			var allQuery = $@"
+					SELECT * FROM LessonContent
+					WHERE  CreatedBy = '{teacherId}'
+					AND    SchoolId  = '{schoolId}'
+					ORDER  BY CreatedAt DESC";
+
+			var allLessons = await _lessonQuery.GetByQuery(allQuery);
+			var allList = allLessons.Where(l => l != null).ToList();
+
+			var summary = new
+			{
+				Total = allList.Count,
+				//Draft = allList.Count(l => l.Status == LessonStatus.Draft),
+				PendingApproval = allList.Count(l => l.Status == LessonStatus.PendingApproval),
+				Approved = allList.Count(l => l.Status == LessonStatus.Approved),
+				Rejected = allList.Count(l => l.Status == LessonStatus.Rejected),
+				Published = allList.Count(l => l.Status == LessonStatus.Published)
+			};
+
+			var filtered = string.IsNullOrWhiteSpace(status) ? allList : allList
+					.Where(l => l.Status.Equals(status, StringComparison.OrdinalIgnoreCase)).ToList();
+
+			// ── Pagination ───────────────────────────────────────────────────────
+			var totalCount = filtered.Count;
+			var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+			var paginated = filtered
+				.Skip((pageNumber - 1) * pageSize)
+				.Take(pageSize)
+				.ToList();
+
+			_logger.Information(
+				"Lessons fetched - TeacherId: {TeacherId}, Total: {Total}, " + "Filter: {Status}, Page: {Page}/{TotalPages}",
+				teacherId, totalCount,
+				status ?? "All",
+				pageNumber, totalPages);
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = paginated.Any()
+					? $"{totalCount} lesson(s) found"
+					: "No lessons found",
+				Status = "successful",
+				Data = new
+				{
+					Summary = summary,
+					Lessons = paginated,
+					TotalCount = totalCount,
+					PageNumber = pageNumber,
+					PageSize = pageSize,
+					TotalPages = totalPages,
+					HasPreviousPage = pageNumber > 1,
+					HasNextPage = pageNumber < totalPages,
+					FilteredBy = status ?? "All"
+				}
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex,"Error fetching lessons - TeacherId: {TeacherId}",
+				claims?.UserId);
 			return ServerError();
 		}
 	}

@@ -39,8 +39,8 @@ public static class ClassPreparationExtensions
 			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 			Title = classPrep.Title,
-			Topic = classPrep.Topic,
-			SubTopic = classPrep.SubTopic,
+			TopicId = classPrep.TopicId,
+			SubTopicId = classPrep.SubTopicId,
 			AimAndObjectives = classPrep.AimAndObjectives,
 
 			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

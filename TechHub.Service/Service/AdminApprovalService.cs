@@ -402,8 +402,8 @@ public class AdminApprovalService : IAdminApprovalService
 		{
 			Id = classPrep.Id,
 			Title = classPrep.Title,
-			Topic = classPrep.Topic,
-			SubTopic = classPrep.SubTopic,
+			TopicId = classPrep.TopicId,
+			SubTopicId = classPrep.SubTopicId,
 			AimAndObjectives = classPrep.AimAndObjectives,
 			ScheduledDate = classPrep.ScheduledDate?.ToString("yyyy-MM-dd HH:mm:ss"),
 			ScheduledTime = classPrep.ScheduledTime?.ToString("yyyy-MM-dd HH:mm:ss"),

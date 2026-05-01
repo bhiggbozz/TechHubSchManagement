@@ -90,6 +90,19 @@ public class LessonController : ControllerBase
 		return Ok(result);
 	}
 
+	[HttpGet("my-lessons")]
+	[Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+	[ProducesResponseType(typeof(BaseResponse), 200)]
+	public async Task<IActionResult> GetMyLessons(
+	[FromQuery] string? status = null,
+	[FromQuery] int pageNumber = 1,
+	[FromQuery] int pageSize = 50)
+	{
+		var claims = GetClaims();
+		var result = await _lessonService.GetLessonsByTeacher(
+			claims, status, pageNumber, pageSize);
+		return Ok(result);
+	}
 	private AuthenticatedUserClaims GetClaims() => new AuthenticatedUserClaims
 	{
 		UserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value,

@@ -1,5 +1,6 @@
 ﻿using Serilog;
 using Serilog.Context;
+using System.Text.Json;
 using TechHub.Core;
 using TechHub.Core.DTO;
 using TechHub.Core.Entities;
@@ -63,14 +64,22 @@ namespace TechHub.Service.Service
 		/// - Approved: Already approved (can't modify approved content)
 		/// - InProgress/Completed: Class already happened
 		/// </remarks>
-		public async Task<ClassPreparationResponse> SaveClassPreparation(SaveClassPreparationViewModel model, AuthenticatedUserClaims userClaims)
+		public async Task<ClassPreparationResponse> SaveClassPreparation(SaveClassPreparationViewModel model,AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
-			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
+			// using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
 			{
 				try
 				{
-
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					{
+						return new ClassPreparationResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId",
+							Status = "failed"
+						};
+					}
 
 					if (!Guid.TryParse(userClaims.UserId, out var userId))
 					{
@@ -82,26 +91,76 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+					var mediaMetadataJson = model.MediaMetadata.HasValue
+						? JsonSerializer.Serialize(model.MediaMetadata.Value)
+						: null;
+
+					static List<Guid> ExtractMediaFileIds(JsonElement? metadata)
 					{
-						return new ClassPreparationResponse
+						var ids = new List<Guid>();
+
+						if (!metadata.HasValue)
 						{
-							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = "Invalid SchoolId",
-							Status = "failed"
-						};
+							return ids;
+						}
+
+						try
+						{
+							var root = metadata.Value;
+
+							if (root.ValueKind == JsonValueKind.Array)
+							{
+								foreach (var item in root.EnumerateArray())
+								{
+									if (item.ValueKind != JsonValueKind.Object)
+									{
+										continue;
+									}
+
+									if (item.TryGetProperty("mediaFileId", out var mediaFileIdProp) &&
+										mediaFileIdProp.ValueKind == JsonValueKind.String &&
+										Guid.TryParse(mediaFileIdProp.GetString(), out var parsedId))
+									{
+										ids.Add(parsedId);
+									}
+								}
+							}
+							else if (root.ValueKind == JsonValueKind.Object)
+							{
+								if (root.TryGetProperty("mediaFileIds", out var mediaFileIdsProp) &&
+									mediaFileIdsProp.ValueKind == JsonValueKind.Array)
+								{
+									foreach (var idNode in mediaFileIdsProp.EnumerateArray())
+									{
+										if (idNode.ValueKind == JsonValueKind.String &&
+											Guid.TryParse(idNode.GetString(), out var parsedId))
+										{
+											ids.Add(parsedId);
+										}
+									}
+								}
+							}
+						}
+						catch
+						{
+							// Ignore metadata parse issues for linking;
+							// metadata string is still saved as provided.
+						}
+
+						return ids;
 					}
 
-					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+					var mediaFileIds = ExtractMediaFileIds(model.MediaMetadata);
 
 					if (model.Id.HasValue)
 					{
 						_logger.Information(
-							"Updating class preparation - Id: {Id}, Topic: {Topic}",
+							"Updating class preparation - Id: {Id}, TopicId: {TopicId}",
 							model.Id.Value,
-							model.Topic);
+							model.TopicId);
 
-						// Get existing class
 						var existingClass = await _classQueryRepo.Get(model.Id.Value);
 
 						if (existingClass == null)
@@ -132,11 +191,10 @@ namespace TechHub.Service.Service
 							};
 						}
 
-
-
 						var currentStatus = (ClassPreparationStatus)existingClass.Status;
 
-						if (currentStatus != ClassPreparationStatus.Draft && currentStatus != ClassPreparationStatus.Rejected)
+						if (currentStatus != ClassPreparationStatus.Draft &&
+							currentStatus != ClassPreparationStatus.Rejected)
 						{
 							_logger.Warning(
 								"Attempted to edit class with non-editable status - ClassId: {ClassId}, Status: {Status}",
@@ -151,30 +209,26 @@ namespace TechHub.Service.Service
 							};
 						}
 
-
-
-						// Parse scheduled time if provided
 						TimeSpan? scheduledTime = null;
-						if (!string.IsNullOrEmpty(model.ScheduledTime))
+						if (!string.IsNullOrWhiteSpace(model.ScheduledTime) &&
+							TimeSpan.TryParse(model.ScheduledTime, out var parsedTime))
 						{
-							if (TimeSpan.TryParse(model.ScheduledTime, out var parsedTime))
-							{
-								scheduledTime = parsedTime;
-							}
+							scheduledTime = parsedTime;
 						}
 
 						var updateDict = new Dictionary<string, object>
 						{
-							{ "SubjectId", model.SubjectId },
-							{ "ClassroomId", model.ClassroomId },
-							{ "Topic", model.Topic },
-							{ "SubTopic", model.SubTopic ?? string.Empty },
-							{ "AimAndObjectives", model.AimAndObjectives },
-							{ "ScheduledDate", model.ScheduledDate.HasValue ? model.ScheduledDate.Value : DBNull.Value },
-							{ "ScheduledTime", scheduledTime.HasValue ? scheduledTime.Value : DBNull.Value },
+							{ "SubjectId",       model.SubjectId },
+							{ "ClassroomId",     model.ClassroomId },
+							{ "TopicId",         model.TopicId },
+							{ "SubTopicId",      model.SubTopicId.HasValue      ? model.SubTopicId.Value      : DBNull.Value },
+							{ "AimAndObjectives",model.AimAndObjectives },
+							{ "ScheduledDate",   model.ScheduledDate.HasValue   ? model.ScheduledDate.Value   : DBNull.Value },
+							{ "ScheduledTime",   scheduledTime.HasValue         ? scheduledTime.Value         : DBNull.Value },
 							{ "DurationMinutes", model.DurationMinutes.HasValue ? model.DurationMinutes.Value : DBNull.Value },
-							{ "ClassType", (int)model.ClassType },
-							{ "ModifiedDate", now }
+							{ "ClassType",       (int)model.ClassType },
+							{ "MediaMetadataJson", mediaMetadataJson ?? (object)DBNull.Value },
+							{ "ModifiedDate",    now }
 						};
 
 						var whereClause = new KeyValuePair<string, object>("Id", model.Id.Value);
@@ -182,97 +236,83 @@ namespace TechHub.Service.Service
 
 						_logger.Information("Class preparation updated - Id: {Id}", model.Id.Value);
 
-						if (model.MediaFileIds.Any())
+						if (mediaFileIds.Any())
 						{
-							await _mediaService.LinkMediaToClass(
-								model.Id.Value,
-								model.MediaFileIds,
-								userClaims);
+							await _mediaService.LinkMediaToClass(model.Id.Value, mediaFileIds, userClaims);
 						}
 
-						// Return updated class
 						return await GetClassPreparationById(model.Id.Value, userClaims);
 					}
 					else
 					{
-
-
 						_logger.Information(
-							"Creating new class preparation - Topic: {Topic}, Teacher: {TeacherId}",
-							model.Topic,
+							"Creating new class preparation - TopicId: {TopicId}, Teacher: {TeacherId}",
+							model.TopicId,
 							userId);
 
 						var classId = Guid.NewGuid();
+						var title = model.TopicId.ToString(); // Replace with real topic lookup if available
 
-						// Generate title from subject and topic
-						var title = $"{model.Topic}"; // Can enhance this logic
-
-						// Parse scheduled time
 						TimeSpan? scheduledTime = null;
-						if (!string.IsNullOrEmpty(model.ScheduledTime))
+						if (!string.IsNullOrWhiteSpace(model.ScheduledTime) &&
+							TimeSpan.TryParse(model.ScheduledTime, out var parsedTime))
 						{
-							if (TimeSpan.TryParse(model.ScheduledTime, out var parsedTime))
-							{
-								scheduledTime = parsedTime;
-							}
+							scheduledTime = parsedTime;
 						}
 
 						var classDict = new Dictionary<string, object>
 						{
-							{ "Id", classId },
+							{ "Id",          classId },
 							{ "ClassroomId", model.ClassroomId },
-							{ "SubjectId", model.SubjectId },
-							{ "TeacherId", userId },
-							{ "SchoolId", schoolId },
-                            
-                            // Class details
-                            { "Title", title },
-							{ "Topic", model.Topic },
-							{ "SubTopic", model.SubTopic ?? string.Empty },
+							{ "SubjectId",   model.SubjectId },
+							{ "TeacherId",   userId },
+							{ "SchoolId",    schoolId },
+
+							// Class details
+							{ "Title",            title },
+							{ "TopicId",          model.TopicId },
+							{ "SubTopicId",       model.SubTopicId.HasValue      ? model.SubTopicId.Value      : DBNull.Value },
 							{ "AimAndObjectives", model.AimAndObjectives },
-                            
-                            // Timing
-                            { "ScheduledDate", model.ScheduledDate.HasValue ? model.ScheduledDate.Value : DBNull.Value },
-							{ "ScheduledTime", scheduledTime.HasValue ? scheduledTime.Value : DBNull.Value },
+
+							// Timing
+							{ "ScheduledDate",   model.ScheduledDate.HasValue   ? model.ScheduledDate.Value   : DBNull.Value },
+							{ "ScheduledTime",   scheduledTime.HasValue         ? scheduledTime.Value         : DBNull.Value },
 							{ "DurationMinutes", model.DurationMinutes.HasValue ? model.DurationMinutes.Value : DBNull.Value },
-                            
-                            // Class type
-                            { "ClassType", (int)model.ClassType },
-                            
-                            // Status (Draft)
-                            { "Status", (int)ClassPreparationStatus.Draft },
-                            
-                            // Workflow tracking (all null for draft)
-                            { "SubmittedForApprovalDate", DBNull.Value },
-							{ "SubmittedBy", DBNull.Value },
-							{ "ApprovedBy", DBNull.Value },
-							{ "ApprovedDate", DBNull.Value },
-							{ "RejectedBy", DBNull.Value },
-							{ "RejectedDate", DBNull.Value },
-							{ "RejectionReason", DBNull.Value },
-                            
-                            // Metadata
-                            { "CreationDate", now },
+
+							// Class type
+							{ "ClassType", (int)model.ClassType },
+
+							// Status (Draft)
+							{ "Status", (int)ClassPreparationStatus.Draft },
+
+							// Workflow tracking (all null for draft)
+							{ "SubmittedForApprovalDate", DBNull.Value },
+							{ "SubmittedBy",              DBNull.Value },
+							{ "ApprovedBy",               DBNull.Value },
+							{ "ApprovedDate",             DBNull.Value },
+							{ "RejectedBy",               DBNull.Value },
+							{ "RejectedDate",             DBNull.Value },
+							{ "RejectionReason",          DBNull.Value },
+
+							// Media metadata JSON (nullable)
+							{ "MediaMetadataJson", mediaMetadataJson ?? (object)DBNull.Value },
+
+							// Metadata
+							{ "CreationDate", now },
 							{ "ModifiedDate", now },
-							{ "CreatedBy", userId },
-							{ "IsActive", true }
+							{ "CreatedBy",    userId },
+							{ "IsActive",     true }
 						};
 
 						await _classCommandRepo.Create(classDict);
 
-						_logger.Information("✅ Class preparation created - Id: {Id}", classId);
+						_logger.Information("Class preparation created - Id: {Id}", classId);
 
-
-
-						if (model.MediaFileIds.Any())
+						if (mediaFileIds.Any())
 						{
-							await _mediaService.LinkMediaToClass(
-								classId,
-								model.MediaFileIds,
-								userClaims);
+							await _mediaService.LinkMediaToClass(classId, mediaFileIds, userClaims);
 						}
 
-						// Return newly created class
 						return await GetClassPreparationById(classId, userClaims);
 					}
 				}

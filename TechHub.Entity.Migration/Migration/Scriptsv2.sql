@@ -149,7 +149,8 @@ CREATE TABLE LessonContent (
     ClassroomId  UNIQUEIDENTIFIER NOT NULL,
     SubjectId    UNIQUEIDENTIFIER NOT NULL,
     TopicId      UNIQUEIDENTIFIER NOT NULL,
-    SubTopic     NVARCHAR(200)    NOT NULL,
+    SubTopic     NVARCHAR(250),
+    SubTopicId   UNIQUEIDENTIFIER NOT NULL,
     Aim          NVARCHAR(500)    NOT NULL,
     Description  NVARCHAR(2000)   NOT NULL,
     Status       NVARCHAR(30)     NOT NULL DEFAULT 'PendingApproval',
@@ -184,6 +185,7 @@ CREATE TABLE LessonMedia (
     DisplayOrder     INT              NOT NULL DEFAULT 0,
     CreatedAt        DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
     IsActive         BIT              NOT NULL DEFAULT 1,
+    MetaData         NVARCHAR(500)    NULL,
 
     CONSTRAINT FK_LessonMedia_LessonContent FOREIGN KEY (LessonContentId) 
         REFERENCES LessonContent(Id) ON DELETE CASCADE
@@ -228,3 +230,48 @@ CREATE INDEX IX_ApprovalRequests_EntityId
     ------------------------------------------------------------------------
     ALTER TABLE LessonContent 
 ADD QuizId UNIQUEIDENTIFIER NULL;
+
+--------------------------------------------------
+
+BEGIN TRANSACTION;
+
+-- 1) Add new columns
+ALTER TABLE dbo.ClassPreparation
+ADD TopicId UNIQUEIDENTIFIER NULL,
+    SubTopicId UNIQUEIDENTIFIER NULL,
+    MediaMetadataJson NVARCHAR(MAX) NULL;
+
+-- 2) Optional: backfill TopicId/SubTopicId from old text columns if you have mapping tables
+-- UPDATE cp
+-- SET cp.TopicId = t.Id
+-- FROM dbo.ClassPreparation cp
+-- JOIN dbo.Topic t ON t.Name = cp.Topic;
+
+-- 3) Make TopicId required after backfill
+ALTER TABLE dbo.ClassPreparation
+ALTER COLUMN TopicId UNIQUEIDENTIFIER NOT NULL;
+
+-- 4) Drop old columns after code rollout is stable
+ALTER TABLE dbo.ClassPreparation
+DROP COLUMN Topic, SubTopic;
+
+COMMIT TRANSACTION;
+
+-------------------------------------------------------
+
+ALTER TABLE LessonMedia 
+Add MetaData NVARCHAR(3000);
+-------------------------------------
+CREATE TABLE [StudentClassroom ] (
+    Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+    CreationDate VARCHAR(19) NOT NULL,
+    ModifiedDate VARCHAR(19) NOT NULL,
+    StudentId UNIQUEIDENTIFIER NOT NULL,
+	ClassroomId UNIQUEIDENTIFIER NOT NULL,
+	SchoolId UNIQUEIDENTIFIER NOT NULL,
+    IsActive BIT NOT NULL,
+    CreatedBy UNIQUEIDENTIFIER NOT NULL
+
+	CONSTRAINT UC_StudentClassroom_UniqueActive 
+    UNIQUE (StudentId, ClassroomId, IsActive)
+);

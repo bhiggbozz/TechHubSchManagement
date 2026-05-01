@@ -599,7 +599,8 @@ namespace TechHub.Service.Service
 					}
 
 					// Validation 8: Check if user already exists
-					var existingUser = await CheckUserExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId);
+					var existingUser = userRole == UserRole.Student ? await CheckStudentExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId) :
+						await CheckUserExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId);
 					if (existingUser.Exists)
 					{
 						_logger.Warning(
@@ -625,7 +626,7 @@ namespace TechHub.Service.Service
 						LastName = userViewModel.LastName.Trim(),
 						UserName = userViewModel.UserName.Trim(),
 						EmailAddress = userViewModel.EmailAddress.Trim().ToLower(),
-						HashPassword = HashPassword(tempPassword),
+						HashPassword = userRole == UserRole.Student ? userViewModel.HashPassword : HashPassword(tempPassword),
 						RoleId = (int)userViewModel.Role,
 						SchoolId = schoolId,
 						CreatedBy = createdBy,
@@ -732,27 +733,30 @@ namespace TechHub.Service.Service
 
 					// ===== POST-COMMIT SECTION =====
 					// Only reached when commit succeeded
-
-					emailTemplate = await _emailService.GetRenderedTemplate(
+					if(userRole != UserRole.Student)
+					{
+						emailTemplate = await _emailService.GetRenderedTemplate(
 						(int)EmailTemplateKey.WelcomeUser, placeholders);
 
-					if (emailTemplate != null)
-					{
-						// Fire-and-forget — email failure must never affect the success response
-						_ = Task.Run(async () =>
-							await _emailService.SendAsync(
-								newUser.EmailAddress,
-								$"{newUser.FirstName} {newUser.LastName}",
-								"User Profiled",
-								emailTemplate));
+						if (emailTemplate != null)
+						{
+							// Fire-and-forget — email failure must never affect the success response
+							_ = Task.Run(async () =>
+								await _emailService.SendAsync(
+									newUser.EmailAddress,
+									$"{newUser.FirstName} {newUser.LastName}",
+									"User Profiled",
+									emailTemplate));
 
-						_logger.Information(
-							"User created successfully - UserId: {UserId}, Username: {Username}, Role: {Role}, CreatedBy: {CreatedBy}",
-							newUser.Id,
-							newUser.UserName,
-							userViewModel.Role.ToString(),
-							createdBy);
+							_logger.Information(
+								"User created successfully - UserId: {UserId}, Username: {Username}, Role: {Role}, CreatedBy: {CreatedBy}",
+								newUser.Id,
+								newUser.UserName,
+								userViewModel.Role.ToString(),
+								createdBy);
+						}
 					}
+					
 
 					return new BaseResponse
 					{
@@ -2692,6 +2696,31 @@ namespace TechHub.Service.Service
 				var parameters = new Dictionary<string, object>
 				{
 					{ "UserName", userName.Trim().ToLower() },
+					{ "SchoolId", schoolId }
+				};
+
+				var count = await _queryrepositoryUser.CountAsync(query, parameters);
+
+				if (count > 0)
+				{
+					return (true, "User with this username or email already exists in your school");
+				}
+
+				return (false, string.Empty);
+			}
+			catch
+			{
+				return (false, string.Empty);
+			}
+		}
+		private async Task<(bool Exists, string Message)> CheckStudentExists(string userName, string email, Guid schoolId)
+		{
+			try
+			{
+				var query = "SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName AND SchoolId = @SchoolId";
+				var parameters = new Dictionary<string, object>
+				{
+					{ "UserName", userName.Trim().ToLower() },
 					{ "Email", email.Trim().ToLower() },
 					{ "SchoolId", schoolId }
 				};
@@ -2710,7 +2739,6 @@ namespace TechHub.Service.Service
 				return (false, string.Empty);
 			}
 		}
-
 		/// <summary>
 		/// Create student-specific associations (classroom and minor subjects)
 		/// </summary>
