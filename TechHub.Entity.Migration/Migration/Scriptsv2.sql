@@ -275,3 +275,19 @@ CREATE TABLE [StudentClassroom ] (
 	CONSTRAINT UC_StudentClassroom_UniqueActive 
     UNIQUE (StudentId, ClassroomId, IsActive)
 );
+----------------------------------
+
+
+CREATE TABLE [StudentMinorSubject ] (
+    Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+    CreationDate VARCHAR(19) NOT NULL,
+    ModifiedDate VARCHAR(19) NOT NULL,
+    StudentId UNIQUEIDENTIFIER NOT NULL,
+	SubjectId UNIQUEIDENTIFIER NOT NULL,
+	SchoolId UNIQUEIDENTIFIER NOT NULL,
+    IsActive BIT NOT NULL,
+    CreatedBy UNIQUEIDENTIFIER NOT NULL
+
+	--CONSTRAINT UC_TeacherSubject_UniqueActive 
+    UNIQUE (StudentId, SubjectId, IsActive)
+);
