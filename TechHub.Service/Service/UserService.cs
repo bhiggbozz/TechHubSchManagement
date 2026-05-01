@@ -187,7 +187,7 @@ namespace TechHub.Service.Service
 				var loginUserInput = new Dictionary<string, object>
 				{
 					{ "UserName",   loginViewModel.Username },
-					{ "SchoolCode", loginViewModel.Inst }
+					{ "SchoolId", tenant.SchoolId }
 				};
 
 				var user = await _queryrepositoryUser.GetBy(loginUserInput);
