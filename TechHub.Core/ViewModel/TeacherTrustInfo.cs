@@ -97,8 +97,10 @@ public class ClassPreparationDto
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 	public string Title { get; set; }
-	public string Topic { get; set; }
+	public Guid TopicId { get; set; }
 	public string SubTopic { get; set; }
+	public Guid? SubTopicId { get; set; }
+
 	public string AimAndObjectives { get; set; }
 
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

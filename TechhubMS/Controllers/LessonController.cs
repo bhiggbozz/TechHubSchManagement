@@ -43,6 +43,17 @@ public class LessonController : ControllerBase
 			? Ok(result) : BadRequest(result);
 	}
 
+	[HttpPost("draft")]
+	//[Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+	public async Task<IActionResult> SaveDraft([FromBody] SubmitLessonViewModel model)
+	{
+		model.IsDraft = true;   
+		model.BypassApproval = false;
+		var claims = GetClaims();
+		var result = await _lessonService.SubmitLesson(model, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
 	[HttpGet("classroom/{classroomId}")]
 	public async Task<IActionResult> GetLessonsByClassroom(Guid classroomId)
 	{
@@ -79,6 +90,19 @@ public class LessonController : ControllerBase
 		return Ok(result);
 	}
 
+	[HttpGet("my-lessons")]
+	[Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+	[ProducesResponseType(typeof(BaseResponse), 200)]
+	public async Task<IActionResult> GetMyLessons(
+	[FromQuery] string? status = null,
+	[FromQuery] int pageNumber = 1,
+	[FromQuery] int pageSize = 50)
+	{
+		var claims = GetClaims();
+		var result = await _lessonService.GetLessonsByTeacher(
+			claims, status, pageNumber, pageSize);
+		return Ok(result);
+	}
 	private AuthenticatedUserClaims GetClaims() => new AuthenticatedUserClaims
 	{
 		UserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value,

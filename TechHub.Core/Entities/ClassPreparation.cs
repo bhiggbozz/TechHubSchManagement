@@ -18,8 +18,10 @@ public class ClassPreparation
 	public Guid SchoolId { get; set; }
 
 	public string Title { get; set; } = string.Empty;
-	public string Topic { get; set; } = string.Empty;
-	public string? SubTopic { get; set; }
+
+	public Guid TopicId { get; set; }
+	public Guid? SubTopicId { get; set; }
+
 	public string AimAndObjectives { get; set; } = string.Empty;
 
 	public DateTime? ScheduledDate { get; set; }
@@ -37,9 +39,13 @@ public class ClassPreparation
 	public DateTime? RejectedDate { get; set; }
 	public string? RejectionReason { get; set; }
 
+	/// <summary>
+	/// Nullable JSON string for media metadata
+	/// </summary>
+	public string? MediaMetadataJson { get; set; }
+
 	public string CreationDate { get; set; } = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 	public string ModifiedDate { get; set; } = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 	public Guid CreatedBy { get; set; }
 	public bool IsActive { get; set; }
 }
-

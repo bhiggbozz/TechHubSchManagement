@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using TechHub.Core.Enum;
 
@@ -11,6 +12,8 @@ namespace TechHub.Core.ViewModel.classroom;
 /// <summary>
 /// Save class preparation as draft (can be saved multiple times before submission)
 /// </summary>
+
+
 public class SaveClassPreparationViewModel
 {
 	/// <summary>
@@ -25,11 +28,9 @@ public class SaveClassPreparationViewModel
 	public Guid ClassroomId { get; set; }
 
 	[Required(ErrorMessage = "Topic is required")]
-	[MaxLength(200, ErrorMessage = "Topic cannot exceed 200 characters")]
-	public string Topic { get; set; } = string.Empty;
+	public Guid TopicId { get; set; }
 
-	[MaxLength(200, ErrorMessage = "Sub-topic cannot exceed 200 characters")]
-	public string? SubTopic { get; set; }
+	public Guid? SubTopicId { get; set; }
 
 	[Required(ErrorMessage = "Aim and objectives are required")]
 	public string AimAndObjectives { get; set; } = string.Empty;
@@ -48,9 +49,10 @@ public class SaveClassPreparationViewModel
 	public ClassType ClassType { get; set; }
 
 	/// <summary>
-	/// Media file IDs (already uploaded via UploadMedia endpoint)
+	/// Optional media metadata JSON payload (nullable).
+	/// Example: [{ "mediaFileId":"...", "name":"intro.pdf", "size":12345 }]
 	/// </summary>
-	public List<Guid> MediaFileIds { get; set; } = new();
+	public JsonElement? MediaMetadata { get; set; }
 }
 
 /// <summary>

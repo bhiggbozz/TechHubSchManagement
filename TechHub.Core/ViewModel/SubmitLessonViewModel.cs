@@ -21,6 +21,9 @@ public class SubmitLessonViewModel
 	public Guid TopicId { get; set; }
 
 	[Required]
+	public Guid SubTopicId { get; set; }
+
+	[Required]
 	[StringLength(200)]
 	public string SubTopic { get; set; }
 
@@ -31,6 +34,7 @@ public class SubmitLessonViewModel
 	[Required]
 	[StringLength(2000)]
 	public string Description { get; set; }
+	public bool IsDraft { get; set; }
 
 	// ✅ Frontend uploads to Cloudinary first, sends back URLs
 	//[Required]
@@ -40,6 +44,8 @@ public class SubmitLessonViewModel
 	// ✅ Bypass flag for approval replay
 	[JsonIgnore]
 	public bool BypassApproval { get; set; } = false;
+
+	public Guid? QuizId { get; set; }
 }
 
 public class LessonMediaViewModel
@@ -62,6 +68,7 @@ public class LessonMediaViewModel
 	public long FileSizeBytes { get; set; }
 	public int? Duration { get; set; }  // seconds — frontend can detect
 	public int DisplayOrder { get; set; }
+	public string MetaData { get; set; } = string.Empty;
 }
 
 public class CloudinarySignatureResponse

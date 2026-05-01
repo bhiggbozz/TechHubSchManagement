@@ -50,8 +50,7 @@ public class LessonService : ILessonService
 				return BadRequest("Invalid role in token");
 
 			// Only teachers can submit lessons
-			if (userRole != UserRole.SubjectTeacher &&
-				userRole != UserRole.HeadTeacher)
+			if (userRole != UserRole.SubjectTeacher && userRole != UserRole.HeadTeacher)
 			{
 				_logger.Warning(
 					"Unauthorized lesson submission - UserId: {UserId}, Role: {Role}",
@@ -69,20 +68,44 @@ public class LessonService : ILessonService
 			if (classroom is null || classroom.SchoolId != schoolId)
 				return NotFound("Classroom not found");
 
-			// Validate media files
-			if (!model.MediaFiles.Any())
-				return BadRequest("At least one media file is required");
+			//if (model.QuizId.HasValue)
+			//{
+			//	var quiz = await _quizQuery.Get(model.QuizId.Value);
+			//	if (quiz is null)
+			//		return BadRequest("Quiz not found in question bank");
 
-			foreach (var file in model.MediaFiles)
+			//	if (quiz.SchoolId != schoolId)
+			//		return Forbidden("Quiz does not belong to your school");
+			//}
+
+			// Validate media files
+			//if (!model.MediaFiles.Any())
+			//	return BadRequest("At least one media file is required");
+			if (!model.IsDraft)
 			{
-				if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) ||
-					string.IsNullOrWhiteSpace(file.PublicId))
+				if (!model.MediaFiles.Any())
+					return BadRequest("At least one media file is required");
+
+				foreach (var file in model.MediaFiles)
 				{
-					return BadRequest(
-						$"Invalid media file data for {file.OriginalFileName}");
+					if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) ||
+						string.IsNullOrWhiteSpace(file.PublicId))
+						return BadRequest(
+							$"Invalid media file data for {file.OriginalFileName}");
+				}
+			}
+			else
+			{
+				foreach (var file in model.MediaFiles)
+				{
+					if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) ||
+						string.IsNullOrWhiteSpace(file.PublicId))
+						return BadRequest(
+							$"Invalid media file data for {file.OriginalFileName}");
 				}
 			}
 
+			
 			var now = DateTime.UtcNow;
 			var lessonId = Guid.NewGuid();
 
@@ -94,7 +117,8 @@ public class LessonService : ILessonService
 				{ "ClassroomId", model.ClassroomId },
 				{ "SubjectId",   model.SubjectId },
 				{ "TopicId",     model.TopicId },
-				{ "SubTopic",    model.SubTopic.Trim() },
+				{ "SubTopicId",     model.SubTopicId },
+				{ "SubTopic",     string.Empty },
 				{ "Aim",         model.Aim.Trim() },
 				{ "Description", model.Description.Trim() },
 				{ "Status",      LessonStatus.PendingApproval },
@@ -104,7 +128,8 @@ public class LessonService : ILessonService
 				{ "RejectionReason", DBNull.Value },
 				{ "CreatedAt",   now },
 				{ "ModifiedAt",  now },
-				{ "ApprovedAt",  DBNull.Value }
+				{ "ApprovedAt",  DBNull.Value },
+				{ "QuizId",  model.QuizId.HasValue ? (object)model.QuizId.Value : DBNull.Value }
 			};
 
 			// ===== BUILD MEDIA DICTS =====
@@ -129,10 +154,11 @@ public class LessonService : ILessonService
 											  ? file.DisplayOrder
 											  : index + 1 },
 					{ "CreatedAt",        now },
-					{ "IsActive",         true }
+					{ "IsActive",         true },
+					{ "MetaData",         file.MetaData },
+
 				}).ToList();
 
-			// ===== SAVE TO DB + FIRE APPROVAL SIMULTANEOUSLY =====
 
 			Guid approvalId;
 
@@ -140,21 +166,19 @@ public class LessonService : ILessonService
 			try
 			{
 				// 1. Save lesson
-				await _lessonCommand.Create(
-					scope.Transaction, scope.Connection, lessonDict);
+				await _lessonCommand.Create(scope.Transaction, scope.Connection, lessonDict);
 
 				// 2. Save all media files
-				await _mediaCommand.CreateBatchAsync(
-					scope.Transaction, scope.Connection, mediaDicts);
+				await _mediaCommand.CreateBatchAsync(scope.Transaction, scope.Connection, mediaDicts);
 
 				// 3. Create approval request in same transaction
 				approvalId = Guid.NewGuid();
 				var approverId = teacher.LineManager;
 
-				if (!model.BypassApproval && approverId.HasValue)
+				if (!model.IsDraft && !model.BypassApproval && approverId.HasValue)
 				{
 					var expiryDays = int.Parse(
-						_configuration["Approvals:ExpiryDays"] ?? "3");
+						_configuration["Approvals:ExpiryDays"] ?? "5");
 
 					var approvalDict = new Dictionary<string, object>
 					{
@@ -173,6 +197,40 @@ public class LessonService : ILessonService
 						{ "RespondedAt",   DBNull.Value },
 						{ "ExpiresAt",     now.AddDays(expiryDays) }
 					};
+				
+
+					//if (!model.IsDraft && !model.BypassApproval)
+					//{
+					//	var approverId = teacher.LineManager;
+
+					//	if (approverId.HasValue)
+					//	{
+					//		approvalId = Guid.NewGuid();
+					//		var expiryDays = int.Parse(
+					//			_configuration["Approvals:ExpiryDays"] ?? "3");
+
+					//		var approvalDict = new Dictionary<string, object>
+					//		{
+					//			{ "Id",              approvalId },
+					//			{ "SchoolId",        schoolId },
+					//			{ "RequestedBy",     teacherId },
+					//			{ "ApproverId",      approverId.Value },
+					//			{ "OperationType",   OperationType.SubmitLesson },
+					//			{ "EntityType",      "LessonContent" },
+					//			{ "EntityId",        lessonId },
+					//			{ "Payload",         System.Text.Json.JsonSerializer
+					//									 .Serialize(model) },
+					//			{ "Status",          ApprovalStatus.Pending },
+					//			{ "RejectionReason", DBNull.Value },
+					//			{ "CreatedAt",       now },
+					//			{ "RespondedAt",     DBNull.Value },
+					//			{ "ExpiresAt",       now.AddDays(expiryDays) }
+					//		};
+
+					//		await _approvalCommand.Create(
+					//			scope.Transaction, scope.Connection, approvalDict);
+						
+					//}
 
 					await _approvalCommand.Create(
 						scope.Transaction, scope.Connection, approvalDict);
@@ -362,9 +420,7 @@ public class LessonService : ILessonService
 		}
 	}
 
-	public async Task<BaseResponse> RespondToLesson(
-		Guid lessonId, bool approved,
-		string rejectionReason, AuthenticatedUserClaims claims)
+	public async Task<BaseResponse> RespondToLesson(Guid lessonId, bool approved,string rejectionReason, AuthenticatedUserClaims claims)
 	{
 		try
 		{
@@ -521,6 +577,104 @@ public class LessonService : ILessonService
 		catch (Exception ex)
 		{
 			_logger.Error(ex, "Error fetching pending lessons");
+			return ServerError();
+		}
+	}
+
+	// ── Service method ───────────────────────────────────────────────────────────
+	public async Task<BaseResponse> GetLessonsByTeacher(AuthenticatedUserClaims claims,string? status = null,int pageNumber = 1,int pageSize = 50)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.UserId, out var teacherId))
+				return Unauthorized();
+
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			if (pageNumber < 1) pageNumber = 1;
+			if (pageSize < 1 || pageSize > 100) pageSize = 50;
+
+			// Validate status if provided
+			var validStatuses = new[]
+			{
+			//LessonStatus.Draft,
+				LessonStatus.PendingApproval,
+				LessonStatus.Approved,
+				LessonStatus.Rejected,
+				LessonStatus.Published
+			};
+
+			if (!string.IsNullOrWhiteSpace(status) &&
+				!validStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
+			{
+				return BadRequest($"Invalid status. Valid values: {string.Join(", ", validStatuses)}");
+			}
+
+			// Single query — get everything then count in memory
+			// Avoids multiple DB round trips
+			var allQuery = $@"
+					SELECT * FROM LessonContent
+					WHERE  CreatedBy = '{teacherId}'
+					AND    SchoolId  = '{schoolId}'
+					ORDER  BY CreatedAt DESC";
+
+			var allLessons = await _lessonQuery.GetByQuery(allQuery);
+			var allList = allLessons.Where(l => l != null).ToList();
+
+			var summary = new
+			{
+				Total = allList.Count,
+				//Draft = allList.Count(l => l.Status == LessonStatus.Draft),
+				PendingApproval = allList.Count(l => l.Status == LessonStatus.PendingApproval),
+				Approved = allList.Count(l => l.Status == LessonStatus.Approved),
+				Rejected = allList.Count(l => l.Status == LessonStatus.Rejected),
+				Published = allList.Count(l => l.Status == LessonStatus.Published)
+			};
+
+			var filtered = string.IsNullOrWhiteSpace(status) ? allList : allList
+					.Where(l => l.Status.Equals(status, StringComparison.OrdinalIgnoreCase)).ToList();
+
+			// ── Pagination ───────────────────────────────────────────────────────
+			var totalCount = filtered.Count;
+			var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+
+			var paginated = filtered
+				.Skip((pageNumber - 1) * pageSize)
+				.Take(pageSize)
+				.ToList();
+
+			_logger.Information(
+				"Lessons fetched - TeacherId: {TeacherId}, Total: {Total}, " + "Filter: {Status}, Page: {Page}/{TotalPages}",
+				teacherId, totalCount,
+				status ?? "All",
+				pageNumber, totalPages);
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = paginated.Any()
+					? $"{totalCount} lesson(s) found"
+					: "No lessons found",
+				Status = "successful",
+				Data = new
+				{
+					Summary = summary,
+					Lessons = paginated,
+					TotalCount = totalCount,
+					PageNumber = pageNumber,
+					PageSize = pageSize,
+					TotalPages = totalPages,
+					HasPreviousPage = pageNumber > 1,
+					HasNextPage = pageNumber < totalPages,
+					FilteredBy = status ?? "All"
+				}
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex,"Error fetching lessons - TeacherId: {TeacherId}",
+				claims?.UserId);
 			return ServerError();
 		}
 	}
