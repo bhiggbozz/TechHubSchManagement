@@ -599,7 +599,7 @@ namespace TechHub.Service.Service
 					}
 
 					// Validation 8: Check if user already exists
-					var existingUser = userRole == UserRole.Student ? await CheckStudentExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId) :
+					var existingUser = userViewModel.Role == (int)UserRole.Student ? await CheckStudentExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId) :
 						await CheckUserExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId);
 					if (existingUser.Exists)
 					{
@@ -626,7 +626,7 @@ namespace TechHub.Service.Service
 						LastName = userViewModel.LastName.Trim(),
 						UserName = userViewModel.UserName.Trim(),
 						EmailAddress = userViewModel.EmailAddress.Trim().ToLower(),
-						HashPassword = userRole == UserRole.Student ? userViewModel.HashPassword : HashPassword(tempPassword),
+						HashPassword = userViewModel.Role == (int)UserRole.Student ? userViewModel.HashPassword : HashPassword(tempPassword),
 						RoleId = (int)userViewModel.Role,
 						SchoolId = schoolId,
 						CreatedBy = createdBy,
@@ -733,7 +733,7 @@ namespace TechHub.Service.Service
 
 					// ===== POST-COMMIT SECTION =====
 					// Only reached when commit succeeded
-					if(userRole != UserRole.Student)
+					if(userViewModel.Role != (int)UserRole.Student)
 					{
 						emailTemplate = await _emailService.GetRenderedTemplate(
 						(int)EmailTemplateKey.WelcomeUser, placeholders);
