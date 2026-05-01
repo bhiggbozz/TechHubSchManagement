@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TechHub.Core;
+using TechHub.Core.Entities;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.Users;
@@ -78,12 +79,23 @@ namespace TechhubMS.Controllers
 
 		[HttpPost("updatePassword")]
 		[Authorize]
-		public async Task<ActionResult<BaseResponse>> UpdatePassword(UpdatePasswordViewModel updatePasswordViewModel)
+		public async Task<ActionResult<BaseResponse>> UpdatePasswordForNewUser(UpdatePasswordViewModel updatePasswordViewModel)
 		{
 			var schoolIdClaim = User.GetAuthenticatedUserClaims();
 
 			var result = await _userService.updatePassword(updatePasswordViewModel, schoolIdClaim);
 			return Ok(result);
+		}
+
+		[HttpPost("update-password/newUser")]
+		[Authorize]
+		public async Task<IActionResult> UpdatePasswordForO([FromBody] UpdatePasswordViewModelV2 model)
+		{
+			//var claims = User.GetAuthenticatedUserClaims();
+			var tenant = await _tenantService.GetTenantBySchoolIdAsync(model.SchoolId);
+
+			var result = await _userService.UpdatePasswordFirstTime(model, tenant);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
 
 		// Controllers/UsersController.cs
