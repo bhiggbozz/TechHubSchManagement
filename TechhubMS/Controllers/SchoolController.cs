@@ -237,7 +237,28 @@ namespace TechhubMS.Controllers
 			return Ok(result);
 		}
 
-		
+		[HttpGet("classroom/{classroomId:guid}/curriculum")]
+		[Authorize]
+		[ProducesResponseType(typeof(BaseResponse), 200)]
+		public async Task<IActionResult> GetClassroomCurriculum(Guid classroomId)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.GetClassroomCurriculum(classroomId, userClaims);
+			return Ok(result);
+		}
+
+		// ── Get topics and subtopics for a subject ───────────────────────────────────
+		[HttpGet("subjects/{subjectId:guid}/curriculum")]
+		[Authorize]
+		[ProducesResponseType(typeof(BaseResponse), 200)]
+		public async Task<IActionResult> GetSubjectCurriculum(Guid subjectId)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.GetSubjectCurriculum(subjectId, userClaims);
+			return Ok(result);
+		}
+
+
 	}
 
 }
