@@ -3469,6 +3469,280 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public async Task<BaseResponse> GetSubjectCurriculum(Guid subjectId,AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+				}
+
+				// Validate subject exists and belongs to school.
+				var subject = await _queryrepositorySubject.Get(subjectId, DatabaseTarget.Core);
+				if (subject is null || !subject.IsActive || subject.SchoolId != schoolId)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Subject not found",
+						Status = "failed"
+					};
+				}
+
+				// 1) Get all topics in one query.
+				var topicsQuery = $@"
+					SELECT Id, Name, SubjectId, IsActive
+					FROM   Topic
+					WHERE  SubjectId = '{subjectId}'
+					  AND  SchoolId  = '{schoolId}'
+					  AND  IsDeleted = 0
+					  AND  IsActive  = 1
+					ORDER BY Name ASC";
+
+				var topics = await _topicQueryRepository.GetByQuery(topicsQuery, DatabaseTarget.Core);
+				var topicList = topics?.Where(t => t != null).ToList() ?? new List<Topic>();
+
+				// 2) Get all subtopics for all topics in one query (no query in loop).
+				var subTopicList = new List<SubTopic>();
+
+				if (topicList.Any())
+				{
+					var topicIds = topicList.Select(t => t.Id).Distinct().ToList();
+					var topicIdsCsv = string.Join(",", topicIds.Select(id => $"'{id}'"));
+
+					var subTopicsQuery = $@"
+						SELECT Id, TopicId, Name, IsActive
+						FROM   SubTopic
+						WHERE  TopicId IN ({topicIdsCsv})
+						  AND  SchoolId  = '{schoolId}'
+						  AND  IsDeleted = 0
+						  AND  IsActive  = 1
+						ORDER BY Name ASC";
+
+					var subTopics = await _subTopicQueryRepository.GetByQuery(subTopicsQuery, DatabaseTarget.Core);
+					subTopicList = subTopics?.Where(st => st != null).ToList() ?? new List<SubTopic>();
+				}
+
+				// 3) Group subtopics by topic for fast in-memory composition.
+				var subTopicsByTopicId = subTopicList.GroupBy(st => st.TopicId).ToDictionary(g => g.Key, g => g.ToList());
+
+				var topicsWithSubTopics = topicList.Select(topic =>
+				{
+					var topicSubTopics = subTopicsByTopicId.TryGetValue(topic.Id, out var stList) ? stList : new List<SubTopic>();
+
+					return new
+					{
+						topic.Id,
+						topic.Name,
+						topic.SubjectId,
+						SubTopics = topicSubTopics.Select(st => new
+						{
+							st.Id,
+							st.Name,
+							st.TopicId,
+							st.IsActive
+						}).ToList()
+					};
+				}).ToList<object>();
+
+				_logger.Information(
+					"Subject curriculum fetched - SubjectId: {SubjectId}, TopicCount: {Count}",
+					subjectId, topicsWithSubTopics.Count);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Subject curriculum retrieved successfully",
+					Status = "successful",
+					Data = new
+					{
+						SubjectId = subject.Id,
+						SubjectName = subject.Subject,
+						Category = subject.Category.ToString(),
+						ClassCategory = subject.ClassCategory.ToString(),
+						Topics = topicsWithSubTopics
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error fetching subject curriculum - SubjectId: {SubjectId}",
+					subjectId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving subject curriculum",
+					Status = "failed"
+				};
+			}
+		}
+
+
+		public async Task<BaseResponse> GetClassroomCurriculum(Guid classroomId, AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+				}
+
+				// 1) Get all subjects assigned to this classroom.
+				var subjectsQuery = $@"
+					SELECT s.Id, s.Subject, s.Category, s.ClassCategory, s.IsActive
+					FROM   Subjects s
+					JOIN   ClassroomSubject cs ON cs.SubjectId = s.Id
+					WHERE  cs.ClassroomId = '{classroomId}'
+					  AND  cs.SchoolId    = '{schoolId}'
+					  AND  cs.IsActive    = 1
+					  AND  s.IsActive     = 1
+					ORDER BY s.Subject ASC";
+
+				var subjects = await _queryrepositorySubject.GetByQuery(subjectsQuery);
+				var subjectList = subjects?.Where(s => s != null).ToList() ?? new List<Subjects>();
+
+				if (!subjectList.Any())
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "No subjects found for this classroom",
+						Status = "successful",
+						Data = new
+						{
+							ClassroomId = classroomId,
+							Subjects = new List<object>()
+						}
+					};
+				}
+
+				// 2) Get all topics for all fetched subjects in one query.
+				var subjectIds = subjectList.Select(s => s.Id).Distinct().ToList();
+				var subjectIdsCsv = string.Join(",", subjectIds.Select(id => $"'{id}'"));
+
+				var topicsQuery = $@"
+					SELECT Id, Name, SubjectId, IsActive
+					FROM   Topic
+					WHERE  SubjectId IN ({subjectIdsCsv})
+					  AND  SchoolId   = '{schoolId}'
+					  AND  IsDeleted  = 0
+					  AND  IsActive   = 1
+					ORDER BY Name ASC";
+
+				var topics = await _topicQueryRepository.GetByQuery(topicsQuery, DatabaseTarget.Core);
+				var topicList = topics?.Where(t => t != null).ToList() ?? new List<Topic>();
+
+				// 3) Get all subtopics for all fetched topics in one query.
+				var subTopicList = new List<SubTopic>();
+
+				if (topicList.Any())
+				{
+					var topicIds = topicList.Select(t => t.Id).Distinct().ToList();
+					var topicIdsCsv = string.Join(",", topicIds.Select(id => $"'{id}'"));
+
+					var subTopicsQuery = $@"
+						SELECT Id, TopicId, Name, IsActive
+						FROM   SubTopic
+						WHERE  TopicId IN ({topicIdsCsv})
+						  AND  SchoolId  = '{schoolId}'
+						  AND  IsDeleted = 0
+						  AND  IsActive  = 1
+						ORDER BY Name ASC";
+
+					var subTopics = await _subTopicQueryRepository.GetByQuery(subTopicsQuery, DatabaseTarget.Core);
+					subTopicList = subTopics?.Where(st => st != null).ToList() ?? new List<SubTopic>();
+				}
+
+				// 4) Build lookup maps (no DB calls in loops).
+				var topicsBySubjectId = topicList
+					.GroupBy(t => t.SubjectId)
+					.ToDictionary(g => g.Key, g => g.ToList());
+
+				var subTopicsByTopicId = subTopicList
+					.GroupBy(st => st.TopicId)
+					.ToDictionary(g => g.Key, g => g.ToList());
+
+				// 5) Compose response hierarchy in memory.
+				var curriculum = subjectList.Select(subject =>
+				{
+					var subjectTopics = topicsBySubjectId.TryGetValue(subject.Id, out var tList)
+						? tList
+						: new List<Topic>();
+
+					var topicsWithSubTopics = subjectTopics.Select(topic =>
+					{
+						var topicSubTopics = subTopicsByTopicId.TryGetValue(topic.Id, out var stList)
+							? stList
+							: new List<SubTopic>();
+
+						return new
+						{
+							topic.Id,
+							topic.Name,
+							topic.SubjectId,
+							SubTopics = topicSubTopics.Select(st => new
+							{
+								st.Id,
+								st.Name,
+								st.TopicId,
+								st.IsActive
+							}).ToList()
+						};
+					}).ToList();
+
+					return new
+					{
+						Id = subject.Id,
+						Name = subject.Subject,
+						Category = (int)subject.Category,
+						CategoryName = subject.Category.ToString(),
+						ClassCategory = (int)subject.ClassCategory,
+						IsActive = subject.IsActive,
+						Topics = topicsWithSubTopics
+					};
+				}).ToList<object>();
+
+				_logger.Information(
+					"Curriculum fetched - ClassroomId: {ClassroomId}, SubjectCount: {Count}",
+					classroomId, curriculum.Count);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Curriculum retrieved successfully",
+					Status = "successful",
+					Data = new
+					{
+						ClassroomId = classroomId,
+						Subjects = curriculum
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching classroom curriculum - ClassroomId: {ClassroomId}", classroomId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving curriculum",
+					Status = "failed"
+				};
+			}
+		}
 
 		private async Task<ClassroomTeacher?> GetClassroomTeacherAssignment(Guid classroomId, Guid teacherId)
 		{
