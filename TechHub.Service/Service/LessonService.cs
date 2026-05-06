@@ -28,8 +28,37 @@ public class LessonService : ILessonService
 	private readonly ICommandRespository<ApprovalRequests> _approvalCommand;
 	private readonly IDbTransactionScopeFactory _scopeFactory;
 	private readonly IEmailService _emailService;
-	private readonly IConfiguration _configuration;
+	private readonly IConfiguration _configuration;	
 	private readonly ILogger _logger;
+
+
+	public LessonService(
+	ICommandRespository<LessonContent> lessonCommand,
+	ICommandRespository<LessonMedia> mediaCommand,
+	IQueryRepository<LessonContent> lessonQuery,
+	IQueryRepository<LessonMedia> mediaQuery,
+	IQueryRepository<Users> userQuery,
+	IQueryRepository<Classroom> classroomQuery,
+	IQueryRepository<ApprovalRequests> approvalQuery,
+	ICommandRespository<ApprovalRequests> approvalCommand,
+	IDbTransactionScopeFactory scopeFactory,
+	IEmailService emailService,
+	IConfiguration configuration,
+	ILogger logger)
+	{
+		_lessonCommand = lessonCommand;
+		_mediaCommand = mediaCommand;
+		_lessonQuery = lessonQuery;
+		_mediaQuery = mediaQuery;
+		_userQuery = userQuery;
+		_classroomQuery = classroomQuery;
+		_approvalQuery = approvalQuery;
+		_approvalCommand = approvalCommand;
+		_scopeFactory = scopeFactory;
+		_emailService = emailService;
+		_configuration = configuration;
+		_logger = logger;
+	}
 
 	// ── Submit lesson — saves to DB + fires approval simultaneously ──────────
 	public async Task<BaseResponse> SubmitLesson(SubmitLessonViewModel model, AuthenticatedUserClaims claims)
@@ -50,13 +79,13 @@ public class LessonService : ILessonService
 				return BadRequest("Invalid role in token");
 
 			// Only teachers can submit lessons
-			if (userRole != UserRole.SubjectTeacher && userRole != UserRole.HeadTeacher)
-			{
-				_logger.Warning(
-					"Unauthorized lesson submission - UserId: {UserId}, Role: {Role}",
-					teacherId, userRole);
-				return Forbidden("Only teachers can submit lessons");
-			}
+			//if (userRole != UserRole.SubjectTeacher && userRole != UserRole.HeadTeacher)
+			//{
+			//	_logger.Warning(
+			//		"Unauthorized lesson submission - UserId: {UserId}, Role: {Role}",
+			//		teacherId, userRole);
+			//	return Forbidden("Only teachers can submit lessons");
+			//}
 
 			// Validate teacher exists and is active
 			var teacher = await _userQuery.Get(teacherId);
@@ -148,7 +177,7 @@ public class LessonService : ILessonService
 					{ "PublicId",         file.PublicId },
 					{ "Duration",         file.Duration.HasValue
 											  ? (object)file.Duration.Value
-											  : DBNull.Value },
+											  : null },
 					{ "Status",           "Ready" },
 					{ "DisplayOrder",     file.DisplayOrder > 0
 											  ? file.DisplayOrder
@@ -165,20 +194,16 @@ public class LessonService : ILessonService
 			using var scope = _scopeFactory.Create("DbConnectionString");
 			try
 			{
-				// 1. Save lesson
 				await _lessonCommand.Create(scope.Transaction, scope.Connection, lessonDict);
 
-				// 2. Save all media files
 				await _mediaCommand.CreateBatchAsync(scope.Transaction, scope.Connection, mediaDicts);
 
-				// 3. Create approval request in same transaction
 				approvalId = Guid.NewGuid();
 				var approverId = teacher.LineManager;
 
 				if (!model.IsDraft && !model.BypassApproval && approverId.HasValue)
 				{
-					var expiryDays = int.Parse(
-						_configuration["Approvals:ExpiryDays"] ?? "5");
+					var expiryDays = int.Parse(_configuration["Approvals:ExpiryDays"] ?? "5");
 
 					var approvalDict = new Dictionary<string, object>
 					{

@@ -291,3 +291,7 @@ CREATE TABLE [StudentMinorSubject ] (
 	--CONSTRAINT UC_TeacherSubject_UniqueActive 
     UNIQUE (StudentId, SubjectId, IsActive)
 );
+---------------------------------------------------
+ALTER TABLE Questions
+ADD ImageUrl      NVARCHAR(1000) NULL,
+    ImagePublicId NVARCHAR(500)  NULL;

@@ -18,7 +18,7 @@ public class CreateQuestionViewModel
 	public Guid SubjectId { get; set; }
 	public Guid? TopicId { get; set; }
 	public string Topic { get; set; }
-	public string SubTopic { get; set; }
+	public Guid SubTopic { get; set; } 
 
 	public string Title { get; set; }
 	public string TextContent { get; set; }
@@ -34,6 +34,8 @@ public class CreateQuestionViewModel
 	public bool IsScanned { get; set; }
 	public int? ExtractedQuestionIndex { get; set; }
 	public string? AIConfidenceScore { get; set; }
+	public string? ImageUrl { get; set; }
+	public string? ImagePublicId { get; set; }
 
 
 }
@@ -86,10 +88,9 @@ public class UpdateQuestionViewModel
 	// Mismatch = conflict detected before any overwrite
 
 	public string EditedAtDevice { get; set; }
-	// Timestamp of when teacher made the edit on device
-	// Helps with conflict resolution display
-	// "You edited this at 10:32am on your phone"
-	
+	public string? ImageUrl { get; set; }
+	public string? ImagePublicId { get; set; }
+
 }
 
 

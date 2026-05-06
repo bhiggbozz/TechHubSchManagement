@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using Azure;
+using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
@@ -21,6 +22,7 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using TechHub.Core;
 using TechHub.Core.Constant;
+using TechHub.Core.DTO;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Helper;
@@ -64,6 +66,7 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<StudentCourses> _studentCoursesQueryRespository;
 		private readonly IQueryRepository<AdminPermissions> _adminPermissionsQueryRespository;
 		private readonly IQueryRepository<RefreshTokens> _queryRepoRefreshToken;
+		private readonly IQueryRepository<ApprovalRequests> _queryApprovalRequests;
 
 
 
@@ -82,7 +85,7 @@ namespace TechHub.Service.Service
 			ICommandRespository<Classroom> classroomCommandRespository, IQueryRepository<Classroom> classroomQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration, ICommandRespository<StudentClassroom> commandRepositoryStudentClassroom, ICommandRespository<TeacherClassroom> commandRepositoryTeacherClassroom,
 			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, IQueryRepository<TenantInfo> tenantQueryRespository,
-			ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, ICommandRespository<RefreshTokens> commandRepoRefreshToken,
+			ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, ICommandRespository<RefreshTokens> commandRepoRefreshToken, IQueryRepository<ApprovalRequests> queryApprovalRequests,
 			ICommandRespository<AdminPermissions> adminPermissionsCommandRepository, IQueryRepository<RefreshTokens> queryRepoRefreshToken,ITenantService tenantService,
 			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator)
 		{
@@ -106,6 +109,7 @@ namespace TechHub.Service.Service
 			_adminPermissionsQueryRespository = adminPermissionsQueryRespository;
 			_commandRepoRefreshToken = commandRepoRefreshToken;
 			_queryRepoRefreshToken = queryRepoRefreshToken;
+			_queryApprovalRequests = queryApprovalRequests;
 
 			_emailService = emailService;
 			_logger = logger;
@@ -114,7 +118,7 @@ namespace TechHub.Service.Service
 			_jwtTokenGenerator = jwtTokenGenerator;
 
 			_mapper = mapper;
-			_connString = _configuration.GetConnectionString("DbConnectionString") ?? throw new ArgumentNullException("Db COnfig is null");
+			_connString = _configuration.GetConnectionString("DbConnectionString") ?? throw new ArgumentNullException("Db Config is null");
 
 		}
 
@@ -392,6 +396,8 @@ namespace TechHub.Service.Service
 		//	RandomNumberGenerator.Fill(bytes);
 		//	return Convert.ToBase64String(bytes);
 		//}
+		//6197fe01-c562-496c-a271-cd62bf067525 --- headTeacher
+		//55b0a703-3fc0-45ce-aa5f-72d94023aa4a  -- teacher
 		public async Task<BaseResponse> CreateUser(UserViewModelV2 userViewModel, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
@@ -399,8 +405,6 @@ namespace TechHub.Service.Service
 				try
 				{
 					// ===== VALIDATION SECTION =====
-
-					// Validation 1: Check if model is null
 					if (userViewModel is null)
 					{
 						_logger.Warning("user details cannot be null");
@@ -526,7 +530,7 @@ namespace TechHub.Service.Service
 							};
 						}
 
-						// ✅ Ensure line manager is actually a HeadTeacher
+						// Ensure line manager is actually a HeadTeacher
 						if (lineManager.RoleId != (int)UserRole.HeadTeacher)
 						{
 							_logger.Warning(
@@ -541,7 +545,7 @@ namespace TechHub.Service.Service
 							};
 						}
 
-						// ✅ Ensure line manager belongs to same school
+						// Ensure line manager belongs to same school
 						if (lineManager.SchoolId != schoolId)
 						{
 							_logger.Warning(
@@ -2698,6 +2702,274 @@ namespace TechHub.Service.Service
 		//		return true; // Safe default
 		//	}
 		//}
+
+		// ── GET: approval items pending for this HeadTeacher ────────────────────────
+		public async Task<BaseResponse> GetPendingApprovalsForUser(AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.UserId, out var approverId) ||
+					!Guid.TryParse(claims?.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user session",
+						Status = "failed"
+					};
+
+				// Single query — joins ApprovalRequests → Users (requester) → LessonContent
+				// LEFT JOIN LessonContent so non-lesson approvals still appear
+				var query = $@"
+					SELECT
+						ar.Id,
+						ar.OperationType,
+						ar.EntityType,
+						ar.EntityId,
+						ar.Status,
+						ar.CreatedAt,
+						ar.ExpiresAt,
+
+						-- Requester details
+						u.FirstName + ' ' + u.LastName AS RequestedByName,
+						u.Email                         AS RequestedByEmail,
+
+						-- Lesson enrichment (NULL when EntityType != 'Lesson')
+						lc.Id          AS LessonId,
+						lc.Aim,
+						lc.Description,
+						s.Subject      AS SubjectName,
+						t.Name         AS TopicName,
+						c.ClassName,
+						(SELECT COUNT(*) FROM LessonMedia lm
+						 WHERE lm.LessonContentId = lc.Id AND lm.IsActive = 1) AS MediaCount
+
+					FROM   ApprovalRequests ar
+					JOIN   Users            u  ON u.Id  = ar.RequestedBy
+					LEFT JOIN LessonContent lc ON lc.Id = ar.EntityId
+											   AND ar.EntityType = 'Lesson'
+					LEFT JOIN Subjects      s  ON s.Id  = lc.SubjectId
+					LEFT JOIN Topic         t  ON t.Id  = lc.TopicId
+					LEFT JOIN Classroom     c  ON c.Id  = lc.ClassroomId
+
+					WHERE  ar.ApproverId = '{approverId}'
+					AND    ar.SchoolId   = '{schoolId}'
+					AND    ar.Status     = '{ApprovalStatus.Pending}'
+					AND    ar.ExpiresAt  > GETUTCDATE()
+
+				 ORDER  BY ar.CreatedAt ASC";
+
+				// Use your QueryBuilder/generic repo — adjust to whichever method returns IEnumerable
+				var rows = await _queryApprovalRequests.QueryAsync<ApprovalItemRow>(query, new Dictionary<string, object>());
+				var items = rows.Select(r => new ApprovalItemDto
+				{
+					Id = r.Id,
+					OperationType = r.OperationType,
+					EntityType = r.EntityType,
+					EntityId = r.EntityId,
+					Status = r.Status,
+					CreatedAt = r.CreatedAt,
+					ExpiresAt = r.ExpiresAt,
+					RequestedByName = r.RequestedByName,
+					RequestedByEmail = r.RequestedByEmail,
+					Lesson = r.LessonId == null ? null : new LessonSummaryDto
+					{
+						LessonId = r.LessonId.Value,   
+						Aim = r.Aim,
+						Description = r.Description,
+						SubjectName = r.SubjectName,
+						TopicName = r.TopicName,
+						ClassName = r.ClassName,
+						MediaCount = r.MediaCount
+					}
+				}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = items.Any()
+						? $"{items.Count} pending approval(s)"
+						: "No pending approvals",
+					Status = "successful",
+					Data = new { Count = items.Count, Items = items }
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching pending approvals for ApproverId: {Id}", claims?.UserId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching approvals",
+					Status = "failed"
+				};
+			}
+		}
+
+		// ── POST: HeadTeacher approves or rejects an item ───────────────────────────
+		public async Task<BaseResponse> RespondToApproval(Guid approvalId, ApprovalRespondViewModel model, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.UserId, out var approverId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user session",
+						Status = "failed"
+					};
+
+				if (!model.Approved && string.IsNullOrWhiteSpace(model.RejectionReason))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "A rejection reason is required",
+						Status = "failed"
+					};
+
+				// Fetch and validate the approval belongs to this approver
+				var fetchQuery = $@"
+					SELECT * FROM ApprovalRequests
+					WHERE  Id         = '{approvalId}'
+					AND    ApproverId = '{approverId}'
+					AND    Status     = '{ApprovalStatus.Pending}'";
+
+				var approvals = await _queryApprovalRequests.QueryAsync<ApprovalRequests>(fetchQuery, new Dictionary<string, object>());
+
+				var approval = approvals.FirstOrDefault();
+				if (approval is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Approval request not found or already actioned",
+						Status = "failed"
+					};
+
+				var newStatus = model.Approved ? ApprovalStatus.Approved : ApprovalStatus.Rejected;
+				var respondedAt = DateTime.UtcNow;
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+
+				try
+				{
+					// 1. Update ApprovalRequests
+					var updateApproval = $@"
+					UPDATE ApprovalRequests
+					SET    Status          = '{newStatus}',
+						   RespondedAt     = '{respondedAt:yyyy-MM-dd HH:mm:ss}',
+						   RejectionReason = {(model.Approved
+									   ? "NULL"
+									   : $"'{model.RejectionReason.Replace("'", "''")}'")}
+					WHERE  Id = '{approvalId}'";
+
+					await scope.Connection.ExecuteAsync(updateApproval, transaction: scope.Transaction);
+
+					if (approval.EntityType == "Lesson" && approval.EntityId.HasValue)
+					{
+						var lessonStatus = model.Approved ? LessonStatus.Approved : LessonStatus.Rejected;
+
+						var updateLesson = $@"
+							UPDATE LessonContent
+							SET    Status = '{lessonStatus}',
+								   {(model.Approved
+											   ? $"ApprovedBy = '{approverId}', ApprovedAt = '{respondedAt:yyyy-MM-dd HH:mm:ss}'"
+											   : $"RejectedBy = '{approverId}', RejectionReason = '{model.RejectionReason.Replace("'", "''")}'")}
+							WHERE  Id       = '{approval.EntityId}'
+							AND    SchoolId = '{approval.SchoolId}'";
+
+						await scope.Connection.ExecuteAsync(updateLesson, transaction: scope.Transaction);
+					}
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Transaction failed for ApprovalId: {Id}", approvalId);
+
+					try { await scope.RollbackAsync(); }
+					catch (Exception rollbackEx)
+					{
+						_logger.Error(rollbackEx, "Rollback failed for ApprovalId: {Id}", approvalId);
+					}
+
+					throw; // bubble to outer handler
+				}
+
+				// Post-commit — fire and forget
+				_ = Task.Run(() => NotifyRequester(approval, model.Approved, model.RejectionReason));
+
+				_logger.Information(
+					"Approval {ApprovalId} {Status} by {ApproverId}",
+					approvalId, newStatus, approverId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = model.Approved ? "Approved successfully" : "Rejected successfully",
+					Status = "successful",
+					Data = new { ApprovalId = approvalId, NewStatus = newStatus }
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error responding to approval: {Id}", approvalId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+
+		private async Task NotifyRequester(ApprovalRequests approval, bool approved, string rejectionReason)
+		{
+			try
+			{
+				// Fetch the teacher who submitted
+				var requester = await _queryrepositoryUser.Get(approval.RequestedBy);
+				if (requester is null)
+				{
+					_logger.Warning(
+						"NotifyRequester: requester not found - RequestedBy: {Id}",
+						approval.RequestedBy);
+					return;
+				}
+
+				var templateKey = approved
+					? (int)EmailTemplateKey.LessonApprovalOutcome
+					: (int)EmailTemplateKey.LessonApprovalRequest;
+
+				var placeholders = new Dictionary<string, string>
+				{
+					{ "@@Name",   $"{requester.FirstName} {requester.LastName}" },
+					{ "@@Status", approved ? "approved" : "rejected" },
+					{ "@@Reason", approved ? string.Empty : rejectionReason }
+				};
+
+				var emailTemplate = await _emailService.GetRenderedTemplate(templateKey, placeholders);
+				if (emailTemplate is null)
+				{
+					_logger.Warning("NotifyRequester: email template not found - Key: {Key}", templateKey);
+					return;
+				}
+
+				await _emailService.SendAsync(
+					requester.EmailAddress,
+					$"{requester.FirstName} {requester.LastName}",
+					approved ? "Your lesson has been approved" : "Your lesson requires attention",
+					emailTemplate);
+
+				_logger.Information(
+					"Requester notified - RequestedBy: {Id}, Approved: {Approved}",
+					approval.RequestedBy, approved);
+			}
+			catch (Exception ex)
+			{
+				// Fire-and-forget — log but never throw, must not affect the main response
+				_logger.Error(ex, "Failed to notify requester - RequestedBy: {Id}", approval.RequestedBy);
+			}
+		}
 
 
 		/// <summary>

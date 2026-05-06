@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core;
+using TechHub.Core.DTO;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
 using TechHub.Core.Models;
@@ -40,6 +41,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetTeachersBySchool(AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> RefreshToken(string incomingToken);
 		Task<BaseResponse> GetUsersByRole(AuthenticatedUserClaims userClaims, int? roleId, int pageNumber, int pageSize);
-
+		Task<BaseResponse> RespondToApproval(Guid approvalId, ApprovalRespondViewModel model, AuthenticatedUserClaims claims);
+		Task<BaseResponse> GetPendingApprovalsForUser(AuthenticatedUserClaims claims);
 	}
 }

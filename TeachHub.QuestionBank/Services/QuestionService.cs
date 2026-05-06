@@ -2,9 +2,11 @@
 using Serilog.Context;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Transactions;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
@@ -16,6 +18,7 @@ using TechHub.QuestionBank.Core.Response;
 using TechHub.QuestionBank.Core.ViewModel;
 using TechHub.QuestionBank.Services.interfaces;
 using TechHub.Service.Interface;
+using TechHub.Service.Service.DatabaseService;
 
 namespace TechHub.QuestionBank.Services;
 
@@ -27,6 +30,8 @@ public class QuestionService : IQuestionService
 	private readonly ICommandRespository<QuestionOptions> _optionCommandRepo;
 	private readonly IQueryRepository<ScanSession> _scanSessionQueryRepo;
 	private readonly ICommandRespository<ScanSession> _scanSessionCommandRepo;
+	private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
+
 	private readonly ILogger _logger;
 
 	public QuestionService(
@@ -36,6 +41,7 @@ public class QuestionService : IQuestionService
 		ICommandRespository<QuestionOptions> optionCommandRepo,
 		IQueryRepository<ScanSession> scanSessionQueryRepo,
 		ICommandRespository<ScanSession> scanSessionCommandRepo,
+		IDbTransactionScopeFactory dbTransactionScopeFactory,
 		ILogger logger)
 	{
 		_questionQueryRepo = questionQueryRepo;
@@ -44,6 +50,7 @@ public class QuestionService : IQuestionService
 		_optionCommandRepo = optionCommandRepo;
 		_scanSessionCommandRepo = scanSessionCommandRepo;
 		_scanSessionQueryRepo = scanSessionQueryRepo;
+		_dbTransactionScopeFactory = dbTransactionScopeFactory;
 		_logger = logger;
 	}
 
@@ -91,158 +98,97 @@ public class QuestionService : IQuestionService
 	/// - Duplicate ClientId detection prevents double save
 	/// - Always return ServerId so frontend can reconcile
 	/// </summary>
-	public async Task<CreateQuestionResponse> CreateQuestion(CreateQuestionViewModel model, AuthenticatedUserClaims userClaims)
+
+	public async Task<CreateQuestionResponse> CreateQuestion(CreateQuestionViewModel model,AuthenticatedUserClaims userClaims)
 	{
-		#region
-		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
-		using (LogContext.PushProperty("ClientId", model.ClientId))
+		using (LogContext.PushProperty("RequestedBy", userClaims?.UserId))
+		using (LogContext.PushProperty("ClientId", model?.ClientId))
 		{
+			IDbConnection? connection = null;
+			IDbTransaction? transaction = null;
+
 			try
 			{
-				_logger.Information("Creating question - ClientId: {ClientId}, UserId: {UserId}", model.ClientId, userClaims.UserId);
+				_logger.Information(
+					"Creating question - ClientId: {ClientId}, UserId: {UserId}",
+					model?.ClientId,
+					userClaims?.UserId);
 
-
-				if (!Guid.TryParse(userClaims.UserId, out var userId))
-				{
-					_logger.Warning("Invalid UserId - UserId: {UserId}", userClaims.UserId);
-
-					return new CreateQuestionResponse
+				CreateQuestionResponse Fail(string message) =>
+					new CreateQuestionResponse
 					{
 						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid user identification",
+						ResponseMessage = message,
 						Status = "failed"
 					};
-				}
 
-				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
-				{
-					_logger.Warning("Invalid SchoolId - SchoolId: {SchoolId}", userClaims.SchoolId);
+				if (model == null)
+					return Fail("Invalid request payload");
 
-					return new CreateQuestionResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Invalid school identification",
-						Status = "failed"
-					};
-				}
+				if (!Guid.TryParse(userClaims?.UserId, out var userId))
+					return Fail("Invalid user identification");
 
+				if (!Guid.TryParse(userClaims?.SchoolId, out var schoolId))
+					return Fail("Invalid school identification");
 
 				if (string.IsNullOrWhiteSpace(model.Title))
-				{
-					return new CreateQuestionResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Question title is required",
-						Status = "failed"
-					};
-				}
+					return Fail("Question title is required");
 
-				if (model.Title.Length > 500)
-				{
-					return new CreateQuestionResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Question title cannot exceed 500 characters",
-						Status = "failed"
-					};
-				}
+				if (model.Title.Trim().Length > 500)
+					return Fail("Question title cannot exceed 500 characters");
 
 				if (model.SubjectId == Guid.Empty)
-				{
-					return new CreateQuestionResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Subject is required",
-						Status = "failed"
-					};
-				}
+					return Fail("Subject is required");
 
 				if (model.MarksAllocation <= 0)
-				{
-					return new CreateQuestionResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Marks allocation must be greater than zero",
-						Status = "failed"
-					};
-				}
+					return Fail("Marks allocation must be greater than zero");
 
-				// MCQ specific validation
 				if (model.QuestionType == QuestionType.MultipleChoice)
 				{
 					if (model.Options == null || model.Options.Count < 2)
-					{
-						return new CreateQuestionResponse
-						{
-							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage ="Multiple choice questions must have at least 2 options",
-							Status = "failed"
-						};
-					}
+						return Fail("Multiple choice questions must have at least 2 options");
 
 					if (model.Options.Count > 6)
-					{
-						return new CreateQuestionResponse
-						{
-							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = "Multiple choice questions cannot have more than 6 options",
-							Status = "failed"
-						};
-					}
+						return Fail("Multiple choice questions cannot have more than 6 options");
 
 					var correctAnswers = model.Options.Count(o => o.IsCorrect);
-
 					if (correctAnswers != 1)
-					{
-						return new CreateQuestionResponse
-						{
-							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage ="Multiple choice questions must have exactly one correct answer",
-							Status = "failed"
-						};
-					}
+						return Fail("Multiple choice questions must have exactly one correct answer");
 
-					// Validate each option has text
-					var emptyOption = model.Options.FirstOrDefault(o =>string.IsNullOrWhiteSpace(o.OptionText));
-
+					var emptyOption = model.Options.FirstOrDefault(o => string.IsNullOrWhiteSpace(o.OptionText));
 					if (emptyOption != null)
-					{
-						return new CreateQuestionResponse
-						{
-							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = $"Option {emptyOption.OptionLabel} cannot be empty",
-							Status = "failed"
-						};
-					}
+						return Fail($"Option {emptyOption.OptionLabel} cannot be empty");
 				}
 
-				// This is critical for offline sync reliability
-				// If network failed after server saved but before
-				// frontend received confirmation, frontend will retry
-				// We must detect this and return the existing record
-				// instead of creating a duplicate
+				// IMPORTANT:
+				// Replace this with the SAME connection/transaction bootstrap used in CreateUser service.
+				//connection = await _questionConnectionFactory.GetOpenConnection(TechHub.Core.Enum.DatabaseTarget.QuestionBank);
+				//transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+				using var scope = _dbTransactionScopeFactory.Create("QuestionBankConnection");
 
+
+				// Idempotency check inside transaction
 				if (!string.IsNullOrWhiteSpace(model.ClientId))
 				{
-					var existingQuery = $@"
-                            SELECT TOP 1 *
-                            FROM Questions
-                            WHERE ClientId = '{model.ClientId}'
-                            AND SchoolId = '{schoolId}'
-                            AND IsDeleted = 0";
+					const string existingSql = @"
+                    SELECT TOP 1 *
+                    FROM Questions
+                    WHERE ClientId = @ClientId
+                      AND SchoolId = @SchoolId
+                      AND IsDeleted = 0";
 
-					var existing = await _questionQueryRepo.GetByQuery(existingQuery);
-
+					var existing = await _questionQueryRepo.GetByQuery(existingSql);
 					var existingQuestion = existing?.FirstOrDefault();
 
-					if (existingQuestion != null)
+					if (existing != null)
 					{
-						_logger.Information("Duplicate ClientId detected - " + "ClientId: {ClientId}, " + "ExistingServerId: {ServerId}",model.ClientId,
+						_logger.Information(
+							"Duplicate ClientId detected - ClientId: {ClientId}, ExistingServerId: {ServerId}",
+							model.ClientId,
 							existingQuestion.Id);
 
-						// Return existing server ID
-						// Frontend reconciles local record
-						// No duplicate created
+						transaction.Commit();
+
 						return new CreateQuestionResponse
 						{
 							ResponseCode = ResponseCode.successful,
@@ -251,12 +197,9 @@ public class QuestionService : IQuestionService
 							QuestionId = existingQuestion.Id,
 							ClientId = model.ClientId,
 							IsDuplicate = true
-							// Frontend knows this was a retry
-							// and can safely clean local record
 						};
 					}
 				}
-
 
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
@@ -268,50 +211,47 @@ public class QuestionService : IQuestionService
 					TopicId = model.TopicId,
 					CreatedBy = userId,
 
-					// Content
 					Title = model.Title.Trim(),
 					Topic = model.Topic?.Trim(),
-					SubTopic = model.SubTopic?.Trim(),
+					//SubTopic = model.SubTopic.Trim(),
+					SubTopicId = model.SubTopic,
+
 					QuestionType = model.QuestionType,
 					TextContent = model.TextContent?.Trim(),
 					DifficultyLevel = model.DifficultyLevel,
 					MarksAllocation = model.MarksAllocation,
 
-					// Board & Media
 					BoardSessionId = model.BoardSessionId,
 					HasBoardSession = model.BoardSessionId.HasValue,
-					HasMedia = false,
+					HasMedia = !string.IsNullOrWhiteSpace(model.ImageUrl),
+					ImageUrl = model.ImageUrl?.Trim(),
+					ImagePublicId = model.ImagePublicId?.Trim(),
 					HasAudio = false,
 
-					// Source
 					IsScanned = model.IsScanned,
 
-					// Status
-					// New questions start as Draft
-					// Teacher explicitly publishes when ready
-					Status = model.ScanSessionId != null? QuestionStatus.PendingReview : QuestionStatus.Draft,
+					Status = model.ScanSessionId != null
+						? QuestionStatus.PendingReview
+						: QuestionStatus.Draft,
 					IsActive = true,
 					IsDeleted = false,
 
-					// Sync
-					// Question is on server now so it is Synced
 					ClientId = model.ClientId,
 					OriginDevice = model.OriginDevice,
 					LastSyncedAt = DateTime.UtcNow,
 
-					// Audit
 					CreationDate = now,
 					ModifiedDate = now
 				};
 
+				// IMPORTANT:
+				// Use the same "repo + transaction" call shape as CreateUser service.
+				await _questionCommandRepo.Create(scope.Transaction, scope.Connection,question);
+					
 
-
-				await _questionCommandRepo.Create(question, TechHub.Core.Enum.DatabaseTarget.QuestionBank);
-
-				_logger.Information("Question saved - QuestionId: {QuestionId}, " + "ClientId: {ClientId}", question.Id, model.ClientId);
-
-
-				if (model.QuestionType == QuestionType.MultipleChoice && model.Options != null && model.Options.Any())
+				if (model.QuestionType == QuestionType.MultipleChoice &&
+					model.Options != null &&
+					model.Options.Any())
 				{
 					foreach (var optionModel in model.Options)
 					{
@@ -326,13 +266,13 @@ public class QuestionService : IQuestionService
 							CreationDate = now
 						};
 
-						await _optionCommandRepo.Create(option, TechHub.Core.Enum.DatabaseTarget.QuestionBank);
+						await _optionCommandRepo.Create(scope.Transaction, scope.Connection, option);
 					}
-
-					_logger.Information("Options saved - QuestionId: {QuestionId}, " + "OptionCount: {Count}", question.Id, model.Options.Count);
 				}
 
+				transaction.Commit();
 
+				_logger.Information("Question created successfully - QuestionId: {QuestionId}, ClientId: {ClientId}",question.Id,model.ClientId);
 
 				return new CreateQuestionResponse
 				{
@@ -346,7 +286,16 @@ public class QuestionService : IQuestionService
 			}
 			catch (Exception ex)
 			{
-				_logger.Error(ex, "Error creating question - ClientId: {ClientId}", model.ClientId);
+				try
+				{
+					transaction?.Rollback();
+				}
+				catch (Exception rbEx)
+				{
+					_logger.Error(rbEx, "Rollback failed - ClientId: {ClientId}", model?.ClientId);
+				}
+
+				_logger.Error(ex, "Error creating question - ClientId: {ClientId}", model?.ClientId);
 
 				return new CreateQuestionResponse
 				{
@@ -355,12 +304,14 @@ public class QuestionService : IQuestionService
 					Status = "failed"
 				};
 			}
+			finally
+			{
+				transaction?.Dispose();
+				connection?.Dispose();
+			}
 		}
-
-
 	}
 
-	#endregion
 
 	/// <summary>
 	/// Update an existing question

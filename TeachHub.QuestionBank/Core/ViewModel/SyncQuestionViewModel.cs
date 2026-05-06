@@ -52,6 +52,8 @@ public class SyncQuestionViewModel
 
 	public Guid SubjectId { get; set; }
 	public Guid? TopicId { get; set; }
+	public Guid SubTopicId { get; set; }
+
 	public string Topic { get; set; }
 	public string SubTopic { get; set; }
 
@@ -99,7 +101,7 @@ public class SyncQuestionViewModel
 			SubjectId = model.SubjectId,
 			TopicId = model.TopicId,
 			Topic = model.Topic,
-			SubTopic = model.SubTopic,
+			SubTopic = model.SubTopicId,
 			Title = model.Title,
 			TextContent = model.TextContent,
 			QuestionType = model.QuestionType,

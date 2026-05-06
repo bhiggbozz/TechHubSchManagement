@@ -15,6 +15,12 @@ public class LessonController : ControllerBase
 {
 	private readonly ILessonService _lessonService;
 	private readonly ICloudinaryService _signatureService;
+	public LessonController(ILessonService lessonService, ICloudinaryService signatureService)
+	{
+		_lessonService = lessonService;
+		_signatureService = signatureService;
+	}
+
 
 	[HttpGet("upload-signature")]
 	public IActionResult GetUploadSignature()
