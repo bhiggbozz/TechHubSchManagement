@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core;
+using TechHub.Core.DTO;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
@@ -700,6 +701,108 @@ public class LessonService : ILessonService
 		{
 			_logger.Error(ex,"Error fetching lessons - TeacherId: {TeacherId}",
 				claims?.UserId);
+			return ServerError();
+		}
+	}
+
+	public async Task<BaseResponse> GetLessonForClass(Guid lessonId, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.UserId, out var userId))
+				return Unauthorized();
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			// Single query — pulls everything needed to start the class
+			var lessonQuery = $@"
+				SELECT
+					lc.Id,
+					lc.Aim,
+					lc.Description,
+					lc.Status,
+					lc.CreatedAt,
+					lc.ApprovedAt,
+					lc.SubTopic,
+					lc.SubTopicId,
+
+					-- Classroom
+					c.Id          AS ClassroomId,
+					c.ClassName,
+
+					-- Subject
+					s.Id          AS SubjectId,
+					s.Subject     AS SubjectName,
+
+					-- Topic
+					t.Id          AS TopicId,
+					t.Name        AS TopicName,
+
+					-- Teacher who created it
+					u.Id          AS TeacherId,
+					u.FirstName + ' ' + u.LastName AS TeacherName,
+					u.EmailAddress AS TeacherEmail,
+
+					-- Who approved it
+					ap.FirstName + ' ' + ap.LastName AS ApprovedByName
+
+				FROM   LessonContent lc
+				JOIN   Classroom     c  ON c.Id  = lc.ClassroomId
+				JOIN   Subjects      s  ON s.Id  = lc.SubjectId
+				JOIN   Topic         t  ON t.Id  = lc.TopicId
+				JOIN   Users         u  ON u.Id  = lc.CreatedBy
+				LEFT JOIN Users      ap ON ap.Id = lc.ApprovedBy
+
+				WHERE  lc.Id       = '{lessonId}'
+				AND    lc.SchoolId = '{schoolId}'
+				AND    lc.Status   = '{LessonStatus.Approved}'";
+
+			var lessons = await _lessonQuery.QueryAsync<LessonForClassDto>(
+				lessonQuery, new Dictionary<string, object>());
+
+			var lesson = lessons.FirstOrDefault();
+			if (lesson is null)
+				return NotFound("Lesson not found or has not been approved yet");
+
+			// Fetch all active media ordered for playback
+			var mediaQuery = $@"
+				SELECT
+					Id,
+					FileName,
+					OriginalFileName,
+					FileExtension,
+					MediaType,
+					CloudinaryUrl,
+					PublicId,
+					FileSizeBytes,
+					Duration,
+					DisplayOrder,
+					MetaData
+				FROM   LessonMedia
+				WHERE  LessonContentId = '{lessonId}'
+				AND    IsActive        = 1
+				ORDER  BY DisplayOrder ASC";
+
+			var media = await _mediaQuery.QueryAsync<LessonMediaDto>(mediaQuery, new Dictionary<string, object>());
+
+			_logger.Information("Lesson loaded for class - LessonId: {LessonId}, UserId: {UserId}",lessonId, userId);
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = "Lesson loaded successfully",
+				Status = "successful",
+				Data = new
+				{
+					Lesson = lesson,
+					Media = media.ToList(),
+					MediaCount = media.Count()
+				}
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex, "Error loading lesson for class - LessonId: {LessonId}", lessonId);
 			return ServerError();
 		}
 	}

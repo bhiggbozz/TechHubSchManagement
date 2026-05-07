@@ -17,5 +17,6 @@ public interface ILessonService
 	Task<BaseResponse> GetPendingApprovals(AuthenticatedUserClaims claims);
 	Task<BaseResponse> RespondToLesson(Guid lessonId, bool approved, string rejectionReason, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetLessonsByTeacher(AuthenticatedUserClaims claims, string? status = null, int pageNumber = 1, int pageSize = 50);
+	Task<BaseResponse> GetLessonForClass(Guid lessonId, AuthenticatedUserClaims claims);
 }
 

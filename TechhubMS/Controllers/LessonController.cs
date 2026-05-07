@@ -109,6 +109,17 @@ public class LessonController : ControllerBase
 			claims, status, pageNumber, pageSize);
 		return Ok(result);
 	}
+
+	// GET api/lesson/{lessonId}/class
+	[HttpGet("{lessonId}/class")]
+	[Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+	[ProducesResponseType(typeof(BaseResponse), 200)]
+	public async Task<IActionResult> GetLessonForClass(Guid lessonId)
+	{
+		var claims = GetClaims();
+		var result = await _lessonService.GetLessonForClass(lessonId, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
 	private AuthenticatedUserClaims GetClaims() => new AuthenticatedUserClaims
 	{
 		UserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value,
