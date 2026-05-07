@@ -39,6 +39,9 @@ public class Questions
 	public bool HasLatex { get; set; }
 	public string? CorrectAnswer { get; set; }
 
+	public string? ImageUrl { get; set; }
+	public string? ImagePublicId { get; set; }
+
 	// ─────────────────────────────────────────────────────
 	// JOB TRACKING
 	// ─────────────────────────────────────────────────────

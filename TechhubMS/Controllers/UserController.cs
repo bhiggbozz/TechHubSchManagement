@@ -1,12 +1,14 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TechHub.Core;
+using TechHub.Core.DTO;
 using TechHub.Core.Entities;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.Users;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
+using TechHub.Service.Service;
 using TechhubMS.Middleware.Services;
 
 namespace TechhubMS.Controllers
@@ -224,6 +226,31 @@ namespace TechhubMS.Controllers
 			return Ok(result);
 		}
 
+		[HttpGet("approvals")]
+		[ProducesResponseType(typeof(BaseResponse), 200)]
+		public async Task<IActionResult> GetPendingApprovals()
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.GetPendingApprovalsForUser(userClaims);
+			return Ok(result);
+		}
+
+		[HttpPost("approvals/{id}/respond")]
+		[ProducesResponseType(typeof(BaseResponse), 200)]
+		[ProducesResponseType(typeof(BaseResponse), 400)]
+		[ProducesResponseType(typeof(BaseResponse), 404)]
+		public async Task<IActionResult> RespondToApproval(Guid id, [FromBody] ApprovalRespondViewModel model)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.RespondToApproval(id, model, userClaims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				_ => BadRequest(result)
+			};
+		}
 
 	}
 

@@ -36,7 +36,7 @@ public class QuestionController : ControllerBase
 	// Returns ServerId and ClientId for local reconciliation
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-	[HttpPost]
+	[HttpPost("createquestions")]
 	public async Task<IActionResult> CreateQuestion([FromBody] CreateQuestionViewModel model)
 	{
 		var userClaims = GetUserClaims();
@@ -200,8 +200,7 @@ public class QuestionController : ControllerBase
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 	[HttpGet("scan-sessions/{sessionId:guid}/review")]
-	public async Task<IActionResult> GetPendingReviewQuestions(
-		Guid sessionId)
+	public async Task<IActionResult> GetPendingReviewQuestions(Guid sessionId)
 	{
 		var userClaims = GetUserClaims();
 		if (userClaims == null)

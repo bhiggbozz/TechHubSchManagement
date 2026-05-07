@@ -716,7 +716,7 @@ public class QuestionSyncService : IQuestionSyncService
 			SubjectId = model.SubjectId,
 			TopicId = model.TopicId,
 			Topic = model.Topic,
-			SubTopic = model.SubTopic,
+			SubTopic = model.SubTopicId,
 			Title = model.Title,
 			TextContent = model.TextContent,
 			QuestionType = model.QuestionType,

@@ -247,7 +247,6 @@ namespace TechhubMS.Controllers
 			return Ok(result);
 		}
 
-		// ── Get topics and subtopics for a subject ───────────────────────────────────
 		[HttpGet("subjects/{subjectId:guid}/curriculum")]
 		[Authorize]
 		[ProducesResponseType(typeof(BaseResponse), 200)]

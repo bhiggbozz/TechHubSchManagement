@@ -260,12 +260,11 @@ namespace TechHub.Service.Service
 			await conn.ExecuteAsync(query2, parameter);
 		}
 
-		public async Task CreateBatchAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues)
+		public async Task CreateBatchAsync(SqlTransaction transaction,SqlConnection connection,List<Dictionary<string, object>> batchValues)
 		{
-			using var conn = new SqlConnection(_config);
-			conn.Open();
 			var tableName = typeof(TEntity).Name;
 			var query = QueryBuilder<TEntity>.BatchInsertQuery(batchValues, tableName);
+
 			var parameter = new DynamicParameters();
 			int batchCount = batchValues.Count;
 			foreach (var items in batchValues)
@@ -273,22 +272,14 @@ namespace TechHub.Service.Service
 				int count2 = items.Count;
 				foreach (var item in items.Keys)
 				{
-					 count2 -= 1;
-					 parameter.Add($"@{item}_{count2}_{batchCount}", items[item]);
-
-
+					count2 -= 1;
+					parameter.Add($"@{item}_{count2}_{batchCount}", items[item]);
 				}
 				batchCount -= 1;
 			}
-			//	foreach (var key in values.Keys)
-			//{
-			//	parameter.Add($"@{key}", values[key]);
-			//}
 
-			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
-			await conn.ExecuteAsync(query, parameter);
+			await connection.ExecuteAsync(query, parameter, transaction: transaction);
 		}
-
 		public async Task UpdateBatchByIdAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues)
 		{
 			using var conn = new SqlConnection(_config);
