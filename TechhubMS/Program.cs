@@ -6,10 +6,12 @@ using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using Serilog.Events;
 using System.Text;
+using TechHub.Background.Extensions;
 using TechHub.Background.Services;
 using TechHub.Core.Configuration;
 using TechHub.Core.Profiles;
 using TechHub.QuestionBank.Controllers;
+using TechHub.Service.Extensions;
 using TechhubMS;
 using TechhubMS.Middleware;
 
@@ -58,6 +60,10 @@ try
 	builder.Services.AddMultiTenantServices(builder.Configuration);
 	builder.Services.AddControllers()
 	.AddApplicationPart(typeof(QuestionJobController).Assembly);
+
+	// Board session recording services
+	builder.Services.AddBoardServices(builder.Configuration);
+	builder.Services.AddBoardWorkers();
 
 	var app = builder.Build();
 
