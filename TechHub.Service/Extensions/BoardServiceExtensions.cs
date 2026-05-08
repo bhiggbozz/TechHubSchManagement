@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Configuration;
+//using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using TechHub.Core.Configuration;
 using TechHub.Service.Interface;
@@ -11,7 +11,7 @@ public static class BoardServiceExtensions
 {
     public static IServiceCollection AddBoardServices(
         this IServiceCollection services,
-        IConfiguration configuration)
+		 Microsoft.Extensions.Configuration.IConfiguration configuration)
     {
         // Configuration
         services.Configure<MongoDbSettings>(

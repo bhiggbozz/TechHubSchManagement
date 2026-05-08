@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TechHub.Core;
+using TechHub.Core.Model;
 using TechHub.Core.ViewModels.Board;
 using TechHub.Core.ViewModels.Board.Manifest;
 using TechHub.Service.Extension;
@@ -134,7 +135,7 @@ public class BoardSessionController : ControllerBase
 
         return Ok(new BaseResponse
         {
-            ResponseCode = ResponseCode.Ok,
+            ResponseCode = ResponseCode.successful,
             ResponseMessage = "Session retrieved successfully",
             Status = "success",
             Data = session

@@ -102,7 +102,7 @@ public class BoardSessionService : IBoardSessionService
 
             return new BaseResponse
             {
-                ResponseCode = ResponseCode.Created,
+                ResponseCode = ResponseCode.successful,
                 ResponseMessage = "Session manifest saved successfully",
                 Status = "success"
             };
@@ -113,7 +113,7 @@ public class BoardSessionService : IBoardSessionService
 
             return new BaseResponse
             {
-                ResponseCode = ResponseCode.ServerError,
+                ResponseCode = ResponseCode.ErrorOccured,
                 ResponseMessage = "Failed to save session manifest",
                 Status = "failed"
             };
