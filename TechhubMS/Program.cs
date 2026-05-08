@@ -36,6 +36,12 @@ try
 
 	var builder = WebApplication.CreateBuilder(args);
 
+	builder.Services.Configure<HostOptions>(options =>
+	{
+		options.BackgroundServiceExceptionBehavior =
+			BackgroundServiceExceptionBehavior.Ignore;
+	});
+
 	builder.Host.UseSerilog();
 
 	// Add services to the container
