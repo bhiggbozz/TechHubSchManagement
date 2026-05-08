@@ -19,10 +19,7 @@ public class BoardSyncWorker : BackgroundService
     private IConnection? _connection;
     private IModel? _channel;
 
-    public BoardSyncWorker(
-        IOptions<RabbitMQSettings> settings,
-        IBoardSessionRepository repository,
-        ILogger logger)
+    public BoardSyncWorker(IOptions<RabbitMQSettings> settings, IBoardSessionRepository repository, ILogger logger)
     {
         _settings = settings.Value;
         _repository = repository;
@@ -31,36 +28,48 @@ public class BoardSyncWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.Information("BoardSyncWorker starting...");
-
-        await Task.Yield();
-
-        try
+		while (!stoppingToken.IsCancellationRequested)
         {
-            InitializeRabbitMQ();
-            await ConsumeMessages(stoppingToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.Fatal(ex, "BoardSyncWorker encountered a fatal error");
-            throw;
-        }
+			_logger.Information("BoardSyncWorker starting...");
+
+			await Task.Yield();
+
+			try
+			{
+				InitializeRabbitMQ();
+				await ConsumeMessages(stoppingToken);
+                break;
+			}
+			catch (Exception ex)
+			{
+				_logger.Fatal(ex, "BoardSyncWorker encountered a fatal error");
+				await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+				//throw;
+			}
+		}
+			
     }
 
     private void InitializeRabbitMQ()
     {
-        var factory = new ConnectionFactory
-        {
-            HostName = _settings.Host,
-            Port = _settings.Port,
-            UserName = _settings.Username,
-            Password = _settings.Password,
-            AutomaticRecoveryEnabled = true,
-            NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
-            DispatchConsumersAsync = true
-        };
+        //var factory = new ConnectionFactory
+        //{
+        //    HostName = _settings.Host,
+        //    Port = _settings.Port,
+        //    UserName = _settings.Username,
+        //    Password = _settings.Password,
+        //    AutomaticRecoveryEnabled = true,
+        //    NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
+        //    DispatchConsumersAsync = true
+        //};
 
-        _connection = factory.CreateConnection();
+		var factory = new ConnectionFactory
+		{
+			Uri = new Uri("amqps://kscffsye:Ht3OsGswOLwYU98Q-9cdaQbGT_lzSfkX@collie.lmq.cloudamqp.com/kscffsye"),
+			AutomaticRecoveryEnabled = true
+		};
+
+		_connection = factory.CreateConnection();
         _channel = _connection.CreateModel();
 
         _channel.QueueDeclare(

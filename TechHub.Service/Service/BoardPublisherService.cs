@@ -17,24 +17,33 @@ public class BoardPublisherService : IBoardPublisherService, IDisposable
     private readonly IModel _channel;
     private bool _disposed;
 
-    public BoardPublisherService(
-        IOptions<RabbitMQSettings> settings,
-        ILogger logger)
+    public BoardPublisherService( IOptions<RabbitMQSettings> settings, ILogger logger)
     {
         _settings = settings.Value;
         _logger = logger;
 
-        var factory = new ConnectionFactory
-        {
-            HostName = _settings.Host,
-            Port = _settings.Port,
-            UserName = _settings.Username,
-            Password = _settings.Password,
-            AutomaticRecoveryEnabled = true,
-            NetworkRecoveryInterval = TimeSpan.FromSeconds(10)
-        };
+  //      var factory = new ConnectionFactory
+  //      {
+  //          HostName = _settings.Host,
+  //          Port = _settings.Port,
+  //          UserName = _settings.Username,
+  //          Password = _settings.Password,
+  //          AutomaticRecoveryEnabled = true,
+  //          NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
+		//	Ssl = new SslOption
+		//	{
+		//		Enabled = true,
+		//		ServerName = _settings.Host
+		//	}
+		//};
 
-        _connection = factory.CreateConnection();
+		var factory = new ConnectionFactory
+		{
+			Uri = new Uri("amqps://kscffsye:Ht3OsGswOLwYU98Q-9cdaQbGT_lzSfkX@collie.lmq.cloudamqp.com/kscffsye"),
+			AutomaticRecoveryEnabled = true
+		};
+
+		_connection = factory.CreateConnection();
         _channel = _connection.CreateModel();
 
         _channel.QueueDeclare(
@@ -44,9 +53,7 @@ public class BoardPublisherService : IBoardPublisherService, IDisposable
             autoDelete: false,
             arguments: null);
 
-        _logger.Information(
-            "RabbitMQ BoardPublisherService initialized, Queue: {Queue}",
-            _settings.BoardBatchQueue);
+        _logger.Information( "RabbitMQ BoardPublisherService initialized, Queue: {Queue}", _settings.BoardBatchQueue);
     }
 
     public Task PublishBatchAsync(BoardBatchMessage message)
