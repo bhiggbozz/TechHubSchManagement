@@ -65,7 +65,7 @@ public class BoardSessionController : ControllerBase
     /// Called once to finalize the recording session.
     /// </summary>
     [HttpPost("session/{sessionId}/manifest")]
-    [Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+    [Authorize(Roles = "SubjectTeacher,HeadTeacher,ClassTeacher")]
     [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

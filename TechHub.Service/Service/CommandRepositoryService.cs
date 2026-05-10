@@ -410,16 +410,14 @@ namespace TechHub.Service.Service
 			await conn.ExecuteAsync(query, parameter);
 		}
 
-		public async Task RevokeToken(
-	SqlTransaction transaction, SqlConnection connection,
-	Guid tokenId, string replacedByToken = null)
+		public async Task RevokeToken(SqlTransaction transaction, SqlConnection connection, Guid tokenId, string replacedByToken = null)
 		{
 			const string sql = @"
-        UPDATE RefreshTokens
-        SET IsRevoked       = 1,
-            RevokedAt       = @RevokedAt,
-            ReplacedByToken = @ReplacedByToken
-        WHERE Id = @Id";
+				UPDATE RefreshTokens
+				SET IsRevoked       = 1,
+					RevokedAt       = @RevokedAt,
+					ReplacedByToken = @ReplacedByToken
+				WHERE Id = @Id";
 
 			var parameter = new DynamicParameters();
 			parameter.Add("@Id", tokenId);
