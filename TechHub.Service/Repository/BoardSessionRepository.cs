@@ -25,7 +25,7 @@ public class BoardSessionRepository : IBoardSessionRepository
         var database = client.GetDatabase(mongoSettings.Value.DatabaseName);
         _sessions = database.GetCollection<BoardSession>("board_sessions");
 
-        EnsureIndexes();
+       // EnsureIndexes();
     }
 
     private void EnsureIndexes()
