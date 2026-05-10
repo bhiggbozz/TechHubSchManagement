@@ -120,6 +120,26 @@ public class LessonController : ControllerBase
 		var result = await _lessonService.GetLessonForClass(lessonId, claims);
 		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 	}
+
+	// GET api/lesson/student/classroom/{classroomId}
+	[HttpGet("student/classroom/{classroomId}")]
+	[Authorize(Roles = "Student")]
+	public async Task<IActionResult> GetLessonsForStudent(Guid classroomId)
+	{
+		var claims = GetClaims();
+		var result = await _lessonService.GetLessonsForStudent(classroomId, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
+	// GET api/lesson/admin/classroom/{classroomId}
+	[HttpGet("admin/classroom/{classroomId}")]
+	[Authorize(Roles = "Administrator,SuperAdministrator")]
+	public async Task<IActionResult> GetLessonsByClassroomForAdmin(Guid classroomId)
+	{
+		var claims = GetClaims();
+		var result = await _lessonService.GetLessonsByClassroomForAdmin(classroomId, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
 	private AuthenticatedUserClaims GetClaims() => new AuthenticatedUserClaims
 	{
 		UserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value,

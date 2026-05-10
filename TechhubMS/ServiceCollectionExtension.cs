@@ -9,6 +9,7 @@ using TechHub.Background.Jobs;
 using TechHub.BackgroundJobs.Interfaces;
 using TechHub.BackgroundJobs.Jobs;
 using TechHub.BackgroundJobs.Services;
+using TechHub.Core.Entities;
 using TechHub.Core.Utilities;
 using TechHub.QuestionBank.Services;
 using TechHub.Service.Interface;
@@ -65,6 +66,9 @@ namespace TechhubMS
 
 			services.AddSingleton<IConnectionStringResolver, ConnectionStringResolver> ();
 			services.AddSingleton<JwtTokenGenerator>();
+
+			services.AddScoped<IQueryRepository<StudentClassroom>, QueryRepositoryService<StudentClassroom>>();
+			services.AddScoped<IQueryRepository<LessonContent>, QueryRepositoryService<LessonContent>>();
 
 			// Register QuestionBank module
 			services.AddQuestionBankServices();

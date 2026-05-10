@@ -7,7 +7,10 @@ public class BoardBatch
     [BsonElement("batchIndex")]
     public int BatchIndex { get; set; }
 
-    [BsonElement("startMs")]
+	[BsonElement("indexKey")]
+	public string IndexKey { get; set; } = string.Empty; 
+
+	[BsonElement("startMs")]
     public long StartMs { get; set; }
 
     [BsonElement("endMs")]

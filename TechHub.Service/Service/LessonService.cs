@@ -26,6 +26,8 @@ public class LessonService : ILessonService
 	private readonly IQueryRepository<Users> _userQuery;
 	private readonly IQueryRepository<Classroom> _classroomQuery;
 	private readonly IQueryRepository<ApprovalRequests> _approvalQuery;
+	private readonly IQueryRepository<StudentClassroom> _studentClassroomQuery;
+
 	private readonly ICommandRespository<ApprovalRequests> _approvalCommand;
 	private readonly IDbTransactionScopeFactory _scopeFactory;
 	private readonly IEmailService _emailService;
@@ -42,6 +44,7 @@ public class LessonService : ILessonService
 	IQueryRepository<Classroom> classroomQuery,
 	IQueryRepository<ApprovalRequests> approvalQuery,
 	ICommandRespository<ApprovalRequests> approvalCommand,
+	IQueryRepository<StudentClassroom> studentClassroomQuery,
 	IDbTransactionScopeFactory scopeFactory,
 	IEmailService emailService,
 	IConfiguration configuration,
@@ -53,6 +56,8 @@ public class LessonService : ILessonService
 		_mediaQuery = mediaQuery;
 		_userQuery = userQuery;
 		_classroomQuery = classroomQuery;
+		_studentClassroomQuery = studentClassroomQuery;
+
 		_approvalQuery = approvalQuery;
 		_approvalCommand = approvalCommand;
 		_scopeFactory = scopeFactory;
@@ -806,6 +811,237 @@ public class LessonService : ILessonService
 			return ServerError();
 		}
 	}
+	public async Task<BaseResponse> GetLessonsForStudent(Guid classroomId, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.UserId, out var studentId))
+				return Unauthorized();
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			// Verify student belongs to this classroom
+			var membershipQuery = $@"
+            SELECT TOP 1 Id FROM StudentClassroom
+            WHERE  StudentId  = '{studentId}'
+            AND    ClassroomId = '{classroomId}'
+            AND    IsActive = 1
+            AND    SchoolId    = '{schoolId}'";
+
+			var membership = await _studentClassroomQuery.Get(membershipQuery);
+			if (membership is null)
+				return Forbidden("You are not enrolled in this classroom");
+
+			// Fetch only Published lessons with subject and topic info
+			var lessonsQuery = $@"
+            SELECT
+                lc.Id,
+                lc.Aim,
+                lc.Description,
+                lc.Status,
+                lc.CreatedAt,
+                lc.ApprovedAt,
+                lc.SubTopic,
+
+                s.Id          AS SubjectId,
+                s.Subject     AS SubjectName,
+
+                t.Id          AS TopicId,
+                t.Name        AS TopicName,
+
+                u.FirstName + ' ' + u.LastName AS TeacherName,
+
+                -- Media count
+                (SELECT COUNT(*) FROM LessonMedia lm
+                 WHERE lm.LessonContentId = lc.Id
+                 AND   lm.IsActive = 1)    AS MediaCount
+
+              
+
+            FROM   LessonContent lc
+            JOIN   Subjects      s  ON s.Id = lc.SubjectId
+            JOIN   Topic         t  ON t.Id = lc.TopicId
+            JOIN   Users         u  ON u.Id = lc.CreatedBy
+
+            WHERE  lc.ClassroomId = '{classroomId}'
+            AND    lc.SchoolId    = '{schoolId}'
+            AND    lc.Status      = '{LessonStatus.Published}'
+
+            ORDER  BY lc.ApprovedAt DESC";
+
+			var rows = await _lessonQuery.QueryAsync<StudentLessonItemDto>(
+				lessonsQuery, new Dictionary<string, object>());
+
+			var lessons = rows.ToList();
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = lessons.Any()
+					? $"{lessons.Count} lesson(s) found"
+					: "No lessons available for this classroom",
+				Status = "successful",
+				Data = new
+				{
+					ClassroomId = classroomId,
+					Count = lessons.Count,
+					Lessons = lessons
+				}
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex,
+				"Error fetching lessons for student - ClassroomId: {ClassroomId}, StudentId: {StudentId}",
+				classroomId, claims?.UserId);
+			return ServerError();
+		}
+	}
+
+	public async Task<BaseResponse> GetLessonsByClassroomForAdmin(Guid classroomId, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			// Verify classroom belongs to this school
+			var classroom = await _classroomQuery.Get(classroomId);
+			if (classroom is null || classroom.SchoolId != schoolId)
+				return NotFound("Classroom not found");
+
+			var lessonsQuery = $@"
+            SELECT
+                lc.Id,
+                lc.Aim,
+                lc.Description,
+                lc.Status,
+                lc.CreatedAt,
+                lc.ApprovedAt,
+                lc.SubTopic,
+                lc.RejectionReason,
+
+                s.Id          AS SubjectId,
+                s.Subject     AS SubjectName,
+
+                t.Id          AS TopicId,
+                t.Name        AS TopicName,
+
+                u.FirstName + ' ' + u.LastName  AS TeacherName,
+                ap.FirstName + ' ' + ap.LastName AS ApprovedByName,
+
+                (SELECT COUNT(*) FROM LessonMedia lm
+                 WHERE lm.LessonContentId = lc.Id
+                 AND   lm.IsActive = 1)    AS MediaCount
+
+            FROM   LessonContent lc
+            JOIN   Subjects      s   ON s.Id  = lc.SubjectId
+            JOIN   Topic         t   ON t.Id  = lc.TopicId
+            JOIN   Users         u   ON u.Id  = lc.CreatedBy
+            LEFT JOIN Users      ap  ON ap.Id = lc.ApprovedBy
+
+            WHERE  lc.ClassroomId = '{classroomId}'
+            AND    lc.SchoolId    = '{schoolId}'
+
+            ORDER  BY lc.CreatedAt DESC";
+
+			var rows = await _lessonQuery.QueryAsync<AdminLessonItemDto>(
+				lessonsQuery, new Dictionary<string, object>());
+
+			var lessons = rows.ToList();
+
+			// Status summary for admin dashboard
+			var summary = new
+			{
+				Total = lessons.Count,
+				Published = lessons.Count(l => l.Status == LessonStatus.Published),
+				PendingApproval = lessons.Count(l => l.Status == LessonStatus.PendingApproval),
+				Approved = lessons.Count(l => l.Status == LessonStatus.Approved),
+				Rejected = lessons.Count(l => l.Status == LessonStatus.Rejected)
+			};
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = lessons.Any()
+					? $"{lessons.Count} lesson(s) found"
+					: "No lessons found for this classroom",
+				Status = "successful",
+				Data = new
+				{
+					ClassroomId = classroomId,
+					Summary = summary,
+					Lessons = lessons
+				}
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex,
+				"Error fetching lessons for admin - ClassroomId: {ClassroomId}",
+				classroomId);
+			return ServerError();
+		}
+	}
+
+	//public async Task<BaseResponse> GetLessonManifestForStudent(string sessionId, AuthenticatedUserClaims claims)
+	//{
+	//	try
+	//	{
+	//		if (!Guid.TryParse(claims.UserId, out var studentId))
+	//			return Unauthorized();
+	//		if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+	//			return Unauthorized();
+
+	//		// 1. Fetch the board session from MongoDB
+	//		var session = await _repository.GetSessionAsync(sessionId, claims.SchoolId);
+	//		if (session is null)
+	//			return NotFound("Session not found");
+
+	//		// 2. Verify the lesson exists and is Published
+	//		var lessonQuery = $@"
+ //           SELECT lc.Id, lc.ClassroomId, lc.Status, lc.SchoolId
+ //           FROM   LessonContent lc
+ //           WHERE  lc.Id       = '{session.LessonId}'
+ //           AND    lc.SchoolId = '{schoolId}'
+ //           AND    lc.Status   = '{LessonStatus.Published}'";
+
+	//		var lesson = await _lessonQuery.Get(lessonQuery);
+	//		if (lesson is null)
+	//			return NotFound("Lesson not found or not yet published");
+
+	//		// 3. Verify student is enrolled in the lesson's classroom
+	//		var membershipQuery = $@"
+ //           SELECT TOP 1 Id FROM StudentClassroom
+ //           WHERE  StudentId   = '{studentId}'
+ //           AND    ClassroomId = '{lesson.ClassroomId}'
+ //           AND    SchoolId    = '{schoolId}'
+ //           AND    IsActive    = 1";
+
+	//		var membership = await _studentClassroomQuery.Get(membershipQuery);
+	//		if (membership is null)
+	//			return Forbidden("You are not enrolled in this classroom");
+
+	//		_logger.Information(
+	//			"Manifest fetched for student - SessionId: {SessionId}, StudentId: {StudentId}",
+	//			sessionId, studentId);
+
+	//		return new BaseResponse
+	//		{
+	//			ResponseCode = ResponseCode.successful,
+	//			ResponseMessage = "Manifest retrieved successfully",
+	//			Status = "successful",
+	//			Data = session.Manifest
+	//		};
+	//	}
+	//	catch (Exception ex)
+	//	{
+	//		_logger.Error(ex,
+	//			"Error fetching manifest - SessionId: {SessionId}, StudentId: {StudentId}",
+	//			sessionId, claims?.UserId);
+	//		return ServerError();
+	//	}
+	//}
 
 	private BaseResponse BadRequest(string message) => new BaseResponse
 	{
