@@ -137,8 +137,8 @@ public class BoardSessionRepository : IBoardSessionRepository
 			var update = Builders<BoardSession>.Update
 				.Set(s => s.Version, manifest.Version)
 				.Set(s => s.Status, SessionStatus.Completed)
-				.Set(s => s.PublishedAt, manifest.Session.PublishedAt)
-				.Set(s => s.RecordedAt, manifest.Session.RecordedAt)
+				//.Set(s => s.PublishedAt, manifest.Session.PublishedAt)
+				//.Set(s => s.RecordedAt, manifest.Session.RecordedAt)
 				.Set(s => s.Teacher, new TeacherInfo
 				{
 					Id = manifest.Session.Teacher.Id,
