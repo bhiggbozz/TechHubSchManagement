@@ -65,7 +65,7 @@ public class BoardSessionController : ControllerBase
     /// Called once to finalize the recording session.
     /// </summary>
     [HttpPost("session/{sessionId}/manifest")]
-    [Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+    [Authorize(Roles = "SubjectTeacher,HeadTeacher,ClassTeacher")]
     [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -141,4 +141,117 @@ public class BoardSessionController : ControllerBase
             Data = session
         });
     }
+
+	/// <summary>
+	/// Get session manifest for student download.
+	/// Returns manifest with stroke batch references — no raw strokes.
+	/// Student must be enrolled in the lesson's classroom.
+	/// </summary>
+	[HttpGet("session/{sessionId}/manifest")]
+	[Authorize(Roles = "Student")]
+	[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+	[ProducesResponseType(StatusCodes.Status403Forbidden)]
+	[ProducesResponseType(StatusCodes.Status404NotFound)]
+	[ProducesResponseType(StatusCodes.Status401Unauthorized)]
+	public async Task<ActionResult<BaseResponse>> GetManifest(
+		[FromRoute] string sessionId)
+	{
+		var claims = User.GetAuthenticatedUserClaims();
+		if (claims == null || string.IsNullOrEmpty(claims.UserId))
+			return Unauthorized(new BaseResponse
+			{
+				ResponseCode = ResponseCode.Unauthorized,
+				ResponseMessage = "Invalid user claims",
+				Status = "failed"
+			});
+
+		var result = await _boardSessionService.GetManifest(sessionId, claims);
+
+		return result.ResponseCode switch
+		{
+			ResponseCode.successful => Ok(result),
+			ResponseCode.NotFound => NotFound(result),
+			ResponseCode.Forbidden => StatusCode(StatusCodes.Status403Forbidden, result),
+			ResponseCode.Unauthorized => Unauthorized(result),
+			_ => BadRequest(result)
+		};
+	}
+
+	/// <summary>
+	/// Get a single stroke batch by indexKey.
+	/// Called per batch during lesson download.
+	/// indexKey format: {lessonId}_{batchIndex} e.g. "lesson-uuid_0"
+	/// </summary>
+	[HttpGet("session/{sessionId}/batch/{indexKey}")]
+	[Authorize(Roles = "Student")]
+	[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+	[ProducesResponseType(StatusCodes.Status404NotFound)]
+	[ProducesResponseType(StatusCodes.Status401Unauthorized)]
+	public async Task<ActionResult<BaseResponse>> GetBatch(
+		[FromRoute] string sessionId,
+		[FromRoute] string indexKey)
+	{
+		var claims = User.GetAuthenticatedUserClaims();
+		if (claims == null || string.IsNullOrEmpty(claims.UserId))
+			return Unauthorized(new BaseResponse
+			{
+				ResponseCode = ResponseCode.Unauthorized,
+				ResponseMessage = "Invalid user claims",
+				Status = "failed"
+			});
+
+		if (string.IsNullOrWhiteSpace(indexKey))
+			return BadRequest(new BaseResponse
+			{
+				ResponseCode = ResponseCode.BadRequest,
+				ResponseMessage = "IndexKey is required",
+				Status = "failed"
+			});
+
+		var result = await _boardSessionService.GetBatch(sessionId, indexKey, claims);
+
+		return result.ResponseCode switch
+		{
+			ResponseCode.successful => Ok(result),
+			ResponseCode.NotFound => NotFound(result),
+			ResponseCode.Unauthorized => Unauthorized(result),
+			_ => BadRequest(result)
+		};
+	}
+
+	/// <summary>
+	/// Get a session by ID — admin and teacher use only.
+	/// </summary>
+	//[HttpGet("session/{sessionId}")]
+	//[Authorize(Roles = "SubjectTeacher,HeadTeacher,Administrator,SuperAdministrator")]
+	//[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+	//[ProducesResponseType(StatusCodes.Status404NotFound)]
+	//public async Task<ActionResult<BaseResponse>> GetSession([FromRoute] string sessionId)
+	//{
+	//	var claims = User.GetAuthenticatedUserClaims();
+	//	if (claims == null || string.IsNullOrEmpty(claims.SchoolId))
+	//		return Unauthorized(new BaseResponse
+	//		{
+	//			ResponseCode = ResponseCode.Unauthorized,
+	//			ResponseMessage = "Invalid user claims",
+	//			Status = "failed"
+	//		});
+
+	//	var session = await _boardSessionService.GetSessionAsync(sessionId, claims.SchoolId);
+	//	if (session == null)
+	//		return NotFound(new BaseResponse
+	//		{
+	//			ResponseCode = ResponseCode.NotFound,
+	//			ResponseMessage = $"Session {sessionId} not found",
+	//			Status = "failed"
+	//		});
+
+	//	return Ok(new BaseResponse
+	//	{
+	//		ResponseCode = ResponseCode.successful,
+	//		ResponseMessage = "Session retrieved successfully",
+	//		Status = "success",
+	//		Data = session
+	//	});
+	//}
 }

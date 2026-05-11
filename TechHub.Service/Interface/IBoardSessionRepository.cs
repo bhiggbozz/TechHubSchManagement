@@ -12,4 +12,8 @@ public interface IBoardSessionRepository
     Task UpdateAudioFinalUrlAsync(string sessionId, string audioFinalUrl);
     Task MarkCompletedAsync(string sessionId);
     Task<bool> BatchExistsAsync(string sessionId, int batchIndex);
+	Task<BoardSession?> GetManifestAsync(string sessionId, string schoolId);
+	Task<BoardBatch?> GetBatchByIndexKeyAsync(string sessionId, string schoolId, string indexKey);
+	//Task<BoardSession?> GetSessionWithManifestAsync(string sessionId, string schoolId);
+
 }
