@@ -9,7 +9,7 @@ namespace TechHub.Core.Model;
 public class SubjectTeacherAssignmentRow
 {
 	public Guid ClassroomId { get; set; }
-	public string ClassName { get; set; }
+	public string Name { get; set; }
 	public Guid SubjectId { get; set; }
 	public string SubjectName { get; set; }
 	public string SubjectCategory { get; set; }
