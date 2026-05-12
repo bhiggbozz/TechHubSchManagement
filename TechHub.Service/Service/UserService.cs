@@ -2576,15 +2576,12 @@ namespace TechHub.Service.Service
 		public async Task<BaseResponse> GetUserById(Guid userId, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
-			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
 			{
 				try
 				{
-					// Validation 1: Check if user claims are valid
 					if (string.IsNullOrEmpty(userClaims?.SchoolId) || string.IsNullOrEmpty(userClaims?.UserId))
 					{
 						_logger.Warning("Get user request with invalid claims");
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Unauthorized,
@@ -2593,11 +2590,9 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					// Validation 2: Parse SchoolId
 					if (!Guid.TryParse(userClaims.SchoolId, out var claimSchoolId))
 					{
 						_logger.Warning("Invalid SchoolId format in token - SchoolId: {SchoolId}", userClaims.SchoolId);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -2608,13 +2603,10 @@ namespace TechHub.Service.Service
 
 					_logger.Information("Fetching user by ID - TargetUserId: {TargetUserId}", userId);
 
-					// Get user from repository
 					var user = await _queryrepositoryUser.Get(userId);
-
 					if (user == null)
 					{
 						_logger.Warning("User not found - TargetUserId: {TargetUserId}", userId);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.NotFound,
@@ -2623,14 +2615,11 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					// Validation 3: Multi-tenancy check - Ensure user belongs to same school
 					if (user.SchoolId != claimSchoolId)
 					{
 						_logger.Warning(
-							"Unauthorized access attempt - User {RequestedBy} tried to access user {TargetUserId} from different school",
-							userClaims.UserId,
-							userId);
-
+							"Unauthorized access attempt - RequestedBy: {RequestedBy}, TargetUserId: {TargetUserId}",
+							userClaims.UserId, userId);
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Forbidden,
@@ -2639,17 +2628,136 @@ namespace TechHub.Service.Service
 						};
 					}
 
+					var role = (UserRole)user.RoleId;
+					object roleData = null;
+
+					switch (role)
+					{
+						case UserRole.SubjectTeacher:
+							// Classrooms + subjects per classroom
+							var subjectTeacherQuery = $@"
+								SELECT
+									c.Id          AS ClassroomId,
+									c.Name,
+									s.Id          AS SubjectId,
+									s.Subject     AS SubjectName,
+									s.Category    AS SubjectCategory
+								FROM   TeacherClassroom tc
+								JOIN   Classroom        c  ON c.Id = tc.ClassroomId
+								JOIN   TeacherSubject   ts ON ts.TeacherId = tc.TeacherId
+								JOIN   Subjects         s  ON s.Id = ts.SubjectId
+								WHERE  tc.TeacherId = '{userId}'
+								AND    tc.SchoolId  = '{claimSchoolId}'
+								AND    tc.IsActive  = 1
+								AND    ts.IsActive  = 1
+								ORDER  BY c.Name, s.Subject";
+
+							var subjectTeacherRows = await _queryrepositoryUser
+								.QueryAsync<SubjectTeacherAssignmentRow>(
+									subjectTeacherQuery, new Dictionary<string, object>());
+
+							// Group by classroom
+							var classroomsWithSubjects = subjectTeacherRows
+								.GroupBy(r => new { r.ClassroomId, r.ClassName })
+								.Select(g => new
+								{
+									ClassroomId = g.Key.ClassroomId,
+									ClassName = g.Key.ClassName,
+									Subjects = g.Select(r => new
+									{
+										SubjectId = r.SubjectId,
+										SubjectName = r.SubjectName,
+										SubjectCategory = r.SubjectCategory
+									}).ToList()
+								}).ToList();
+
+							roleData = new { Classrooms = classroomsWithSubjects };
+							break;
+
+						case UserRole.ClassTeacher:
+							// Classrooms only
+							var classTeacherQuery = $@"
+								SELECT
+									c.Id       AS ClassroomId,
+									c.Name,
+									c.IsActive AS ClassroomIsActive
+								FROM   TeacherClassroom tc
+								JOIN   Classroom        c ON c.Id = tc.ClassroomId
+								WHERE  tc.TeacherId = '{userId}'
+								AND    tc.SchoolId  = '{claimSchoolId}'
+								AND    tc.IsActive  = 1
+								ORDER  BY c.Name";
+
+							var classTeacherRows = await _queryrepositoryUser
+								.QueryAsync<ClassroomRow>(
+									classTeacherQuery, new Dictionary<string, object>());
+
+							roleData = new
+							{
+								Classrooms = classTeacherRows.Select(r => new
+								{
+									r.ClassroomId,
+									r.ClassName,
+									r.ClassroomIsActive
+								}).ToList()
+							};
+							break;
+
+						case UserRole.Student:
+							// Single classroom + subjects enrolled in
+							var studentQuery = $@"
+								SELECT
+									c.Id       AS ClassroomId,
+									c.Name,
+									c.IsActive AS ClassroomIsActive
+								FROM   StudentClassroom sc
+								JOIN   Classroom        c ON c.Id = sc.ClassroomId
+								WHERE  sc.StudentId = '{userId}'
+								AND    sc.SchoolId  = '{claimSchoolId}'
+								AND    sc.IsActive  = 1";
+
+							var studentClassroom = await _queryrepositoryUser
+								.QueryAsync<ClassroomRow>(
+									studentQuery, new Dictionary<string, object>());
+
+							var studentSubjectQuery = $@"
+								SELECT
+									s.Id      AS SubjectId,
+									s.Subject AS SubjectName,
+									s.Category AS SubjectCategory
+								FROM   StudentMinorSubject sms
+								JOIN   Subjects            s ON s.Id = sms.SubjectId
+								WHERE  sms.StudentId = '{userId}'
+								AND    sms.SchoolId  = '{claimSchoolId}'
+								AND    sms.IsActive  = 1";
+
+							var studentSubjects = await _queryrepositoryUser
+								.QueryAsync<SubjectRow>(
+									studentSubjectQuery, new Dictionary<string, object>());
+
+							roleData = new
+							{
+								Classroom = studentClassroom.FirstOrDefault(),
+								Subjects = studentSubjects.ToList()
+							};
+							break;
+
+						default:
+							// HeadTeacher, Administrator, SuperAdministrator — no extra data
+							roleData = null;
+							break;
+					}
+
 					_logger.Information(
-						"User retrieved successfully - TargetUserId: {TargetUserId}, Email: {Email}",
-						user.Id,
-						user.EmailAddress);
+						"User retrieved successfully - TargetUserId: {TargetUserId}, Role: {Role}",
+						user.Id, role.ToString());
 
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.successful,
 						ResponseMessage = "User retrieved successfully",
 						Status = "successful",
-						Data = new UserDto
+						Data = new
 						{
 							Id = user.Id,
 							FirstName = user.FirstName,
@@ -2657,20 +2765,20 @@ namespace TechHub.Service.Service
 							UserName = user.UserName,
 							EmailAddress = user.EmailAddress,
 							RoleId = user.RoleId,
-							RoleName = ((UserRole)user.RoleId).ToString(),
+							RoleName = role.ToString(),
 							IsActive = user.IsActive,
 							HasAccess = user.HasAccess,
 							ProfileImage = user.ProfileImage,
 							GuardianName = user.GuardianName,
 							CreatedDate = user.CreationDate,
-							ModifiedDate = user.ModifiedDate
+							ModifiedDate = user.ModifiedDate,
+							RoleData = roleData   
 						}
 					};
 				}
 				catch (Exception ex)
 				{
 					_logger.Error(ex, "Error fetching user by ID - TargetUserId: {TargetUserId}", userId);
-
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.ErrorOccured,
