@@ -2658,11 +2658,11 @@ namespace TechHub.Service.Service
 
 							// Group by classroom
 							var classroomsWithSubjects = subjectTeacherRows
-								.GroupBy(r => new { r.ClassroomId, r.ClassName })
+								.GroupBy(r => new { r.ClassroomId, r.Name })
 								.Select(g => new
 								{
 									ClassroomId = g.Key.ClassroomId,
-									ClassName = g.Key.ClassName,
+									ClassName = g.Key.Name,
 									Subjects = g.Select(r => new
 									{
 										SubjectId = r.SubjectId,
