@@ -20,8 +20,16 @@ public class ApprovalItemDto
 	public string RequestedByName { get; set; }
 	public string RequestedByEmail { get; set; }
 
+	public object Payload { get; set; }
+
+	public LessonApprovalPayload LessonPayload { get; set; }
+
+	// Everything else uses this — populated for all other OperationTypes
+	public ApprovalPayloadSummary Summary { get; set; }
 	// Lesson-specific enrichment (null for non-lesson operations)
 	public LessonSummaryDto Lesson { get; set; }
+	public SyllabusSummaryDto Syllabus { get; set; }
+	public ExaminationSummaryDto Examination { get; set; }
 }
 public class LessonSummaryDto
 {
@@ -33,6 +41,83 @@ public class LessonSummaryDto
 	public string ClassName { get; set; }
 	public int MediaCount { get; set; }
 	
+}
+
+//public class LessonSummaryDto
+//{
+//	public Guid LessonId { get; set; }
+//	public string Aim { get; set; }
+//	public string Description { get; set; }
+//	public string SubjectName { get; set; }
+//	public string TopicName { get; set; }
+//	public string ClassName { get; set; }
+//	public int MediaCount { get; set; }
+//}
+
+public class ApprovalPayloadSummary
+{
+	public string Title { get; set; }
+	public string SubjectName { get; set; }
+	public string? ClassName { get; set; }
+	public string? Description { get; set; }
+	public string? Term { get; set; }   // syllabus
+	public string? ExamDate { get; set; }   // examination
+	public int? TotalMarks { get; set; }   // examination
+	public string UserRole { get; set; }   // CreateUser
+	public string UserName { get; set; }   // CreateUser
+}
+
+// ── Lesson-specific — richer shape ───────────────────────────────────────────
+public class LessonApprovalPayload
+{
+	public Guid LessonId { get; set; }
+	public string Aim { get; set; }
+	public string Description { get; set; }
+	public string SubjectName { get; set; }
+	public string TopicName { get; set; }
+	public string SubTopic { get; set; }
+	public string ClassName { get; set; }
+	public int MediaCount { get; set; }
+	public bool HasRecording { get; set; }
+
+	// Two-layer approval tracking
+	public string HeadTeacherApprovalStatus { get; set; }  // Pending | Approved | Rejected
+	public string AdminApprovalStatus { get; set; }  // Pending | Approved | Rejected | NotRequired
+	public string CurrentApprovalLayer { get; set; }  // HeadTeacher | Admin
+}
+
+public class SyllabusSummaryDto
+{
+	public Guid SyllabusId { get; set; }
+	public string Title { get; set; }
+	public string SubjectName { get; set; }
+	public string ClassName { get; set; }
+	public string Term { get; set; }
+}
+
+public class ExaminationSummaryDto
+{
+	public Guid ExaminationId { get; set; }
+	public string Title { get; set; }
+	public string SubjectName { get; set; }
+	public string ClassName { get; set; }
+	public string ExamDate { get; set; }
+	public int TotalMarks { get; set; }
+}
+
+// Flat DB row — base approval fields only
+public class ApprovalBaseRow
+{
+	public Guid Id { get; set; }
+	public string OperationType { get; set; }
+	public string EntityType { get; set; }
+	public Guid? EntityId { get; set; }
+	public string Status { get; set; }
+	public DateTime CreatedAt { get; set; }
+	public DateTime ExpiresAt { get; set; }
+	public string Payload { get; set; }
+	public string RequestedByName { get; set; }
+	public string RequestedByEmail { get; set; }
 }
 
 public class ApprovalRespondViewModel

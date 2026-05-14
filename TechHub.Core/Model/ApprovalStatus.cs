@@ -16,11 +16,14 @@ public static class ApprovalStatus
 
 public static class OperationType
 {
+	public const string SubmitLesson = "SubmitLesson";
+	public const string SubmitSyllabus = "SubmitSyllabus";
+	public const string CreateExamination = "CreateExamination";
 	public const string CreateUser = "CreateUser";
 	public const string EditUser = "EditUser";
 	public const string AssignPermissions = "AssignPermissions";
 	public const string RegisterToClass = "RegisterToClass";
 	public const string DeactivateUser = "DeactivateUser";
-	public const string SubmitLesson = "SubmitLesson";
+	public const string CreateTopic = "CreateTopic";
 }
 

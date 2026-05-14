@@ -190,8 +190,7 @@ namespace TechhubMS.Controllers
 
 
 		[HttpPost("topics")]
-		public async Task<IActionResult> CreateTopic(
-		[FromBody] CreateTopicViewModel model)
+		public async Task<IActionResult> CreateTopic([FromBody] CreateTopicViewModel model)
 		{
 			var userClaims = User.GetAuthenticatedUserClaims();
 			var result = await _schoolService.CreateTopic(model, userClaims);
