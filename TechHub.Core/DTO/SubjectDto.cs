@@ -29,3 +29,10 @@ public class SubTopicDto
 	public string Name { get; set; }
 	public bool IsActive { get; set; }
 }
+public class SubTopicDto2
+{
+	public Guid SubTopicId { get; set; }
+	public string Name { get; set; }
+	public bool IsActive { get; set; }
+	public string CreatedAt { get; set; }
+}

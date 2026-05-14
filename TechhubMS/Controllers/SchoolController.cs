@@ -256,6 +256,24 @@ namespace TechhubMS.Controllers
 			return Ok(result);
 		}
 
+		[HttpGet("subject/{subjectId}/classroom/{classroomId}")]
+		[Authorize]
+		[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+		[ProducesResponseType(StatusCodes.Status404NotFound)]
+		public async Task<IActionResult> GetTopicsWithSubTopics(Guid subjectId, Guid classroomId)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.GetTopicsWithSubTopics(subjectId, classroomId, userClaims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
+		}
+
 
 	}
 
