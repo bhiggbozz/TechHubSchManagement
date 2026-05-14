@@ -3753,6 +3753,115 @@ namespace TechHub.Service.Service
 				};
 			}
 		}
+		/// <summary>
+		/// ftch topics and subtopic with classroom and subject 
+		/// </summary>
+		/// <param name="subjectId"></param>
+		/// <param name="classroomId"></param>
+		/// <param name="claims"></param>
+		/// <returns></returns>
+
+		public async Task<BaseResponse> GetTopicsWithSubTopics(Guid subjectId, Guid classroomId, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid authentication",
+						Status = "failed"
+					};
+
+				// Validate subject belongs to school
+				var subject = await _queryrepositorySubject.Get(subjectId, DatabaseTarget.Core);
+				if (subject == null || subject.SchoolId != schoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Subject not found",
+						Status = "failed"
+					};
+
+				// Single query — topics + subtopics joined
+				var query = $@"
+					SELECT
+						t.Id           AS TopicId,
+						t.Name         AS TopicName,
+						t.IsActive     AS TopicIsActive,
+						t.CreatedAt    AS TopicCreatedAt,
+
+						st.Id          AS SubTopicId,
+						st.Name        AS SubTopicName,
+						st.IsActive    AS SubTopicIsActive,
+						st.CreatedAt   AS SubTopicCreatedAt
+
+					FROM   Topic    t
+					LEFT JOIN SubTopic st ON st.TopicId  = t.Id
+										 AND st.IsDeleted = 0
+										 AND st.IsActive  = 1
+					WHERE  t.SubjectId   = '{subjectId}'
+					AND    t.ClassroomId = '{classroomId}'
+					AND    t.SchoolId    = '{schoolId}'
+					AND    t.IsDeleted   = 0
+					AND    t.IsActive    = 1
+					ORDER  BY t.Name ASC, st.Name ASC";
+
+				var rows = await _topicQueryRepository.QueryAsync<TopicSubTopicRow>(query, new Dictionary<string, object>());
+
+				// Group flat rows into nested structure
+				var grouped = rows
+					.GroupBy(r => new { r.TopicId, r.TopicName, r.TopicIsActive, r.TopicCreatedAt })
+					.Select(g => new TopicWithSubTopicsDto
+					{
+						TopicId = g.Key.TopicId,
+						TopicName = g.Key.TopicName,
+						IsActive = g.Key.TopicIsActive,
+						CreatedAt = g.Key.TopicCreatedAt,
+						SubTopics = g
+							.Where(r => r.SubTopicId != Guid.Empty)
+							.Select(r => new SubTopicDto2
+							{
+								SubTopicId = r.SubTopicId,
+								Name = r.SubTopicName,
+								IsActive = r.SubTopicIsActive,
+								CreatedAt = r.SubTopicCreatedAt
+							}).ToList()
+					}).ToList();
+
+				_logger.Information("Topics fetched - SubjectId: {SubjectId}, ClassroomId: {ClassroomId}, " + "TopicCount: {TopicCount}",
+					subjectId, classroomId, grouped.Count);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = grouped.Any()
+						? $"{grouped.Count} topic(s) found"
+						: "No topics found for this subject",
+					Status = "successful",
+					Data = new
+					{
+						SubjectId = subjectId,
+						SubjectName = subject.Subject,
+						ClassroomId = classroomId,
+						TopicCount = grouped.Count,
+						Topics = grouped
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error fetching topics - SubjectId: {SubjectId}, ClassroomId: {ClassroomId}",
+					subjectId, classroomId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
 
 
 		public async Task<BaseResponse> GetClassroomCurriculum(Guid classroomId, AuthenticatedUserClaims userClaims)
