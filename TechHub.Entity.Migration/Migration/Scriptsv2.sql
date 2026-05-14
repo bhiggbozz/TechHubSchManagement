@@ -295,3 +295,23 @@ CREATE TABLE [StudentMinorSubject ] (
 ALTER TABLE Questions
 ADD ImageUrl      NVARCHAR(1000) NULL,
     ImagePublicId NVARCHAR(500)  NULL;
+
+-----------------------------------------------------
+
+ALTER TABLE Topic ADD ClassroomId UNIQUEIDENTIFIER NULL;
+
+-- Backfill existing rows if needed
+-- UPDATE Topic SET ClassroomId = '...' WHERE ClassroomId IS NULL
+
+-- Then make it NOT NULL after backfill
+ALTER TABLE Topic ALTER COLUMN ClassroomId UNIQUEIDENTIFIER NOT NULL;
+
+CREATE INDEX IX_Topic_ClassroomId ON Topic (SchoolId, ClassroomId);
+
+
+---------------------------------------------------------------------------
+
+
+ALTER TABLE SubTopic ADD ClassroomId UNIQUEIDENTIFIER NULL;
+ALTER TABLE SubTopic ALTER COLUMN ClassroomId UNIQUEIDENTIFIER NOT NULL;
+CREATE INDEX IX_SubTopic_ClassroomId ON SubTopic (SchoolId, ClassroomId);

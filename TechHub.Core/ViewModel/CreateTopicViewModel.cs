@@ -8,8 +8,10 @@ namespace TechHub.Core.ViewModel;
 
 public class CreateTopicViewModel
 {
-	public Guid SubjectId { get; set; }
 	public string Name { get; set; }
+	public Guid SubjectId { get; set; }
+	public Guid ClassroomId { get; set; }
+	public List<string> SubTopics { get; set; } = new();
 }
 
 public class CreateSubTopicViewModel

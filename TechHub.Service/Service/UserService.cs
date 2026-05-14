@@ -18,6 +18,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using TechHub.Core;
@@ -2816,8 +2817,7 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				if (!Guid.TryParse(claims?.UserId, out var approverId) ||
-					!Guid.TryParse(claims?.SchoolId, out var schoolId))
+				if (!Guid.TryParse(claims?.UserId, out var approverId) || !Guid.TryParse(claims?.SchoolId, out var schoolId))
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.BadRequest,
@@ -2825,8 +2825,6 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// Single query — joins ApprovalRequests → Users (requester) → LessonContent
-				// LEFT JOIN LessonContent so non-lesson approvals still appear
 				var query = $@"
 					SELECT
 						ar.Id,
@@ -2834,62 +2832,26 @@ namespace TechHub.Service.Service
 						ar.EntityType,
 						ar.EntityId,
 						ar.Status,
+						ar.Payload,
 						ar.CreatedAt,
 						ar.ExpiresAt,
-
-						-- Requester details
 						u.FirstName + ' ' + u.LastName AS RequestedByName,
-						u.Email                         AS RequestedByEmail,
-
-						-- Lesson enrichment (NULL when EntityType != 'Lesson')
-						lc.Id          AS LessonId,
-						lc.Aim,
-						lc.Description,
-						s.Subject      AS SubjectName,
-						t.Name         AS TopicName,
-						c.ClassName,
-						(SELECT COUNT(*) FROM LessonMedia lm
-						 WHERE lm.LessonContentId = lc.Id AND lm.IsActive = 1) AS MediaCount
-
+						u.EmailAddress                  AS RequestedByEmail
 					FROM   ApprovalRequests ar
-					JOIN   Users            u  ON u.Id  = ar.RequestedBy
-					LEFT JOIN LessonContent lc ON lc.Id = ar.EntityId
-											   AND ar.EntityType = 'Lesson'
-					LEFT JOIN Subjects      s  ON s.Id  = lc.SubjectId
-					LEFT JOIN Topic         t  ON t.Id  = lc.TopicId
-					LEFT JOIN Classroom     c  ON c.Id  = lc.ClassroomId
-
+					JOIN   Users            u ON u.Id = ar.RequestedBy
 					WHERE  ar.ApproverId = '{approverId}'
 					AND    ar.SchoolId   = '{schoolId}'
 					AND    ar.Status     = '{ApprovalStatus.Pending}'
 					AND    ar.ExpiresAt  > GETUTCDATE()
+					ORDER  BY ar.CreatedAt ASC";
 
-				 ORDER  BY ar.CreatedAt ASC";
+				var rows = await _queryApprovalRequests.QueryAsync<ApprovalBaseRow>(query, new Dictionary<string, object>());
 
-				// Use your QueryBuilder/generic repo — adjust to whichever method returns IEnumerable
-				var rows = await _queryApprovalRequests.QueryAsync<ApprovalItemRow>(query, new Dictionary<string, object>());
-				var items = rows.Select(r => new ApprovalItemDto
-				{
-					Id = r.Id,
-					OperationType = r.OperationType,
-					EntityType = r.EntityType,
-					EntityId = r.EntityId,
-					Status = r.Status,
-					CreatedAt = r.CreatedAt,
-					ExpiresAt = r.ExpiresAt,
-					RequestedByName = r.RequestedByName,
-					RequestedByEmail = r.RequestedByEmail,
-					Lesson = r.LessonId == null ? null : new LessonSummaryDto
-					{
-						LessonId = r.LessonId.Value,   
-						Aim = r.Aim,
-						Description = r.Description,
-						SubjectName = r.SubjectName,
-						TopicName = r.TopicName,
-						ClassName = r.ClassName,
-						MediaCount = r.MediaCount
-					}
-				}).ToList();
+				var items = rows.Select(r => MapToApprovalItemDto(r)).ToList();
+
+				_logger.Information(
+					"Pending approvals fetched - ApproverId: {ApproverId}, Count: {Count}",
+					approverId, items.Count);
 
 				return new BaseResponse
 				{
@@ -2903,7 +2865,8 @@ namespace TechHub.Service.Service
 			}
 			catch (Exception ex)
 			{
-				_logger.Error(ex, "Error fetching pending approvals for ApproverId: {Id}", claims?.UserId);
+				_logger.Error(ex,
+					"Error fetching pending approvals for ApproverId: {Id}", claims?.UserId);
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
@@ -2911,6 +2874,42 @@ namespace TechHub.Service.Service
 					Status = "failed"
 				};
 			}
+		}
+
+		// ── Private mapper — one place to add new types ──────────────────────────────
+		private ApprovalItemDto MapToApprovalItemDto(ApprovalBaseRow r)
+		{
+			var dto = new ApprovalItemDto
+			{
+				Id = r.Id,
+				OperationType = r.OperationType,
+				EntityType = r.EntityType,
+				EntityId = r.EntityId,
+				Status = r.Status,
+				CreatedAt = r.CreatedAt,
+				ExpiresAt = r.ExpiresAt,
+				RequestedByName = r.RequestedByName,
+				RequestedByEmail = r.RequestedByEmail
+			};
+
+			if (string.IsNullOrWhiteSpace(r.Payload)) return dto;
+
+			try
+			{
+				// Lesson gets its rich payload — everything else is JsonElement
+				// Frontend handles rendering based on OperationType either way
+				dto.Payload = r.OperationType == OperationType.SubmitLesson
+					? JsonSerializer.Deserialize<LessonApprovalPayload>(r.Payload)
+					: JsonSerializer.Deserialize<JsonElement>(r.Payload);
+			}
+			catch
+			{
+				_logger.Warning(
+					"Failed to deserialize payload - ApprovalId: {Id}, OperationType: {Op}",
+					r.Id, r.OperationType);
+			}
+
+			return dto;
 		}
 
 		// ── POST: HeadTeacher approves or rejects an item ───────────────────────────
