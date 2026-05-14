@@ -94,6 +94,7 @@ namespace TechHub.Service.Service
 			_studentClassQueryRespository = studentClassQueryRespository;
 			_subTopicCommandRepository = subTopicCommandRepository;
 			_userCommandRepository = userCommandRepository;
+			_approvalRequestCommandRepository = approvalRequestCommandRepository;
 
 			_classroomSubjectCommandRespository = classroomSubjectCommandRespository;
 			_classroomSubjectQueryRespository = classroomSubjectQueryRespository;
@@ -3267,15 +3268,16 @@ namespace TechHub.Service.Service
 			}
 		}
 
-		public async Task<CreateTopicResponse> CreateTopic(CreateTopicViewModel model, AuthenticatedUserClaims userClaims)
+		public async Task<CreateTopicResponse> CreateTopic(
+	CreateTopicViewModel model, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			{
 				try
 				{
 					_logger.Information(
-						"Creating topic - Name: {Name}, SubjectId: {SubjectId}, ClassroomId: {ClassroomId}",
-						model.Name, model.SubjectId, model.ClassroomId);
+						"Creating topics - SubjectId: {SubjectId}, ClassroomId: {ClassroomId}, TopicCount: {Count}",
+						model.SubjectId, model.ClassroomId, model.Topics.Count);
 
 					if (!Guid.TryParse(userClaims.UserId, out var userId))
 						return StringSanitizer.Fail<CreateTopicResponse>("Invalid user identification");
@@ -3283,11 +3285,8 @@ namespace TechHub.Service.Service
 					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
 						return StringSanitizer.Fail<CreateTopicResponse>("Invalid school identification");
 
-					if (string.IsNullOrWhiteSpace(model.Name))
-						return StringSanitizer.Fail<CreateTopicResponse>("Topic name is required");
-
-					if (model.Name.Length > 200)
-						return StringSanitizer.Fail<CreateTopicResponse>("Topic name cannot exceed 200 characters");
+					if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true, out var userRole))
+						return StringSanitizer.Fail<CreateTopicResponse>("Invalid role in token");
 
 					if (model.SubjectId == Guid.Empty)
 						return StringSanitizer.Fail<CreateTopicResponse>("Subject is required");
@@ -3295,26 +3294,48 @@ namespace TechHub.Service.Service
 					if (model.ClassroomId == Guid.Empty)
 						return StringSanitizer.Fail<CreateTopicResponse>("Classroom is required");
 
-					if (!model.SubTopics.Any())
-						return StringSanitizer.Fail<CreateTopicResponse>("At least one subtopic is required");
+					if (!model.Topics.Any())
+						return StringSanitizer.Fail<CreateTopicResponse>("At least one topic is required");
 
-					if (model.SubTopics.Any(string.IsNullOrWhiteSpace))
-						return StringSanitizer.Fail<CreateTopicResponse>("Subtopic names cannot be empty");
+					// Validate all topics
+					foreach (var topic in model.Topics)
+					{
+						if (string.IsNullOrWhiteSpace(topic.Name))
+							return StringSanitizer.Fail<CreateTopicResponse>("Topic name cannot be empty");
 
-					if (model.SubTopics.Count != model.SubTopics.Distinct(StringComparer.OrdinalIgnoreCase).Count())
-						return StringSanitizer.Fail<CreateTopicResponse>("Duplicate subtopic names are not allowed");
+						if (topic.Name.Length > 200)
+							return StringSanitizer.Fail<CreateTopicResponse>(
+								$"Topic name '{topic.Name}' cannot exceed 200 characters");
+
+						if (!topic.SubTopics.Any())
+							return StringSanitizer.Fail<CreateTopicResponse>(
+								$"Topic '{topic.Name}' must have at least one subtopic");
+
+						if (topic.SubTopics.Any(string.IsNullOrWhiteSpace))
+							return StringSanitizer.Fail<CreateTopicResponse>(
+								$"Topic '{topic.Name}' has an empty subtopic name");
+
+						if (topic.SubTopics.Count != topic.SubTopics
+								.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+							return StringSanitizer.Fail<CreateTopicResponse>(
+								$"Topic '{topic.Name}' has duplicate subtopic names");
+					}
+
+					// Duplicate topic names across the submitted batch
+					var topicNames = model.Topics.Select(t => t.Name.Trim()).ToList();
+					if (topicNames.Count != topicNames
+							.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+						return StringSanitizer.Fail<CreateTopicResponse>("Duplicate topic names are not allowed in the same request");
 
 					// Verify subject belongs to this school
-					var subject = await _queryrepositorySubject.Get(model.SubjectId, DatabaseTarget.Core);
+					var subject = await _queryrepositorySubject.Get(
+						model.SubjectId, DatabaseTarget.Core);
 					if (subject == null || !subject.IsActive || subject.SchoolId != schoolId)
 						return StringSanitizer.Fail<CreateTopicResponse>("Subject not found");
 
-					if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true, out var userRole))
-						return StringSanitizer.Fail<CreateTopicResponse>("Invalid role in token");
-
 					// Verify classroom belongs to this school
 					var classroomQuery = $@"
-						SELECT TOP 1 Id, ClassName FROM Classroom
+						SELECT TOP 1 Id, Name FROM Classroom
 						WHERE Id       = '{model.ClassroomId}'
 						AND   SchoolId = '{schoolId}'
 						AND   IsActive = 1";
@@ -3323,21 +3344,27 @@ namespace TechHub.Service.Service
 					if (classroom is null)
 						return StringSanitizer.Fail<CreateTopicResponse>("Classroom not found");
 
-					// Duplicate topic check
+					// Check for existing topics with same names in same subject + classroom
+					var sanitizedNames = string.Join(
+						",", topicNames.Select(n => $"'{StringSanitizer.Sanitize(n)}'"));
+
 					var duplicateQuery = $@"
-						SELECT TOP 1 Id FROM Topic
-						WHERE SubjectId   = '{model.SubjectId}'
-						AND   ClassroomId = '{model.ClassroomId}'
-						AND   SchoolId    = '{schoolId}'
-						AND   IsDeleted   = 0
-						AND   Name        = '{StringSanitizer.Sanitize(model.Name)}'";
+						SELECT Name FROM Topic
+						WHERE  SubjectId   = '{model.SubjectId}'
+						AND    ClassroomId = '{model.ClassroomId}'
+						AND    SchoolId    = '{schoolId}'
+						AND    IsDeleted   = 0
+						AND    Name        IN ({sanitizedNames})";
 
-					var existing = await _topicQueryRepository.GetByQuery(
-						duplicateQuery, DatabaseTarget.Core);
+					var existingTopics = await _topicQueryRepository
+						.GetByQuery(duplicateQuery, DatabaseTarget.Core);
 
-					if (existing?.Any() == true)
+					if (existingTopics?.Any() == true)
+					{
+						var duplicates = string.Join(", ", existingTopics.Select(t => t.Name));
 						return StringSanitizer.Fail<CreateTopicResponse>(
-							"A topic with this name already exists for this subject and classroom");
+							$"Topics already exist for this subject and classroom: {duplicates}");
+					}
 
 					// Fetch teacher for line manager
 					var teacher = await _queryrepositoryUser.Get(userId);
@@ -3346,118 +3373,134 @@ namespace TechHub.Service.Service
 
 					var requiresApproval = userRole == UserRole.SubjectTeacher || userRole == UserRole.ClassTeacher;
 
-
-					if (requiresApproval && !teacher.LineManager.HasValue)
-						return StringSanitizer.Fail<CreateTopicResponse>(
-							"No line manager assigned. Cannot submit for approval.");
+					if (requiresApproval && !teacher.LineManagerId.HasValue)
+						return StringSanitizer.Fail<CreateTopicResponse>("No line manager assigned. Cannot submit for approval.");
 
 					var now = DateTime.UtcNow;
 					var nowStr = now.ToString("yyyy-MM-dd HH:mm:ss");
-					var topicId = Guid.NewGuid();
+					var isActive = !requiresApproval;
 
-					// Build subtopic dicts
-					var subTopicDicts = model.SubTopics.Select(name =>
-						new Dictionary<string, object>
+					// Build all topic and subtopic dicts
+					var allTopicDicts = new List<Dictionary<string, object>>();
+					var allSubTopicDicts = new List<Dictionary<string, object>>();
+					var topicIds = new List<Guid>();
+
+					foreach (var topicInput in model.Topics)
+					{
+						var topicId = Guid.NewGuid();
+						topicIds.Add(topicId);
+
+						allTopicDicts.Add(new Dictionary<string, object>
 						{
-							{ "Id",          Guid.NewGuid() },
-							{ "TopicId",     topicId },
-							{ "SchoolId",    schoolId },
+							{ "Id",          topicId },
+							{ "SubjectId",   model.SubjectId },
 							{ "ClassroomId", model.ClassroomId },
-							{ "Name",        name.Trim() },
-							{ "IsActive",    false },         // inactive until approved
+							{ "SchoolId",    schoolId },
+							{ "Name",        topicInput.Name.Trim() },
+							{ "IsActive",    isActive },
 							{ "IsDeleted",   false },
 							{ "CreatedAt",   nowStr },
 							{ "CreatedBy",   userId }
-						}).ToList();
+						});
 
-					var expiryDays = int.Parse(_configuration["Approvals:ExpiryDays"] ?? "5");
-
-					var payloadSummary = new ApprovalPayloadSummary
-					{
-						Title = model.Name.Trim(),
-						SubjectName = subject.Subject,
-						ClassName = classroom.Name,
-						Description = $"{subTopicDicts.Count} subtopic(s): " +
-									  string.Join(", ", model.SubTopics.Take(3)) +
-									  (model.SubTopics.Count > 3 ? "..." : "")
-					};
-
-					var approvalId = Guid.NewGuid();
-					var approvalDict = new Dictionary<string, object>
-					{
-						{ "Id",              approvalId },
-						{ "SchoolId",        schoolId },
-						{ "RequestedBy",     userId },
-						{ "ApproverId",      teacher.LineManager.Value },
-						{ "OperationType",   OperationType.CreateTopic },
-						{ "EntityType",      "Topic" },
-						{ "EntityId",        topicId },
-						{ "Payload",         JsonSerializer.Serialize(payloadSummary) },
-						{ "Status",          ApprovalStatus.Pending },
-						{ "RejectionReason", DBNull.Value },
-						{ "CreatedAt",       now },
-						{ "RespondedAt",     DBNull.Value },
-						{ "ExpiresAt",       now.AddDays(expiryDays) }
-					};
-
-					// All three inserts in one transaction
-					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
-					try
-					{
-						// 1. Insert topic
-						await _topicCommandRepository.Create(
-							scope.Transaction, scope.Connection,
+						var subTopics = topicInput.SubTopics.Select(name =>
 							new Dictionary<string, object>
 							{
-								{ "Id",          topicId },
-								{ "SubjectId",   model.SubjectId },
-								{ "ClassroomId", model.ClassroomId },
+								{ "Id",          Guid.NewGuid() },
+								{ "TopicId",     topicId },
 								{ "SchoolId",    schoolId },
-								{ "Name",        model.Name.Trim() },
-								{ "IsActive",    false },
+								{ "ClassroomId", model.ClassroomId },
+								{ "Name",        name.Trim() },
+								{ "IsActive",    isActive },
 								{ "IsDeleted",   false },
 								{ "CreatedAt",   nowStr },
 								{ "CreatedBy",   userId }
-							});
+							}).ToList();
 
-						// 2. Insert all subtopics in batch
+						allSubTopicDicts.AddRange(subTopics);
+					}
+
+					var approvalId = Guid.NewGuid();
+
+					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+					try
+					{
+						// 1. Batch insert all topics
+						await _topicCommandRepository.CreateBatchAsync(
+							scope.Transaction, scope.Connection, allTopicDicts);
+
+						// 2. Batch insert all subtopics
 						await _subTopicCommandRepository.CreateBatchAsync(
-							scope.Transaction, scope.Connection, subTopicDicts);
+							scope.Transaction, scope.Connection, allSubTopicDicts);
 
-						// 3. Insert approval request
-						await _approvalRequestCommandRepository.Create(
-							scope.Transaction, scope.Connection, approvalDict);
+						// 3. One approval request covering all topics
+						if (requiresApproval)
+						{
+							var expiryDays = int.Parse(
+								_configuration["Approvals:ExpiryDays"] ?? "5");
+
+							var payloadSummary = new ApprovalPayloadSummary
+							{
+								Title = $"{model.Topics.Count} topic(s) for {subject.Subject}",
+								SubjectName = subject.Subject,
+								ClassName = classroom.Name,
+								Description = string.Join(", ", topicNames.Take(3)) +
+											  (topicNames.Count > 3 ? "..." : ""),
+								// Store all topicIds so RespondToApproval can activate them all
+								EntityIds = topicIds
+							};
+
+							var approvalDict = new Dictionary<string, object>
+							{
+								{ "Id",              approvalId },
+								{ "SchoolId",        schoolId },
+								{ "RequestedBy",     userId },
+								{ "ApproverId",      teacher.LineManagerId!.Value },
+								{ "OperationType",   OperationType.CreateTopic },
+								{ "EntityType",      "Topic" },
+								{ "EntityId",        DBNull.Value }, 
+								{ "Payload",         JsonSerializer.Serialize(payloadSummary) },
+								{ "Status",          ApprovalStatus.Pending },
+								{ "RejectionReason", DBNull.Value },
+								{ "CreatedAt",       now },
+								{ "RespondedAt",     DBNull.Value },
+								{ "ExpiresAt",       now.AddDays(expiryDays) }
+							};
+
+							await _approvalRequestCommandRepository.Create(scope.Transaction, scope.Connection, approvalDict);
+						}
 
 						await scope.CommitAsync();
 					}
 					catch (Exception ex)
 					{
-						_logger.Error(ex,
-							"Rolling back topic creation - TopicId: {TopicId}", topicId);
+						_logger.Error(ex, "Rolling back topic batch creation");
 						try { await scope.RollbackAsync(); }
 						catch (Exception rbEx)
 						{
-							_logger.Error(rbEx, "Rollback failed - TopicId: {TopicId}", topicId);
+							_logger.Error(rbEx, "Rollback failed");
 						}
 						throw;
 					}
 
 					_logger.Information(
-						"Topic and {SubTopicCount} subtopic(s) created pending approval - " +
-						"TopicId: {TopicId}, ApprovalId: {ApprovalId}",
-						subTopicDicts.Count, topicId, approvalId);
+						"Topics created - TopicCount: {TopicCount}, SubTopicCount: {SubTopicCount}, " +
+						"RequiresApproval: {RequiresApproval}",
+						allTopicDicts.Count, allSubTopicDicts.Count, requiresApproval);
 
 					return new CreateTopicResponse
 					{
 						ResponseCode = ResponseCode.successful,
-						ResponseMessage = "Topic and subtopics submitted for approval",
+						ResponseMessage = requiresApproval
+							? $"{model.Topics.Count} topic(s) and subtopics submitted for approval"
+							: $"{model.Topics.Count} topic(s) and subtopics created successfully",
 						Status = "successful",
-						TopicId = topicId
+						TopicId = topicIds.FirstOrDefault()
 					};
 				}
 				catch (Exception ex)
 				{
-					_logger.Error(ex, "Error creating topic");
+					_logger.Error(ex, "Error creating topics");
 					return StringSanitizer.Error<CreateTopicResponse>();
 				}
 			}

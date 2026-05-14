@@ -58,13 +58,14 @@ public class ApprovalPayloadSummary
 {
 	public string Title { get; set; }
 	public string SubjectName { get; set; }
-	public string? ClassName { get; set; }
-	public string? Description { get; set; }
-	public string? Term { get; set; }   // syllabus
-	public string? ExamDate { get; set; }   // examination
-	public int? TotalMarks { get; set; }   // examination
-	public string UserRole { get; set; }   // CreateUser
-	public string UserName { get; set; }   // CreateUser
+	public string ClassName { get; set; }
+	public string Description { get; set; }
+	public string Term { get; set; }
+	public string ExamDate { get; set; }
+	public int? TotalMarks { get; set; }
+	public string UserRole { get; set; }
+	public string UserName { get; set; }
+	public List<Guid> EntityIds { get; set; } = new(); 
 }
 
 // ── Lesson-specific — richer shape ───────────────────────────────────────────

@@ -205,7 +205,7 @@ public class LessonService : ILessonService
 				await _mediaCommand.CreateBatchAsync(scope.Transaction, scope.Connection, mediaDicts);
 
 				approvalId = Guid.NewGuid();
-				var approverId = teacher.LineManager;
+				var approverId = teacher.LineManagerId;
 
 				if (!model.IsDraft && !model.BypassApproval && approverId.HasValue)
 				{
@@ -283,13 +283,13 @@ public class LessonService : ILessonService
 			}
 
 			// ===== POST-COMMIT — notify approver (fire and forget) ===========
-			if (!model.BypassApproval && teacher.LineManager.HasValue)
+			if (!model.BypassApproval && teacher.LineManagerId.HasValue)
 			{
 				_ = Task.Run(async () =>
 				{
 					try
 					{
-						var approver = await _userQuery.Get(teacher.LineManager.Value);
+						var approver = await _userQuery.Get(teacher.LineManagerId.Value);
 						var placeholders = new Dictionary<string, string>
 						{
 							{ "@@Name",      $"{approver.FirstName} {approver.LastName}" },
@@ -469,7 +469,7 @@ public class LessonService : ILessonService
 
 			// Validate approver is the teacher's line manager
 			var teacher = await _userQuery.Get(lesson.CreatedBy);
-			if (teacher?.LineManager != approverId)
+			if (teacher?.LineManagerId != approverId)
 			{
 				_logger.Warning(
 					"Unauthorized lesson approval attempt - " +
