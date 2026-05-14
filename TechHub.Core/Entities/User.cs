@@ -26,7 +26,7 @@ namespace TechHub.Core.Model
 		public string? ProfileImage { get; set; }	
 		public string? GuardianName { get; set; }
 		public string? DOB { get; set; } = DateTime.MinValue.ToString("yyyy-MM-dd HH:mm:ss");
-		public Guid? LineManager { get; set; }
+		public Guid? LineManagerId { get; set; }
 
 	}
 }

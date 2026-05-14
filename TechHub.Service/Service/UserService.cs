@@ -637,7 +637,7 @@ namespace TechHub.Service.Service
 						CreatedBy = createdBy,
 						IsActive = true, 
 						DOB = userViewModel.DOB,
-						LineManager = userViewModel.LineManagerId
+						LineManagerId = userViewModel.LineManagerId
 						
 					};
 
@@ -657,7 +657,7 @@ namespace TechHub.Service.Service
 						{ "ModifiedDate",   newUser.ModifiedDate },
 						{ "HasAccess",      false },
 						{ "DOB",      newUser.DOB },
-						{ "LineManagerId", newUser.LineManager.HasValue ? (object)newUser.LineManager.Value: DBNull.Value }
+						{ "LineManagerId", newUser.LineManagerId.HasValue ? (object)newUser.LineManagerId.Value: DBNull.Value }
 
 					};
 
