@@ -144,6 +144,15 @@ public class LessonService : ILessonService
 			var now = DateTime.UtcNow;
 			var lessonId = Guid.NewGuid();
 
+			DateTime? accessEndsAt = null;
+
+			if (model.AccessDate.HasValue && model.DurationMinutes.HasValue)
+			{
+				var accessTime = model.AccessTime ?? TimeSpan.Zero;
+				var accessStart = model.AccessDate.Value.Date + accessTime;
+				accessEndsAt = accessStart.AddMinutes(model.DurationMinutes.Value);
+			}
+
 			// ===== BUILD LESSON DICT =====
 			var lessonDict = new Dictionary<string, object>
 			{
@@ -164,7 +173,11 @@ public class LessonService : ILessonService
 				{ "CreatedAt",   now },
 				{ "ModifiedAt",  now },
 				{ "ApprovedAt",  DBNull.Value },
-				{ "QuizId",  model.QuizId.HasValue ? (object)model.QuizId.Value : DBNull.Value }
+				{ "QuizId",  model.QuizId.HasValue ? (object)model.QuizId.Value : DBNull.Value },
+				{ "AccessDate",      model.AccessDate.HasValue ? (object)model.AccessDate.Value.Date : DBNull.Value },
+				{ "AccessTime",      model.AccessTime.HasValue ? (object)model.AccessTime.Value: DBNull.Value },
+				{ "DurationMinutes", model.DurationMinutes.HasValue ? (object)model.DurationMinutes.Value : DBNull.Value },
+				{ "AccessEndsAt",    accessEndsAt.HasValue ? (object)accessEndsAt.Value : DBNull.Value }
 			};
 
 			// ===== BUILD MEDIA DICTS =====
@@ -226,7 +239,8 @@ public class LessonService : ILessonService
 						{ "RejectionReason", DBNull.Value },
 						{ "CreatedAt",     now },
 						{ "RespondedAt",   DBNull.Value },
-						{ "ExpiresAt",     now.AddDays(expiryDays) }
+						{ "ExpiresAt",     now.AddDays(expiryDays) },
+
 					};
 				
 

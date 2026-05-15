@@ -315,3 +315,10 @@ CREATE INDEX IX_Topic_ClassroomId ON Topic (SchoolId, ClassroomId);
 ALTER TABLE SubTopic ADD ClassroomId UNIQUEIDENTIFIER NULL;
 ALTER TABLE SubTopic ALTER COLUMN ClassroomId UNIQUEIDENTIFIER NOT NULL;
 CREATE INDEX IX_SubTopic_ClassroomId ON SubTopic (SchoolId, ClassroomId);
+
+---------------------------------------------------------------------------------
+
+ALTER TABLE LessonContent ADD AccessDate      DATE         NULL;
+ALTER TABLE LessonContent ADD AccessTime      TIME         NULL;
+ALTER TABLE LessonContent ADD DurationMinutes INT          NULL;
+ALTER TABLE LessonContent ADD AccessEndsAt    DATETIME2    NULL; 

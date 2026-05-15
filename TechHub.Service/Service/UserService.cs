@@ -2913,7 +2913,8 @@ namespace TechHub.Service.Service
 		}
 
 		// ── POST: HeadTeacher approves or rejects an item ───────────────────────────
-		public async Task<BaseResponse> RespondToApproval(Guid approvalId, ApprovalRespondViewModel model, AuthenticatedUserClaims claims)
+		public async Task<BaseResponse> RespondToApproval(
+	Guid approvalId, ApprovalRespondViewModel model, AuthenticatedUserClaims claims)
 		{
 			try
 			{
@@ -2933,14 +2934,15 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// Fetch and validate the approval belongs to this approver
+				// Fetch and validate approval belongs to this approver
 				var fetchQuery = $@"
-					SELECT * FROM ApprovalRequests
-					WHERE  Id         = '{approvalId}'
-					AND    ApproverId = '{approverId}'
-					AND    Status     = '{ApprovalStatus.Pending}'";
+            SELECT * FROM ApprovalRequests
+            WHERE  Id         = '{approvalId}'
+            AND    ApproverId = '{approverId}'
+            AND    Status     = '{ApprovalStatus.Pending}'";
 
-				var approvals = await _queryApprovalRequests.QueryAsync<ApprovalRequests>(fetchQuery, new Dictionary<string, object>());
+				var approvals = await _queryApprovalRequests
+					.QueryAsync<ApprovalRequests>(fetchQuery, new Dictionary<string, object>());
 
 				var approval = approvals.FirstOrDefault();
 				if (approval is null)
@@ -2955,35 +2957,29 @@ namespace TechHub.Service.Service
 				var respondedAt = DateTime.UtcNow;
 
 				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
-
 				try
 				{
-					// 1. Update ApprovalRequests
+					// 1. Update ApprovalRequests status
 					var updateApproval = $@"
-					UPDATE ApprovalRequests
-					SET    Status          = '{newStatus}',
-						   RespondedAt     = '{respondedAt:yyyy-MM-dd HH:mm:ss}',
-						   RejectionReason = {(model.Approved
-									   ? "NULL"
-									   : $"'{model.RejectionReason.Replace("'", "''")}'")}
-					WHERE  Id = '{approvalId}'";
+                UPDATE ApprovalRequests
+                SET    Status          = '{newStatus}',
+                       RespondedAt     = '{respondedAt:yyyy-MM-dd HH:mm:ss}',
+                       RejectionReason = {(model.Approved
+								   ? "NULL"
+								   : $"'{model.RejectionReason.Replace("'", "''")}'")}
+                WHERE  Id = '{approvalId}'";
 
-					await scope.Connection.ExecuteAsync(updateApproval, transaction: scope.Transaction);
+					await scope.Connection.ExecuteAsync(
+						updateApproval, transaction: scope.Transaction);
 
-					if (approval.EntityType == "Lesson" && approval.EntityId.HasValue)
+					// 2. Apply or reject the entity based on OperationType
+					if (model.Approved)
 					{
-						var lessonStatus = model.Approved ? LessonStatus.Approved : LessonStatus.Rejected;
-
-						var updateLesson = $@"
-							UPDATE LessonContent
-							SET    Status = '{lessonStatus}',
-								   {(model.Approved
-											   ? $"ApprovedBy = '{approverId}', ApprovedAt = '{respondedAt:yyyy-MM-dd HH:mm:ss}'"
-											   : $"RejectedBy = '{approverId}', RejectionReason = '{model.RejectionReason.Replace("'", "''")}'")}
-							WHERE  Id       = '{approval.EntityId}'
-							AND    SchoolId = '{approval.SchoolId}'";
-
-						await scope.Connection.ExecuteAsync(updateLesson, transaction: scope.Transaction);
+						await ApplyApproval(scope, approval, approverId, respondedAt);
+					}
+					else
+					{
+						await RejectApproval(scope, approval, approverId, model.RejectionReason);
 					}
 
 					await scope.CommitAsync();
@@ -2991,14 +2987,12 @@ namespace TechHub.Service.Service
 				catch (Exception ex)
 				{
 					_logger.Error(ex, "Transaction failed for ApprovalId: {Id}", approvalId);
-
 					try { await scope.RollbackAsync(); }
-					catch (Exception rollbackEx)
+					catch (Exception rbEx)
 					{
-						_logger.Error(rollbackEx, "Rollback failed for ApprovalId: {Id}", approvalId);
+						_logger.Error(rbEx, "Rollback failed for ApprovalId: {Id}", approvalId);
 					}
-
-					throw; // bubble to outer handler
+					throw;
 				}
 
 				// Post-commit — fire and forget
@@ -3025,6 +3019,198 @@ namespace TechHub.Service.Service
 					ResponseMessage = "An unexpected error occurred",
 					Status = "failed"
 				};
+			}
+		}
+
+		// ── Apply approval per OperationType ─────────────────────────────────────────
+		private async Task ApplyApproval(IDbTransactionScope scope,ApprovalRequests approval,Guid approverId,DateTime respondedAt)
+		{
+			switch (approval.OperationType)
+			{
+				case OperationType.SubmitLesson:
+					if (!approval.EntityId.HasValue) break;
+					var approveLesson = $@"
+						UPDATE LessonContent
+						SET    Status     = '{LessonStatus.Approved}',
+							   ApprovedBy = '{approverId}',
+							   ApprovedAt = '{respondedAt:yyyy-MM-dd HH:mm:ss}'
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+					await scope.Connection.ExecuteAsync(
+						approveLesson, transaction: scope.Transaction);
+					break;
+
+				case OperationType.CreateTopic:
+					// Payload holds all topicIds since one approval covers multiple topics
+					var topicPayload = DeserializePayload<ApprovalPayloadSummary>(approval.Payload);
+
+					if (topicPayload?.EntityIds?.Any() == true)
+					{
+						var ids = string.Join(",",
+							topicPayload.EntityIds.Select(id => $"'{id}'"));
+
+						var activateTopics = $@"
+							UPDATE Topic
+							SET    IsActive = 1
+							WHERE  Id      IN ({ids})
+							AND    SchoolId = '{approval.SchoolId}'";
+
+						await scope.Connection.ExecuteAsync(activateTopics, transaction: scope.Transaction);
+
+						var activateSubTopics = $@"
+							UPDATE SubTopic
+							SET    IsActive = 1
+							WHERE  TopicId IN ({ids})
+							AND    SchoolId = '{approval.SchoolId}'";
+
+						await scope.Connection.ExecuteAsync(activateSubTopics, transaction: scope.Transaction);
+					}
+					break;
+
+				case OperationType.SubmitSyllabus:
+					if (!approval.EntityId.HasValue) break;
+					var activateSyllabus = $@"
+						UPDATE Syllabus
+						SET    IsActive  = 1,
+							   IsApproved = 1
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+					await scope.Connection.ExecuteAsync(
+						activateSyllabus, transaction: scope.Transaction);
+					break;
+
+				case OperationType.CreateExamination:
+					if (!approval.EntityId.HasValue) break;
+					var activateExam = $@"
+						UPDATE Examination
+						SET    IsActive = 1
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+					await scope.Connection.ExecuteAsync(
+						activateExam, transaction: scope.Transaction);
+					break;
+
+				case OperationType.CreateUser:
+					if (!approval.EntityId.HasValue) break;
+					var activateUser = $@"
+						UPDATE Users
+						SET    IsActive = 1
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+					await scope.Connection.ExecuteAsync(
+						activateUser, transaction: scope.Transaction);
+					break;
+
+				default:
+					_logger.Warning(
+						"No apply handler for OperationType: {OperationType}, ApprovalId: {ApprovalId}",
+						approval.OperationType, approval.Id);
+					break;
+			}
+		}
+
+		// ── Reject approval per OperationType ────────────────────────────────────────
+		private async Task RejectApproval(IDbTransactionScope scope,ApprovalRequests approval,Guid approverId,string rejectionReason)
+		{
+			var reason = rejectionReason.Replace("'", "''");
+
+			switch (approval.OperationType)
+			{
+				case OperationType.SubmitLesson:
+					if (!approval.EntityId.HasValue) break;
+					var rejectLesson = $@"
+						UPDATE LessonContent
+						SET    Status          = '{LessonStatus.Rejected}',
+							   RejectedBy      = '{approverId}',
+							   RejectionReason = '{reason}'
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+					await scope.Connection.ExecuteAsync(rejectLesson, transaction: scope.Transaction);
+					break;
+
+				case OperationType.CreateTopic:
+					// Delete the topics and subtopics — no point keeping rejected inactive records
+					var topicPayload = DeserializePayload<ApprovalPayloadSummary>(approval.Payload);
+
+					if (topicPayload?.EntityIds?.Any() == true)
+					{
+						var ids = string.Join(",",topicPayload.EntityIds.Select(id => $"'{id}'"));
+
+						var deleteSubTopics = $@"
+							UPDATE SubTopic
+							SET    IsDeleted = 1
+							WHERE  TopicId IN ({ids})
+							AND    SchoolId = '{approval.SchoolId}'";
+
+						await scope.Connection.ExecuteAsync(deleteSubTopics, transaction: scope.Transaction);
+
+						var deleteTopics = $@"
+							UPDATE Topic
+							SET    IsDeleted = 1
+							WHERE  Id       IN ({ids})
+							AND    SchoolId  = '{approval.SchoolId}'";
+
+						await scope.Connection.ExecuteAsync(deleteTopics, transaction: scope.Transaction);
+					}
+					break;
+
+				case OperationType.SubmitSyllabus:
+					if (!approval.EntityId.HasValue) break;
+					var rejectSyllabus = $@"
+						UPDATE Syllabus
+						SET    IsActive = 0
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+							await scope.Connection.ExecuteAsync(
+								rejectSyllabus, transaction: scope.Transaction);
+							break;
+
+				case OperationType.CreateExamination:
+					if (!approval.EntityId.HasValue) break;
+					var rejectExam = $@"
+						UPDATE Examination
+						SET    IsActive = 0
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+							await scope.Connection.ExecuteAsync(
+								rejectExam, transaction: scope.Transaction);
+							break;
+
+				case OperationType.CreateUser:
+					// Leave user as IsActive = false — admin can re-evaluate
+					// Just log it — no DB change needed beyond the approval status
+					_logger.Information(
+						"User creation rejected - EntityId: {EntityId}, ApprovalId: {ApprovalId}",
+						approval.EntityId, approval.Id);
+					break;
+
+				default:
+					_logger.Warning(
+						"No reject handler for OperationType: {OperationType}, ApprovalId: {ApprovalId}",
+						approval.OperationType, approval.Id);
+					break;
+			}
+		}
+
+		// ── Safe payload deserializer ─────────────────────────────────────────────────
+		private T DeserializePayload<T>(string payload) where T : class
+		{
+			if (string.IsNullOrWhiteSpace(payload)) return null;
+			try
+			{
+				return JsonSerializer.Deserialize<T>(payload);
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Failed to deserialize approval payload");
+				return null;
 			}
 		}
 
