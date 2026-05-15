@@ -25,5 +25,10 @@ public class LessonContent
 	public DateTime ModifiedAt { get; set; }
 	public DateTime? ApprovedAt { get; set; }
 	public Guid? QuizId { get; set; }
+
+	public DateTime? AccessDate { get; set; }
+	public TimeSpan? AccessTime { get; set; }
+	public int? DurationMinutes { get; set; }
+	public DateTime? AccessEndsAt { get; set; }
 }
 

@@ -46,6 +46,10 @@ public class SubmitLessonViewModel
 	public bool BypassApproval { get; set; } = false;
 
 	public Guid? QuizId { get; set; }
+
+	public DateTime? AccessDate { get; set; }  
+	public TimeSpan? AccessTime { get; set; } 
+	public int? DurationMinutes { get; set; }
 }
 
 public class LessonMediaViewModel
