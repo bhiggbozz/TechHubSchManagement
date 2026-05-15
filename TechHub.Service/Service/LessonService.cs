@@ -733,37 +733,43 @@ public class LessonService : ILessonService
 			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
 				return Unauthorized();
 
-			// Single query — pulls everything needed to start the class
 			var lessonQuery = $@"
-				SELECT
-					lc.Id,
-					lc.Aim,
-					lc.Description,
-					lc.Status,
-					lc.CreatedAt,
-					lc.ApprovedAt,
-					lc.SubTopic,
-					lc.SubTopicId,
+            SELECT
+                lc.Id,
+                lc.Aim,
+                lc.Description,
+                lc.Status,
+                lc.CreatedAt,
+                lc.ApprovedAt,
+                lc.SubTopic,
+                lc.SubTopicId,
+                lc.AccessDate,
+                lc.AccessTime,
+                lc.DurationMinutes,
+                lc.AccessEndsAt,
 
-					-- Classroom
-					c.Id          AS ClassroomId,
-					c.ClassName,
+                CASE
+                    WHEN lc.AccessDate IS NULL THEN 1
+                    WHEN CAST(GETUTCDATE() AS DATE) < lc.AccessDate THEN 0
+                    WHEN lc.AccessEndsAt IS NOT NULL
+                         AND GETUTCDATE() > lc.AccessEndsAt THEN 0
+                    ELSE 1
+                END AS IsAccessOpen,
 
-					-- Subject
-					s.Id          AS SubjectId,
-					s.Subject     AS SubjectName,
+                c.Id          AS ClassroomId,
+                c.Name,
 
-					-- Topic
-					t.Id          AS TopicId,
-					t.Name        AS TopicName,
+                s.Id          AS SubjectId,
+                s.Subject     AS SubjectName,
 
-					-- Teacher who created it
-					u.Id          AS TeacherId,
-					u.FirstName + ' ' + u.LastName AS TeacherName,
-					u.EmailAddress AS TeacherEmail,
+                t.Id          AS TopicId,
+                t.Name        AS TopicName,
 
-					-- Who approved it
-					ap.FirstName + ' ' + ap.LastName AS ApprovedByName
+                u.Id          AS TeacherId,
+                u.FirstName + ' ' + u.LastName AS TeacherName,
+                u.EmailAddress AS TeacherEmail,
+
+                ap.FirstName + ' ' + ap.LastName AS ApprovedByName
 
 				FROM   LessonContent lc
 				JOIN   Classroom     c  ON c.Id  = lc.ClassroomId
@@ -782,6 +788,31 @@ public class LessonService : ILessonService
 			var lesson = lessons.FirstOrDefault();
 			if (lesson is null)
 				return NotFound("Lesson not found or has not been approved yet");
+
+			// Block access if outside the scheduled window
+			if (!lesson.IsAccessOpen)
+			{
+				var message = lesson.AccessDate.HasValue && DateTime.UtcNow < lesson.AccessDate.Value
+					? $"This lesson opens on {lesson.AccessDate.Value:dd MMM yyyy}" +
+					  (lesson.AccessTime.HasValue
+						  ? $" at {lesson.AccessTime.Value:hh\\:mm}"
+						  : string.Empty)
+					: "This lesson is no longer accessible";
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.Forbidden,
+					ResponseMessage = message,
+					Status = "failed",
+					Data = new
+					{
+						AccessDate = lesson.AccessDate,
+						AccessTime = lesson.AccessTime,
+						DurationMinutes = lesson.DurationMinutes,
+						AccessEndsAt = lesson.AccessEndsAt
+					}
+				};
+			}
 
 			// Fetch all active media ordered for playback
 			var mediaQuery = $@"
@@ -802,9 +833,14 @@ public class LessonService : ILessonService
 				AND    IsActive        = 1
 				ORDER  BY DisplayOrder ASC";
 
-			var media = await _mediaQuery.QueryAsync<LessonMediaDto>(mediaQuery, new Dictionary<string, object>());
+			var media = await _mediaQuery.QueryAsync<LessonMediaDto>(
+				mediaQuery, new Dictionary<string, object>());
 
-			_logger.Information("Lesson loaded for class - LessonId: {LessonId}, UserId: {UserId}",lessonId, userId);
+			var mediaList = media.ToList();
+
+			_logger.Information(
+				"Lesson loaded for class - LessonId: {LessonId}, UserId: {UserId}",
+				lessonId, userId);
 
 			return new BaseResponse
 			{
@@ -814,14 +850,15 @@ public class LessonService : ILessonService
 				Data = new
 				{
 					Lesson = lesson,
-					Media = media.ToList(),
-					MediaCount = media.Count()
+					Media = mediaList,
+					MediaCount = mediaList.Count
 				}
 			};
 		}
 		catch (Exception ex)
 		{
-			_logger.Error(ex, "Error loading lesson for class - LessonId: {LessonId}", lessonId);
+			_logger.Error(ex,
+				"Error loading lesson for class - LessonId: {LessonId}", lessonId);
 			return ServerError();
 		}
 	}

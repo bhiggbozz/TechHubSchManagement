@@ -34,6 +34,12 @@ public class LessonForClassDto
 	public string TeacherName { get; set; }
 	public string TeacherEmail { get; set; }
 	public string ApprovedByName { get; set; }
+
+	public DateTime? AccessDate { get; set; }
+	public TimeSpan? AccessTime { get; set; }
+	public int? DurationMinutes { get; set; }
+	public DateTime? AccessEndsAt { get; set; }
+	public bool IsAccessOpen { get; set; }
 }
 
 public class LessonMediaDto
