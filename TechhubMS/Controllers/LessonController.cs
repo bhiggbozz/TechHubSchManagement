@@ -97,7 +97,7 @@ public class LessonController : ControllerBase
 	}
 
 	[HttpGet("my-lessons")]
-	[Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+	[Authorize(Roles = "SubjectTeacher,HeadTeacher,ClassTeacher")]
 	[ProducesResponseType(typeof(BaseResponse), 200)]
 	public async Task<IActionResult> GetMyLessons(
 	[FromQuery] string? status = null,
