@@ -61,5 +61,7 @@ public class FileLimitsSettings
 	public List<string> AllowedImageFormats { get; set; } = new() { "jpg", "jpeg", "png", "gif", "webp" };
 
 	public List<string> AllowedDocumentFormats { get; set; } = new() { "pdf", "doc", "docx", "ppt", "pptx" };
+
+	public List<string> AllowedAudioFormats { get; set; } = new() { "mp3", "wav", "ogg", "webm", "m4a", "aac" };
 }
 
