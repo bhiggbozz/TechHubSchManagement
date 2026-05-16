@@ -10,7 +10,7 @@ namespace TechHub.Core.ViewModel
 	{
 		public string? Username {  get; set; }
 		public string? HashPassword { get; set; }
-		public string Inst { get; set; }
+		public string? Inst { get; set; } = string.Empty;
 		public string? DeviceType { get; set; }
 		public string? DeviceIp { get; set; }
 	}

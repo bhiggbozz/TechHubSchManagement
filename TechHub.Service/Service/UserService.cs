@@ -161,15 +161,15 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				if (string.IsNullOrWhiteSpace(loginViewModel.Inst))
-				{
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Institution code is required",
-						Status = "failed"
-					};
-				}
+				//if (string.IsNullOrWhiteSpace(loginViewModel.Inst))
+				//{
+				//	return new BaseResponse
+				//	{
+				//		ResponseCode = ResponseCode.BadRequest,
+				//		ResponseMessage = "Institution code is required",
+				//		Status = "failed"
+				//	};
+				//}
 
 				// ===== VALIDATE INSTITUTION CODE AGAINST DB =====
 
