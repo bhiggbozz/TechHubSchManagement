@@ -996,7 +996,7 @@ public class MediaService : IMediaService
 					MediaType.Video => _settings.Settings.FileLimits.AllowedVideoFormats,
 					MediaType.Image => _settings.Settings.FileLimits.AllowedImageFormats,
 					MediaType.Document => _settings.Settings.FileLimits.AllowedDocumentFormats,
-					//MediaType.Audio => _settings.Settings.FileLimits.AllowedAudioFormats,
+					MediaType.Audio => _settings.Settings.FileLimits.AllowedAudioFormats,
 					_ => new List<string>()
 				};
 
@@ -1054,28 +1054,28 @@ public class MediaService : IMediaService
 				// - Enforces single-use token
 				// - Tracks upload lifecycle
 
-				var mediaRecord = new ClassPreparationMedia
-				{
-					Id = mediaId,
-					MediaKey = mediaKey,
-					PublicId = mediaKey,  // Will be updated by Cloudinary
-					MediaType = (int)model.MediaType,
-					OriginalFileName = model.FileName,
-					DisplayName = model.DisplayName ?? model.FileName,
-					FileSizeBytes = 0,  // Unknown until upload completes
-					OriginalSizeBytes = model.FileSize,
-					MimeType = model.MimeType,
-					FileExtension = fileExtension,
-					CdnUrl = string.Empty,  // Populated on upload completion
-					IsTemporary = true,
-					UploadStatus = (int)UploadStatus.AwaitingUpload,
-					SchoolId = schoolId,
-					CreatedBy = userId,
-					CreationDate = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"),
-					IsActive = true
-				};
+				//var mediaRecord = new ClassPreparationMedia
+				//{
+				//	Id = mediaId,
+				//	MediaKey = mediaKey,
+				//	PublicId = mediaKey,  // Will be updated by Cloudinary
+				//	MediaType = (int)model.MediaType,
+				//	OriginalFileName = model.FileName,
+				//	DisplayName = model.DisplayName ?? model.FileName,
+				//	FileSizeBytes = 0,  // Unknown until upload completes
+				//	OriginalSizeBytes = model.FileSize,
+				//	MimeType = model.MimeType,
+				//	FileExtension = fileExtension,
+				//	CdnUrl = string.Empty,  // Populated on upload completion
+				//	IsTemporary = true,
+				//	UploadStatus = (int)UploadStatus.AwaitingUpload,
+				//	SchoolId = schoolId,
+				//	CreatedBy = userId,
+				//	CreationDate = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"),
+				//	IsActive = true
+				//};
 
-				await _mediaCommandRepo.Create(mediaRecord);
+				//await _mediaCommandRepo.Create(mediaRecord);
 
 				_logger.Information(
 					"Database record created - MediaId: {MediaId}, Status: AwaitingUpload",
