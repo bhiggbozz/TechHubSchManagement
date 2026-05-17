@@ -2936,10 +2936,10 @@ namespace TechHub.Service.Service
 
 				// Fetch and validate approval belongs to this approver
 				var fetchQuery = $@"
-            SELECT * FROM ApprovalRequests
-            WHERE  Id         = '{approvalId}'
-            AND    ApproverId = '{approverId}'
-            AND    Status     = '{ApprovalStatus.Pending}'";
+					SELECT * FROM ApprovalRequests
+					WHERE  Id         = '{approvalId}'
+					AND    ApproverId = '{approverId}'
+					AND    Status     = '{ApprovalStatus.Pending}'";
 
 				var approvals = await _queryApprovalRequests
 					.QueryAsync<ApprovalRequests>(fetchQuery, new Dictionary<string, object>());
@@ -2961,16 +2961,15 @@ namespace TechHub.Service.Service
 				{
 					// 1. Update ApprovalRequests status
 					var updateApproval = $@"
-                UPDATE ApprovalRequests
-                SET    Status          = '{newStatus}',
-                       RespondedAt     = '{respondedAt:yyyy-MM-dd HH:mm:ss}',
-                       RejectionReason = {(model.Approved
-								   ? "NULL"
-								   : $"'{model.RejectionReason.Replace("'", "''")}'")}
-                WHERE  Id = '{approvalId}'";
+						UPDATE ApprovalRequests
+						SET    Status          = '{newStatus}',
+							   RespondedAt     = '{respondedAt:yyyy-MM-dd HH:mm:ss}',
+							   RejectionReason = {(model.Approved
+										   ? "NULL"
+										   : $"'{model.RejectionReason.Replace("'", "''")}'")}
+						WHERE  Id = '{approvalId}'";
 
-					await scope.Connection.ExecuteAsync(
-						updateApproval, transaction: scope.Transaction);
+					await scope.Connection.ExecuteAsync(updateApproval, transaction: scope.Transaction);
 
 					// 2. Apply or reject the entity based on OperationType
 					if (model.Approved)
@@ -3089,8 +3088,7 @@ namespace TechHub.Service.Service
 						WHERE  Id       = '{approval.EntityId}'
 						AND    SchoolId = '{approval.SchoolId}'";
 
-					await scope.Connection.ExecuteAsync(
-						activateExam, transaction: scope.Transaction);
+					await scope.Connection.ExecuteAsync(activateExam, transaction: scope.Transaction);
 					break;
 
 				case OperationType.CreateUser:
@@ -3101,8 +3099,24 @@ namespace TechHub.Service.Service
 						WHERE  Id       = '{approval.EntityId}'
 						AND    SchoolId = '{approval.SchoolId}'";
 
-					await scope.Connection.ExecuteAsync(
-						activateUser, transaction: scope.Transaction);
+					await scope.Connection.ExecuteAsync(activateUser, transaction: scope.Transaction);
+					break;
+				case OperationType.AddSubTopics:
+					// EntityId is the TopicId — activate all pending subtopics for this topic
+					// that were created by this teacher and are still inactive
+					if (approval.EntityId.HasValue)
+					{
+						var activateSubTopics = $@"
+							UPDATE SubTopic
+							SET    IsActive  = 1
+							WHERE  TopicId   = '{approval.EntityId}'
+							AND    SchoolId  = '{approval.SchoolId}'
+							AND    IsActive  = 0
+							AND    IsDeleted = 0
+							AND    CreatedBy = '{approval.RequestedBy}'";
+
+						await scope.Connection.ExecuteAsync(activateSubTopics, transaction: scope.Transaction);
+					}
 					break;
 
 				default:

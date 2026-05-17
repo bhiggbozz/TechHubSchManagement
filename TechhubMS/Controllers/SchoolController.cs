@@ -274,6 +274,28 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		// POST api/topic/subtopics/add
+		[HttpPost("subtopics/add")]
+		[Authorize(Roles = "SubjectTeacher,HeadTeacher,ClassTeacher,Administrator,SuperAdministrator")]
+		[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+		[ProducesResponseType(StatusCodes.Status400BadRequest)]
+		[ProducesResponseType(StatusCodes.Status404NotFound)]
+		[ProducesResponseType(StatusCodes.Status409Conflict)]
+		public async Task<IActionResult> AddSubTopics([FromBody] AddSubTopicsViewModel model)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.AddSubTopicsToTopic(model, userClaims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Conflict => Conflict(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				_ => BadRequest(result)
+			};
+		}
+
 
 	}
 
