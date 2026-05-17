@@ -195,7 +195,7 @@ public class MediaController : ControllerBase
 	/// Triggers background jobs (thumbnails, AI analysis)
 	/// </summary>
 	[HttpPost("confirm-upload")]
-	[Authorize(Roles = "HeadTeacher,SubjectTeacher,Administrator,SuperAdministrator")]
+	[Authorize(Roles = "HeadTeacher,SubjectTeacher,Administrator,SuperAdministrator, ClassTeacher")]
 	public async Task<IActionResult> ConfirmUpload([FromBody] ConfirmUploadViewModel model)
 	{
 		var userClaims = User.GetAuthenticatedUserClaims();

@@ -24,7 +24,7 @@ public class BoardSessionRepository : IBoardSessionRepository
         var client = new MongoClient(mongoSettings.Value.ConnectionString);
         var database = client.GetDatabase(mongoSettings.Value.DatabaseName);
         _sessions = database.GetCollection<BoardSession>("board_sessions");
-        _collection = database.GetCollection<BoardSession>("BoardSessions");
+      //  _collection = database.GetCollection<BoardSession>("BoardSessions");
 
         // EnsureIndexes();
     }
@@ -242,7 +242,7 @@ public class BoardSessionRepository : IBoardSessionRepository
         var projection = Builders<BoardSession>.Projection
             .Exclude("batches.strokes");
 
-        return await _collection
+        return await _sessions
             .Find(filter)
             .Project<BoardSession>(projection)
             .FirstOrDefaultAsync();
@@ -255,7 +255,7 @@ public class BoardSessionRepository : IBoardSessionRepository
             Builders<BoardSession>.Filter.Eq(s => s.SchoolId, schoolId)
         );
 
-        var session = await _collection
+        var session = await _sessions
             .Find(filter)
             .Project<BoardSession>(
                 Builders<BoardSession>.Projection
