@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
@@ -11,86 +11,87 @@ namespace TechHub.Service.Service;
 
 public class BoardPublisherService : IBoardPublisherService, IDisposable
 {
-    private readonly RabbitMQSettings _settings;
-    private readonly ILogger _logger;
-    private readonly IConnection _connection;
-    private readonly IModel _channel;
-    private bool _disposed;
+	private readonly RabbitMQSettings _settings;
+	private readonly ILogger _logger;
+	private IConnection? _connection;
+	private IModel? _channel;
+	private bool _disposed;
+	private readonly object _lock = new();
 
-    public BoardPublisherService( IOptions<RabbitMQSettings> settings, ILogger logger)
-    {
-        _settings = settings.Value;
-        _logger = logger;
+	public BoardPublisherService(
+		IOptions<RabbitMQSettings> settings,
+		ILogger logger)
+	{
+		_settings = settings.Value;
+		_logger = logger;
+		// ✅ No connection here — deferred to first publish
+	}
 
-  //      var factory = new ConnectionFactory
-  //      {
-  //          HostName = _settings.Host,
-  //          Port = _settings.Port,
-  //          UserName = _settings.Username,
-  //          Password = _settings.Password,
-  //          AutomaticRecoveryEnabled = true,
-  //          NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
-		//	Ssl = new SslOption
-		//	{
-		//		Enabled = true,
-		//		ServerName = _settings.Host
-		//	}
-		//};
+	private void EnsureConnected()
+	{
+		if (_connection is { IsOpen: true } && _channel is { IsOpen: true })
+			return;
 
-		var factory = new ConnectionFactory
+		lock (_lock)
 		{
-			Uri = new Uri("amqps://kscffsye:Ht3OsGswOLwYU98Q-9cdaQbGT_lzSfkX@collie.lmq.cloudamqp.com/kscffsye"),
-			AutomaticRecoveryEnabled = true
-		};
+			if (_connection is { IsOpen: true } && _channel is { IsOpen: true })
+				return;
 
-		_connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
+			_logger.Information("Connecting to RabbitMQ - {AmqpUrl}", _settings.AmqpUrl);
 
-        _channel.QueueDeclare(
-            queue: _settings.BoardBatchQueue,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            arguments: null);
+			var factory = new ConnectionFactory
+			{
+				Uri = new Uri(_settings.AmqpUrl),
+				AutomaticRecoveryEnabled = true,
+				NetworkRecoveryInterval = TimeSpan.FromSeconds(10)
+			};
 
-        _logger.Information( "RabbitMQ BoardPublisherService initialized, Queue: {Queue}", _settings.BoardBatchQueue);
-    }
+			_connection = factory.CreateConnection();
+			_channel = _connection.CreateModel();
 
-    public Task PublishBatchAsync(BoardBatchMessage message)
-    {
-        var json = JsonSerializer.Serialize(message);
-        var body = Encoding.UTF8.GetBytes(json);
+			_channel.QueueDeclare(
+				queue: _settings.BoardBatchQueue,
+				durable: true,
+				exclusive: false,
+				autoDelete: false,
+				arguments: null);
 
-        var properties = _channel.CreateBasicProperties();
-        properties.Persistent = true;
-        properties.DeliveryMode = 2;
-        properties.ContentType = "application/json";
-        properties.MessageId = $"{message.SessionId}_{message.BatchIndex}";
+			_logger.Information(
+				"RabbitMQ connected - Queue: {Queue}", _settings.BoardBatchQueue);
+		}
+	}
 
-        _channel.BasicPublish(
-            exchange: string.Empty,
-            routingKey: _settings.BoardBatchQueue,
-            basicProperties: properties,
-            body: body);
+	public Task PublishBatchAsync(BoardBatchMessage message)
+	{
+		EnsureConnected();
 
-        _logger.Debug(
-            "Published batch {BatchIndex} for session {SessionId} to queue {Queue}",
-            message.BatchIndex,
-            message.SessionId,
-            _settings.BoardBatchQueue);
+		var json = JsonSerializer.Serialize(message);
+		var body = Encoding.UTF8.GetBytes(json);
+		var properties = _channel!.CreateBasicProperties();
 
-        return Task.CompletedTask;
-    }
+		properties.Persistent = true;
+		properties.DeliveryMode = 2;
+		properties.ContentType = "application/json";
+		properties.MessageId = $"{message.SessionId}_{message.BatchIndex}";
 
-    public void Dispose()
-    {
-        if (_disposed) return;
+		_channel.BasicPublish(
+			exchange: string.Empty,
+			routingKey: _settings.BoardBatchQueue,
+			basicProperties: properties,
+			body: body);
 
-        _channel?.Close();
-        _channel?.Dispose();
-        _connection?.Close();
-        _connection?.Dispose();
+		_logger.Information(
+			"Published batch {BatchIndex} for session {SessionId} to queue {Queue}",
+			message.BatchIndex, message.SessionId, _settings.BoardBatchQueue);
 
-        _disposed = true;
-    }
+		return Task.CompletedTask;
+	}
+
+	public void Dispose()
+	{
+		if (_disposed) return;
+		try { _channel?.Close(); _channel?.Dispose(); } catch { }
+		try { _connection?.Close(); _connection?.Dispose(); } catch { }
+		_disposed = true;
+	}
 }
