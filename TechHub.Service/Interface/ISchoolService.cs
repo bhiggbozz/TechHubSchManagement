@@ -49,6 +49,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetClassroomCurriculum(Guid classroomId, AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> GetSubjectCurriculum(Guid subjectId, AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> GetTopicsWithSubTopics(Guid subjectId, Guid classroomId, AuthenticatedUserClaims claims);
+		Task<BaseResponse> AddSubTopicsToTopic(AddSubTopicsViewModel model, AuthenticatedUserClaims userClaims);
 
 
 		//Task<SubjectDetailResponse> GetSubjectById(Guid subjectId, AuthenticatedUserClaims userInfo);

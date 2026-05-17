@@ -4022,6 +4022,219 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public async Task<BaseResponse> AddSubTopicsToTopic(AddSubTopicsViewModel model, AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+					return StringSanitizer.Fail<BaseResponse>("Invalid user identification");
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return StringSanitizer.Fail<BaseResponse>("Invalid school identification");
+
+				if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true, out var userRole))
+					return StringSanitizer.Fail<BaseResponse>("Invalid role in token");
+
+				if (model.TopicId == Guid.Empty)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Topic is required",
+						Status = "failed"
+					};
+
+				if (!model.SubTopics.Any())
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "At least one subtopic is required",
+						Status = "failed"
+					};
+
+				if (model.SubTopics.Any(string.IsNullOrWhiteSpace))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Subtopic names cannot be empty",
+						Status = "failed"
+					};
+
+				if (model.SubTopics.Count != model.SubTopics.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Duplicate subtopic names are not allowed",
+						Status = "failed"
+					};
+
+				// Verify topic exists and belongs to this school
+				var topicQuery = $@"
+					SELECT TOP 1 Id, Name, ClassroomId, SubjectId FROM Topic
+					WHERE  Id        = '{model.TopicId}'
+					AND    SchoolId  = '{schoolId}'
+					AND    IsDeleted = 0
+					AND    IsActive  = 1";
+
+				var topic = await _topicQueryRepository.Get(topicQuery);
+				if (topic is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Topic not found",
+						Status = "failed"
+					};
+
+				// Check for duplicate names within this topic
+				var sanitizedNames = string.Join(",",
+					model.SubTopics.Select(n => $"'{StringSanitizer.Sanitize(n.Trim())}'"));
+
+				var duplicateQuery = $@"
+					SELECT Name FROM SubTopic
+					WHERE  TopicId   = '{model.TopicId}'
+					AND    SchoolId  = '{schoolId}'
+					AND    IsDeleted = 0
+					AND    Name      IN ({sanitizedNames})";
+
+				var existing = await _subTopicQueryRepository.GetByQuery(
+					duplicateQuery, DatabaseTarget.Core);
+
+				if (existing?.Any() == true)
+				{
+					var duplicates = string.Join(", ", existing.Select(s => s.Name));
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Conflict,
+						ResponseMessage = $"Subtopics already exist in this topic: {duplicates}",
+						Status = "failed"
+					};
+				}
+
+				// Fetch teacher for line manager
+				var teacher = await _queryrepositoryUser.Get(userId);
+				if (teacher is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Teacher not found",
+						Status = "failed"
+					};
+
+				var requiresApproval = userRole == UserRole.SubjectTeacher ||
+									   userRole == UserRole.ClassTeacher;
+
+				if (requiresApproval && !teacher.LineManagerId.HasValue)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "No line manager assigned. Cannot submit for approval.",
+						Status = "failed"
+					};
+
+				var now = DateTime.UtcNow;
+				var nowStr = now.ToString("yyyy-MM-dd HH:mm:ss");
+				var isActive = !requiresApproval;
+
+				var subTopicDicts = model.SubTopics.Select(name =>
+					new Dictionary<string, object>
+					{
+						{ "Id",          Guid.NewGuid() },
+						{ "TopicId",     model.TopicId },
+						{ "SchoolId",    schoolId },
+						{ "ClassroomId", topic.ClassroomId },
+						{ "Name",        name.Trim() },
+						{ "IsActive",    isActive },
+						{ "IsDeleted",   false },
+						{ "CreatedAt",   nowStr },
+						{ "CreatedBy",   userId }
+					}).ToList();
+
+				var approvalId = Guid.NewGuid();
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					// 1. Batch insert subtopics
+					await _subTopicCommandRepository.CreateBatchAsync(scope.Transaction, scope.Connection, subTopicDicts);
+
+					// 2. Approval request only for SubjectTeacher and ClassTeacher
+					if (requiresApproval)
+					{
+						var expiryDays = int.Parse(_configuration["Approvals:ExpiryDays"] ?? "5");
+
+						var payloadSummary = new ApprovalPayloadSummary
+						{
+							Title = $"{model.SubTopics.Count} new subtopic(s) for {topic.Name}",
+							SubjectName = string.Empty,  // resolved from topic if needed
+							Description = string.Join(", ", model.SubTopics.Take(3)) +
+										  (model.SubTopics.Count > 3 ? "..." : "")
+						};
+
+						var approvalDict = new Dictionary<string, object>
+						{
+							{ "Id",              approvalId },
+							{ "SchoolId",        schoolId },
+							{ "RequestedBy",     userId },
+							{ "ApproverId",      teacher.LineManagerId!.Value },
+							{ "OperationType",   OperationType.AddSubTopics },
+							{ "EntityType",      "Topic" },
+							{ "EntityId",        model.TopicId },
+							{ "Payload",         JsonSerializer.Serialize(payloadSummary) },
+							{ "Status",          ApprovalStatus.Pending },
+							{ "RejectionReason", DBNull.Value },
+							{ "CreatedAt",       now },
+							{ "RespondedAt",     DBNull.Value },
+							{ "ExpiresAt",       now.AddDays(expiryDays) }
+						};
+
+						await _approvalRequestCommandRepository.Create(
+							scope.Transaction, scope.Connection, approvalDict);
+					}
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Rolling back subtopic addition - TopicId: {TopicId}", model.TopicId);
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx, "Rollback failed - TopicId: {TopicId}", model.TopicId);
+					}
+					throw;
+				}
+
+				_logger.Information(
+					"Subtopics added - TopicId: {TopicId}, Count: {Count}, RequiresApproval: {RequiresApproval}",
+					model.TopicId, model.SubTopics.Count, requiresApproval);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = requiresApproval
+						? $"{model.SubTopics.Count} subtopic(s) submitted for approval"
+						: $"{model.SubTopics.Count} subtopic(s) added successfully",
+					Status = "successful",
+					Data = new
+					{
+						TopicId = model.TopicId,
+						TopicName = topic.Name,
+						AddedCount = model.SubTopics.Count,
+						RequiresApproval = requiresApproval
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error adding subtopics - TopicId: {TopicId}", model.TopicId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
 		private async Task<ClassroomTeacher?> GetClassroomTeacherAssignment(Guid classroomId, Guid teacherId)
 		{
 			try
