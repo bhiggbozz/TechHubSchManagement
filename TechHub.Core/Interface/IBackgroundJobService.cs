@@ -57,6 +57,6 @@
 	/// - Key moments (intro, main content, summary)
 	/// - Detected topics (subject matter)
 	/// </summary>
-	string EnqueueAIContentAnalysis(Guid mediaId,string cdnUrl,int? duration);
+	string EnqueueAIContentAnalysis(Guid mediaId,string cdnUrl,decimal? duration);
 }
 

@@ -103,7 +103,7 @@ namespace TechHub.Background.Jobs;
 		/// <param name="duration">Video duration in seconds</param>
 		[Queue("low")]
 		[AutomaticRetry(Attempts = 1)]
-		public async Task Execute(Guid mediaId, string cdnUrl, int? duration)
+		public async Task Execute(Guid mediaId, string cdnUrl, decimal? duration)
 		{
 			try
 			{
@@ -187,7 +187,7 @@ namespace TechHub.Background.Jobs;
 		/// 3. CUSTOM ML MODEL:
 		/// var prediction = await _mlService.AnalyzeVideo(cdnUrl);
 		/// </summary>
-		private async Task<ContentAnalysisResult> PerformBasicAnalysis(string cdnUrl, int? duration)
+		private async Task<ContentAnalysisResult> PerformBasicAnalysis(string cdnUrl, decimal? duration)
 		{
 			// Simulate analysis delay (in production, this would be actual AI processing)
 			await Task.Delay(100);
@@ -230,7 +230,7 @@ namespace TechHub.Background.Jobs;
 		/// - Use audio analysis to detect topic changes
 		/// - Use transcript to identify section headers
 		/// </summary>
-		private List<KeyMoment> GenerateKeyMoments(int? duration)
+		private List<KeyMoment> GenerateKeyMoments(decimal? duration)
 		{
 			if (!duration.HasValue || duration.Value <= 0)
 			{
@@ -346,7 +346,7 @@ namespace TechHub.Background.Jobs;
 	public class KeyMoment
 	{
 		/// <summary>Time in seconds from start of video</summary>
-		public int Time { get; set; }
+		public decimal Time { get; set; }
 
 		/// <summary>Label for this moment (e.g., "Introduction", "Main Content")</summary>
 		public string Label { get; set; }

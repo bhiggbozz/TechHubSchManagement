@@ -102,7 +102,7 @@ namespace TechHub.BackgroundJobs.Services;
 		/// NOTE: Currently implements basic analysis
 		/// Can be enhanced with Azure Video Indexer or Cloudinary AI
 		/// </summary>
-		public string EnqueueAIContentAnalysis(Guid mediaId,string cdnUrl,int? duration)
+		public string EnqueueAIContentAnalysis(Guid mediaId,string cdnUrl,decimal? duration)
 		{
 			// Schedule with 2-minute delay
 			// Gives time for video processing to complete

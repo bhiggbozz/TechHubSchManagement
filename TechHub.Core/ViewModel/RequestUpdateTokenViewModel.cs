@@ -50,7 +50,7 @@ public class ConfirmUploadViewModel
 	public long FileSize { get; set; }
 
 	/// <summary>Video/audio duration in seconds (null for images/documents)</summary>
-	public int? Duration { get; set; }
+	public decimal? Duration { get; set; }
 
 	/// <summary>Auto-generated thumbnail URL (optional)</summary>
 	public string? ThumbnailUrl { get; set; }
