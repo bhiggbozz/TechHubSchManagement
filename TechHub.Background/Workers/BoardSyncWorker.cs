@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -32,13 +32,13 @@ public class BoardSyncWorker : BackgroundService
         {
 			_logger.Information("BoardSyncWorker starting...");
 
-			await Task.Yield();
+			//await Task.Yield();
 
 			try
 			{
 				InitializeRabbitMQ();
 				await ConsumeMessages(stoppingToken);
-                break;
+               // break;
 			}
 			catch (Exception ex)
 			{
@@ -52,21 +52,22 @@ public class BoardSyncWorker : BackgroundService
 
     private void InitializeRabbitMQ()
     {
-        //var factory = new ConnectionFactory
-        //{
-        //    HostName = _settings.Host,
-        //    Port = _settings.Port,
-        //    UserName = _settings.Username,
-        //    Password = _settings.Password,
-        //    AutomaticRecoveryEnabled = true,
-        //    NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
-        //    DispatchConsumersAsync = true
-        //};
+		//var factory = new ConnectionFactory
+		//{
+		//    HostName = _settings.Host,
+		//    Port = _settings.Port,
+		//    UserName = _settings.Username,
+		//    Password = _settings.Password,
+		//    AutomaticRecoveryEnabled = true,
+		//    NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
+		//    DispatchConsumersAsync = true
+		//};
 
 		var factory = new ConnectionFactory
 		{
-			Uri = new Uri("amqps://kscffsye:Ht3OsGswOLwYU98Q-9cdaQbGT_lzSfkX@collie.lmq.cloudamqp.com/kscffsye"),
-			AutomaticRecoveryEnabled = true
+			Uri = new Uri(_settings.AmqpUrl),
+			AutomaticRecoveryEnabled = true,
+			DispatchConsumersAsync = true  // ← required for AsyncEventingBasicConsumer
 		};
 
 		_connection = factory.CreateConnection();
@@ -86,7 +87,7 @@ public class BoardSyncWorker : BackgroundService
             _settings.BoardBatchQueue);
     }
 
-    private Task ConsumeMessages(CancellationToken stoppingToken)
+    private async Task ConsumeMessages(CancellationToken stoppingToken)
     {
         var consumer = new AsyncEventingBasicConsumer(_channel);
 
@@ -159,10 +160,10 @@ public class BoardSyncWorker : BackgroundService
             _connection?.Close();
         });
 
-        return Task.CompletedTask;
-    }
+		await Task.Delay(Timeout.Infinite, stoppingToken);
+	}
 
-    public override void Dispose()
+	public override void Dispose()
     {
         _channel?.Dispose();
         _connection?.Dispose();
