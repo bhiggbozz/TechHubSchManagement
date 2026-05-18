@@ -9,9 +9,7 @@ namespace TechHub.Service.Extensions;
 
 public static class BoardServiceExtensions
 {
-    public static IServiceCollection AddBoardServices(
-        this IServiceCollection services,
-		 Microsoft.Extensions.Configuration.IConfiguration configuration)
+    public static IServiceCollection AddBoardServices(this IServiceCollection services, Microsoft.Extensions.Configuration.IConfiguration configuration)
     {
         // Configuration
         services.Configure<MongoDbSettings>(
