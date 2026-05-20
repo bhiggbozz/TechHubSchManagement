@@ -1,150 +1,147 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using Serilog;
 using TechHub.Core.Configuration;
 using TechHub.Core.Entities.Board;
 using TechHub.Core.Messages;
-using TechHub.Core.ViewModels.Board;
 using TechHub.Core.ViewModels.Board.Manifest;
 using TechHub.Service.Interface;
+
 
 namespace TechHub.Service.Repository;
 
 public class BoardSessionRepository : IBoardSessionRepository
 {
-    private readonly IMongoCollection<BoardSession> _sessions;
-    private readonly IMongoCollection<BoardSession> _collection;
+	private readonly IMongoCollection<BoardManifest> _manifests;
+	private readonly IMongoCollection<BoardBatchDocument> _batches;
 
-    private readonly ILogger _logger;
+	private readonly ILogger _logger;
 
-    public BoardSessionRepository(IOptions<MongoDbSettings> mongoSettings, ILogger logger)
-    {
-        _logger = logger;
+	public BoardSessionRepository(IOptions<MongoDbSettings> mongoSettings, ILogger logger)
+	{
+		_logger = logger;
+		var client = new MongoClient(mongoSettings.Value.ConnectionString);
+		var database = client.GetDatabase(mongoSettings.Value.DatabaseName);
+		_manifests = database.GetCollection<BoardManifest>("board_manifests");
+		_batches = database.GetCollection<BoardBatchDocument>("board_batches");
+	}
 
-        var client = new MongoClient(mongoSettings.Value.ConnectionString);
-        var database = client.GetDatabase(mongoSettings.Value.DatabaseName);
-        _sessions = database.GetCollection<BoardSession>("board_sessions");
-      //  _collection = database.GetCollection<BoardSession>("BoardSessions");
+	// ── Duplicate check ───────────────────────────────────────────────────────
+	public async Task<bool> BatchExistsAsync(string sessionId, int batchIndex)
+	{
+		var indexKey = $"{sessionId}_{batchIndex}";
+		return await _batches
+			.Find(Builders<BoardBatchDocument>.Filter.Eq(b => b.Id, indexKey))
+			.AnyAsync();
+	}
 
-        // EnsureIndexes();
-    }
-
-    private void EnsureIndexes()
-    {
-        var indexKeys = Builders<BoardSession>.IndexKeys
-            .Ascending(s => s.SchoolId)
-            .Ascending(s => s.Status);
-
-        _sessions.Indexes.CreateOne(new CreateIndexModel<BoardSession>(indexKeys));
-
-        var batchIndexKeys = Builders<BoardSession>.IndexKeys
-            .Ascending(s => s.Id)
-            .Ascending("batches.batchIndex");
-
-        _sessions.Indexes.CreateOne(new CreateIndexModel<BoardSession>(batchIndexKeys));
-    }
-
-    public async Task<bool> BatchExistsAsync(string sessionId, int batchIndex)
-    {
-        var filter = Builders<BoardSession>.Filter.And(
-            Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId),
-            Builders<BoardSession>.Filter.ElemMatch(s => s.Batches, b => b.BatchIndex == batchIndex)
-        );
-
-        var count = await _sessions.CountDocumentsAsync(filter);
-        return count > 0;
-    }
-
+	// ── Save batch — called by BoardSyncWorker ────────────────────────────────
 	public async Task SaveBatchAsync(BoardBatchMessage message)
 	{
 		try
 		{
-			// Check for duplicate batchIndex before pushing
-			var duplicateFilter = Builders<BoardSession>.Filter.And(
-				Builders<BoardSession>.Filter.Eq(s => s.Id, message.SessionId),
-				Builders<BoardSession>.Filter.ElemMatch(s => s.Batches,
-					Builders<BoardBatch>.Filter.Eq(b => b.BatchIndex, message.BatchIndex))
-			);
+			var indexKey = $"{message.SessionId}_{message.BatchIndex}";
 
-			var exists = await _sessions.Find(duplicateFilter).AnyAsync();
+			var exists = await _batches
+				.Find(Builders<BoardBatchDocument>.Filter.Eq(b => b.Id, indexKey))
+				.AnyAsync();
+
 			if (exists)
 			{
 				_logger.Warning(
-					"Duplicate batch ignored - SessionId: {SessionId}, BatchIndex: {BatchIndex}",
+					"Duplicate batch - SessionId: {SessionId}, BatchIndex: {BatchIndex}",
 					message.SessionId, message.BatchIndex);
 				return;
 			}
 
-			// Map strokes from StrokeViewModel to BoardStroke entity
-			//var strokes = message.Strokes.Select(s => new BoardStroke
-			//{
-			//	Id = s.Id,
-			//	SessionId = s.SessionId,
-			//	Pts = s.Pts,
-			//	Color = s.C,           // ViewModel uses C, entity uses Color
-			//	Width = s.W,           // ViewModel uses W, entity uses Width
-			//	Timestamp = s.Ts,          // ViewModel uses Ts, entity uses Timestamp
-			//	CurrentBoard = s.CurrentBoard
-			//}).ToList();
+			var strokes = message.Strokes.Select(s => new BoardStroke
+			{
+				Id = s.Id,
+				SessionId = s.SessionId,
+				Type = s.Type,
+				Data = s.Data,
+				Color = s.Color,
+				Width = s.Width,
+				CurrentBoard = s.CurrentBoard,
+				Timestamp = s.Timestamp,
+				Duration = s.Duration,
+				StartTime = s.StartTime,
+				EndTime = s.EndTime
+			}).ToList();
 
-			var batch = new BoardBatch
+			var batchDoc = new BoardBatchDocument
+			{
+				Id = indexKey,
+				SessionId = message.SessionId,
+				SchoolId = message.SchoolId,
+				BatchIndex = message.BatchIndex,
+				BoardIndex = message.BoardIndex,
+				StartMs = message.StartMs,
+				EndMs = message.EndMs,
+				StrokeCount = message.StrokeCount,
+				ReceivedAt = message.ReceivedAt,
+				Strokes = strokes
+			};
+
+			await _batches.InsertOneAsync(batchDoc);
+
+			// Push lightweight ref into manifest document
+			var batchRef = new BatchRef
 			{
 				BatchIndex = message.BatchIndex,
-				IndexKey = $"{message.LessonId}_{message.BatchIndex}",
+				IndexKey = indexKey,
 				StartMs = message.StartMs,
 				EndMs = message.EndMs,
 				StrokeCount = message.StrokeCount,
 				SizeBytes = message.SizeBytes,
-				ReceivedAt = message.ReceivedAt,
-				//Strokes = strokes
+				BoardIndex = message.BoardIndex
 			};
 
-			var filter = Builders<BoardSession>.Filter.Eq(s => s.Id, message.SessionId);
+			var manifestFilter = Builders<BoardManifest>.Filter
+				.Eq(m => m.Id, message.SessionId);
 
-			var update = Builders<BoardSession>.Update
-				.SetOnInsert(s => s.Id, message.SessionId)
-				.SetOnInsert(s => s.LessonId, message.LessonId)
-				.SetOnInsert(s => s.SchoolId, message.SchoolId)
-				.SetOnInsert(s => s.TeacherId, message.TeacherId)
-				.SetOnInsert(s => s.Status, SessionStatus.InProgress)
-				.SetOnInsert(s => s.CreatedAt, DateTime.UtcNow)
-				.Set(s => s.UpdatedAt, DateTime.UtcNow)
-				.Push(s => s.Batches, batch);
+			var manifestUpdate = Builders<BoardManifest>.Update
+				.SetOnInsert(m => m.Id, message.SessionId)
+				.SetOnInsert(m => m.LessonId, message.LessonId)
+				.SetOnInsert(m => m.SchoolId, message.SchoolId)
+				.SetOnInsert(m => m.TeacherId, message.TeacherId)
+				.SetOnInsert(m => m.Status, SessionStatus.InProgress)
+				.SetOnInsert(m => m.CreatedAt, DateTime.UtcNow)
+				.Set(m => m.UpdatedAt, DateTime.UtcNow)
+				.Push(m => m.BatchRefs, batchRef);
 
-			var options = new UpdateOptions { IsUpsert = true };
-
-			await _sessions.UpdateOneAsync(filter, update, options);
+			await _manifests.UpdateOneAsync(
+				manifestFilter, manifestUpdate,
+				new UpdateOptions { IsUpsert = true });
 
 			_logger.Information(
-				"Saved batch {BatchIndex} for session {SessionId}, StrokeCount: {StrokeCount}, IndexKey: {IndexKey}",
-				message.BatchIndex, message.SessionId, message.StrokeCount, batch.IndexKey);
+				"Batch saved - IndexKey: {IndexKey}, Strokes: {Count}",
+				indexKey, strokes.Count);
 		}
 		catch (Exception ex)
 		{
 			_logger.Error(ex,
-				"Failed to save batch - SessionId: {SessionId}, BatchIndex: {BatchIndex}",
-				message.SessionId, message.BatchIndex);
+				"Failed to save batch - SessionId: {SessionId}", message.SessionId);
 			throw;
 		}
 	}
 
+	// ── Save manifest — called when class ends ────────────────────────────────
 	public async Task SaveManifestAsync(string sessionId, SessionManifestViewModel manifest)
 	{
 		try
 		{
-			var filter = Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId);
+			var filter = Builders<BoardManifest>.Filter.Eq(m => m.Id, sessionId);
 
-			var update = Builders<BoardSession>.Update
-				.Set(s => s.Version, manifest.Version)
-				.Set(s => s.Status, SessionStatus.Completed)
-				//.Set(s => s.PublishedAt, manifest.Session.PublishedAt)
-				//.Set(s => s.RecordedAt, manifest.Session.RecordedAt)
-				.Set(s => s.Teacher, new TeacherInfo
+			var update = Builders<BoardManifest>.Update
+				.Set(m => m.Version, manifest.Version)
+				.Set(m => m.Status, SessionStatus.Completed)
+				.Set(m => m.Teacher, new TeacherInfo
 				{
 					Id = manifest.Session.Teacher.Id,
 					Name = manifest.Session.Teacher.Name
 				})
-				.Set(s => s.Lesson, new LessonInfo
+				.Set(m => m.Lesson, new LessonInfo
 				{
 					Topic = manifest.Lesson.Topic,
 					SubTopic = manifest.Lesson.SubTopic,
@@ -160,13 +157,19 @@ public class BoardSessionRepository : IBoardSessionRepository
 						Name = manifest.Lesson.Classroom.Name
 					}
 				})
-				.Set(s => s.Stats, new SessionStats
+				.Set(m => m.Stats, new SessionStats
 				{
 					TotalDurationMs = manifest.Stats.TotalDurationMs,
+					TotalDurationFormatted = manifest.Stats.TotalDurationFormatted,
 					ChunkCount = manifest.Stats.ChunkCount,
-					//StrokeBatchCount = manifest.Stats.StrokeBatchCount
+					ChunkDurationMs = manifest.Stats.ChunkDurationMs,
+					SeekGranularityMs = manifest.Stats.SeekGranularityMs,
+					TotalAudioSizeBytes = manifest.Stats.TotalAudioSizeBytes,
+					TotalStrokeCount = manifest.Stats.TotalStrokeCount,
+					BoardCount = manifest.Stats.BoardCount,
+					StrokeBatchCount = manifest.Stats.StrokeBatchCount
 				})
-				.Set(s => s.Chunks, manifest.Chunks.Select(c => new SessionChunk
+				.Set(m => m.Chunks, manifest.Chunks.Select(c => new SessionChunk
 				{
 					Index = c.Index,
 					StartMs = c.StartMs,
@@ -174,156 +177,101 @@ public class BoardSessionRepository : IBoardSessionRepository
 					Audio = new AudioChunk
 					{
 						Url = c.Audio.Url,
-						//MediaId = c.Audio.MediaId
-					}
+						MediaId = c.Audio.MediaId,
+						SizeBytes = c.Audio.SizeBytes,
+						DurationMs = c.Audio.DurationMs
+					},
+					Events = c.Events.Select(e => new ChunkEvent
+					{
+						//Type = e.Type,
+						//TimestampMs = e.TimestampMs,
+						//MediaAssetId = e.MediaAssetId
+					}).ToList()
 				}).ToList())
-				.Set(s => s.UpdatedAt, DateTime.UtcNow);
+				.Set(m => m.MediaAssets, manifest.MediaAssets.Select(a => new MediaAsset
+				{
+					Id = a.Id,
+					Name = a.Name,
+					Type = a.Type,
+					Url = a.Url
+				}).ToList())
+				.Set(m => m.Boards, manifest.Boards.Select(b => new BoardInfo
+				{
+					Index = b.Index,
+					Dimensions = new BoardDimensions
+					{
+						Width = b.Dimensions.Width,
+						Height = b.Dimensions.Height
+					},
+					StrokeCount = b.StrokeCount
+				}).ToList())
+				.Set(m => m.Chapters, manifest.Chapters.Select(c => new Chapter
+				{
+					Title = c.Title,
+					StartMs = c.StartMs,
+					EndMs = c.EndMs
+				}).ToList())
+				.Set(m => m.UpdatedAt, DateTime.UtcNow);
 
-			var options = new UpdateOptions { IsUpsert = true };
-			await _sessions.UpdateOneAsync(filter, update, options);
+			await _manifests.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true });
 
-			_logger.Information(
-				"Manifest saved - SessionId: {SessionId}, ChunkCount: {ChunkCount}, StrokeBatchCount: {StrokeBatchCount}",
-				sessionId, manifest.Stats.ChunkCount, manifest.Stats.StrokeBatchCount);
+			_logger.Information("Manifest saved - SessionId: {SessionId}", sessionId);
 		}
 		catch (Exception ex)
 		{
-			_logger.Error(ex, "Failed to save manifest - SessionId: {SessionId}", sessionId);
+			_logger.Error(ex,
+				"Failed to save manifest - SessionId: {SessionId}", sessionId);
 			throw;
 		}
 	}
 
-	public async Task<BoardSession?> GetSessionAsync(string sessionId, string schoolId)
-    {
-        var filter = Builders<BoardSession>.Filter.And(
-            Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId),
-            Builders<BoardSession>.Filter.Eq(s => s.SchoolId, schoolId)
-        );
+	// ── Get manifest — lightweight, no strokes ────────────────────────────────
+	public async Task<BoardManifest?> GetManifestAsync(string sessionId, string schoolId)
+	{
+		var filter = Builders<BoardManifest>.Filter.And(
+			Builders<BoardManifest>.Filter.Eq(m => m.Id, sessionId),
+			Builders<BoardManifest>.Filter.Eq(m => m.SchoolId, schoolId),
+			Builders<BoardManifest>.Filter.Eq(m => m.Status, SessionStatus.Completed)
+		);
+		return await _manifests.Find(filter).FirstOrDefaultAsync();
+	}
 
-        return await _sessions.Find(filter).FirstOrDefaultAsync();
-    }
+	// ── Get single batch by indexKey — O(1) _id lookup ───────────────────────
+	public async Task<BoardBatchDocument?> GetBatchByIndexKeyAsync(string indexKey)
+	{
+		return await _batches
+			.Find(Builders<BoardBatchDocument>.Filter.Eq(b => b.Id, indexKey))
+			.FirstOrDefaultAsync();
+	}
 
-    public async Task UpdateAudioFinalUrlAsync(string sessionId, string audioFinalUrl)
-    {
-        var filter = Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId);
-        var update = Builders<BoardSession>.Update
-            .Set(s => s.AudioFinalUrl, audioFinalUrl)
-            .Set(s => s.UpdatedAt, DateTime.UtcNow);
+	// ── Update audio final URL after concatenation ────────────────────────────
+	public async Task UpdateAudioFinalUrlAsync(string sessionId, string audioFinalUrl)
+	{
+		var filter = Builders<BoardManifest>.Filter.Eq(m => m.Id, sessionId);
+		var update = Builders<BoardManifest>.Update
+			.Set(m => m.AudioFinalUrl, audioFinalUrl)
+			.Set(m => m.UpdatedAt, DateTime.UtcNow);
+		await _manifests.UpdateOneAsync(filter, update);
 
-        await _sessions.UpdateOneAsync(filter, update);
+		_logger.Information(
+			"Audio final URL updated - SessionId: {SessionId}", sessionId);
+	}
 
-        _logger.Information(
-            "Updated audio final URL for session {SessionId}",
-            sessionId);
-    }
+	// ── Mark session completed ────────────────────────────────────────────────
+	public async Task MarkCompletedAsync(string sessionId)
+	{
+		var filter = Builders<BoardManifest>.Filter.Eq(m => m.Id, sessionId);
+		var update = Builders<BoardManifest>.Update
+			.Set(m => m.Status, SessionStatus.Completed)
+			.Set(m => m.UpdatedAt, DateTime.UtcNow);
+		await _manifests.UpdateOneAsync(filter, update);
 
-    public async Task MarkCompletedAsync(string sessionId)
-    {
-        var filter = Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId);
-        var update = Builders<BoardSession>.Update
-            .Set(s => s.Status, SessionStatus.Completed)
-            .Set(s => s.UpdatedAt, DateTime.UtcNow);
+		_logger.Information(
+			"Session marked completed - SessionId: {SessionId}", sessionId);
+	}
 
-        await _sessions.UpdateOneAsync(filter, update);
-
-        _logger.Information(
-            "Marked session {SessionId} as completed",
-            sessionId);
-    }
-
-    public async Task<BoardSession?> GetManifestAsync(string sessionId, string schoolId)
-    {
-        var filter = Builders<BoardSession>.Filter.And(
-            Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId),
-            Builders<BoardSession>.Filter.Eq(s => s.SchoolId, schoolId),
-            Builders<BoardSession>.Filter.Eq(s => s.Status, SessionStatus.Completed));
-
-        // Exclude raw strokes from batches � manifest + batch refs only
-        var projection = Builders<BoardSession>.Projection
-            .Exclude("batches.strokes");
-
-        return await _sessions
-            .Find(filter)
-            .Project<BoardSession>(projection)
-            .FirstOrDefaultAsync();
-    }
-
-    public async Task<BoardBatch?> GetBatchByIndexKeyAsync(string sessionId, string schoolId, string indexKey)
-    {
-        var filter = Builders<BoardSession>.Filter.And(
-            Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId),
-            Builders<BoardSession>.Filter.Eq(s => s.SchoolId, schoolId)
-        );
-
-        var session = await _sessions
-            .Find(filter)
-            .Project<BoardSession>(
-                Builders<BoardSession>.Projection
-                    .ElemMatch(s => s.Batches,
-                        Builders<BoardBatch>.Filter
-                            .Eq(b => b.IndexKey, indexKey)))
-            .FirstOrDefaultAsync();
-
-        return session?.Batches?.FirstOrDefault();
-    }
+	public async Task<BoardManifest?> GetSessionAsync(string sessionId, string schoolId)
+	{
+		return await GetManifestAsync(sessionId, schoolId);
+	}
 }
-
-	//public async Task<BoardSession?> GetManifestAsync(string sessionId, string schoolId)
-	//{
-	//	var filter = Builders<BoardSession>.Filter.And(
-	//		Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId),
-	//		Builders<BoardSession>.Filter.Eq(s => s.SchoolId, schoolId),
-	//		Builders<BoardSession>.Filter.Eq(s => s.Status, "Completed")
-	//	);
-
-//	// Return manifest + batch index references only
-//	// Exclude the strokes array inside each batch � can be several MB
-//	var projection = Builders<BoardSession>.Projection
-//		.Exclude("batches.strokes");
-
-//	return await _collection
-//		.Find(filter)
-//		.Project<BoardSession>(projection)
-//		.FirstOrDefaultAsync();
-//}
-
-//public async Task<BoardSessionBatch?> GetBatchAsync(string sessionId, string schoolId, int batchIndex)
-//{
-//	var filter = Builders<BoardSession>.Filter.And(
-//		Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId),
-//		Builders<BoardSession>.Filter.Eq(s => s.SchoolId, schoolId)
-//	);
-
-//	var session = await _collection
-//		.Find(filter)
-//		.Project<BoardSession>(
-//			Builders<BoardSession>.Projection
-//				.ElemMatch(s => s.Batches,
-//					Builders<BoardSessionBatch>.Filter.Eq(b => b.BatchIndex, batchIndex))
-//				.Include("batches.$"))
-//		.FirstOrDefaultAsync();
-
-//	return session?.Batches?.FirstOrDefault();
-//}
-
-//	public async Task<BoardSession?> GetSessionWithManifestAsync(
-//	string sessionId, string schoolId)
-//	{
-//		var filter = Builders<BoardSession>.Filter.And(
-//			Builders<BoardSession>.Filter.Eq(s => s.Id, sessionId),
-//			Builders<BoardSession>.Filter.Eq(s => s.SchoolId, schoolId),
-//			Builders<BoardSession>.Filter.Eq(s => s.Status, "Completed")
-//		);
-
-//		// Project only the manifest � exclude the batches array
-//		// Batches contain raw strokes and are not needed by the student
-//		// Manifest has everything needed for download
-//		var projection = Builders<BoardSession>.Projection
-//			.Exclude(s => s.Batches);
-
-//		return await _collection
-//			.Find(filter)
-//			.Project<BoardSession>(projection)
-//			.FirstOrDefaultAsync();
-//	}
-//}

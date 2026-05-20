@@ -322,3 +322,15 @@ ALTER TABLE LessonContent ADD AccessDate      DATE         NULL;
 ALTER TABLE LessonContent ADD AccessTime      TIME         NULL;
 ALTER TABLE LessonContent ADD DurationMinutes INT          NULL;
 ALTER TABLE LessonContent ADD AccessEndsAt    DATETIME2    NULL; 
+
+-------------------------------------------------------------------
+------- this is needed 
+--db.board_batches.createIndex(
+--    { "sessionId": 1, "batchIndex": 1 },
+--    { name: "IX_board_batches_SessionId_BatchIndex" }
+--);
+
+--db.board_manifests.createIndex(
+--    { "schoolId": 1, "status": 1 },
+--    { name: "IX_board_manifests_SchoolId_Status" }
+--);

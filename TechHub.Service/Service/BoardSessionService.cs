@@ -166,8 +166,7 @@ public class BoardSessionService : IBoardSessionService
 	}
 
 
-	public async Task<BaseResponse> GetManifest(
-		string sessionId, AuthenticatedUserClaims claims)
+	public async Task<BaseResponse> GetManifest(string sessionId, AuthenticatedUserClaims claims)
 	{
 		try
 		{
@@ -176,18 +175,18 @@ public class BoardSessionService : IBoardSessionService
 			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
 				return Unauthorized();
 
-			// Fetch session from MongoDB — strokes excluded
-			var session = await _repository.GetManifestAsync(sessionId, claims.SchoolId);
-			if (session is null)
+			// Fetch manifest from MongoDB
+			var manifest = await _repository.GetManifestAsync(sessionId, claims.SchoolId);
+			if (manifest is null)
 				return NotFound("Session not found or not yet completed");
 
 			// Verify lesson is published
 			var lessonQuery = $@"
-                SELECT lc.Id, lc.ClassroomId
-                FROM   LessonContent lc
-                WHERE  lc.Id       = '{session.LessonId}'
-                AND    lc.SchoolId = '{schoolId}'
-                AND    lc.Status   = '{LessonStatus.Published}'";
+            SELECT lc.Id, lc.ClassroomId
+            FROM   LessonContent lc
+            WHERE  lc.Id       = '{manifest.LessonId}'
+            AND    lc.SchoolId = '{schoolId}'
+            AND    lc.Status   = '{LessonStatus.Published}'";
 
 			var lesson = await _lessonQuery.Get(lessonQuery);
 			if (lesson is null)
@@ -195,11 +194,11 @@ public class BoardSessionService : IBoardSessionService
 
 			// Verify student is enrolled in the lesson's classroom
 			var membershipQuery = $@"
-                SELECT TOP 1 Id FROM StudentClassroom
-                WHERE  StudentId   = '{studentId}'
-                AND    ClassroomId = '{lesson.ClassroomId}'
-                AND    SchoolId    = '{schoolId}'
-                AND    IsActive    = 1";
+            SELECT TOP 1 Id FROM StudentClassroom
+            WHERE  StudentId   = '{studentId}'
+            AND    ClassroomId = '{lesson.ClassroomId}'
+            AND    SchoolId    = '{schoolId}'
+            AND    IsActive    = 1";
 
 			var membership = await _studentClassroomQuery.Get(membershipQuery);
 			if (membership is null)
@@ -216,23 +215,15 @@ public class BoardSessionService : IBoardSessionService
 				Status = "successful",
 				Data = new
 				{
-					session.Version,
-					session.Teacher,
-					session.Lesson,
-					session.Stats,
-					session.Chunks,
-					session.MediaAssets,
-					session.Boards,
-					session.Chapters,
-					StrokeBatches = session.Batches
-						.Select(b => new
-						{
-							b.BatchIndex,
-							b.IndexKey,
-							b.StartMs,
-							b.EndMs,
-							b.StrokeCount
-						})
+					manifest.Version,
+					manifest.Teacher,
+					manifest.Lesson,
+					manifest.Stats,
+					manifest.Chunks,
+					manifest.MediaAssets,
+					manifest.Boards,
+					manifest.Chapters,
+					StrokeBatches = manifest.BatchRefs  // ← BatchRefs not Batches
 						.OrderBy(b => b.BatchIndex)
 						.ToList()
 				}
@@ -260,8 +251,7 @@ public class BoardSessionService : IBoardSessionService
 			if (string.IsNullOrWhiteSpace(indexKey))
 				return BadRequest("IndexKey is required");
 
-			var batch = await _repository.GetBatchByIndexKeyAsync(
-				sessionId, schoolId.ToString(), indexKey);
+			var batch = await _repository.GetBatchByIndexKeyAsync(indexKey);
 
 			if (batch is null)
 				return NotFound($"Batch not found - IndexKey: {indexKey}");
@@ -320,8 +310,13 @@ public class BoardSessionService : IBoardSessionService
 	};
 
 
-	public async Task<BoardSession?> GetSessionAsync(string sessionId, string schoolId)
-    {
-        return await _repository.GetSessionAsync(sessionId, schoolId);
-    }
+	public async Task<BoardManifest?> GetSessionManifestAsync(string sessionId, string schoolId)
+	{
+		return await _repository.GetManifestAsync(sessionId, schoolId);
+	}
+
+	//Task<BoardSession?> IBoardSessionService.GetSessionAsync(string sessionId, string schoolId)
+	//{
+	//	throw new NotImplementedException();
+	//}
 }
