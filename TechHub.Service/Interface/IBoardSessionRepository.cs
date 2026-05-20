@@ -6,14 +6,12 @@ namespace TechHub.Service.Interface;
 
 public interface IBoardSessionRepository
 {
-    Task SaveBatchAsync(BoardBatchMessage message);
-    Task SaveManifestAsync(string sessionId, SessionManifestViewModel manifest);
-    Task<BoardSession?> GetSessionAsync(string sessionId, string schoolId);
-    Task UpdateAudioFinalUrlAsync(string sessionId, string audioFinalUrl);
-    Task MarkCompletedAsync(string sessionId);
-    Task<bool> BatchExistsAsync(string sessionId, int batchIndex);
-	Task<BoardSession?> GetManifestAsync(string sessionId, string schoolId);
-	Task<BoardBatch?> GetBatchByIndexKeyAsync(string sessionId, string schoolId, string indexKey);
-	//Task<BoardSession?> GetSessionWithManifestAsync(string sessionId, string schoolId);
-
+	Task SaveBatchAsync(BoardBatchMessage message);
+	Task SaveManifestAsync(string sessionId, SessionManifestViewModel manifest);
+	Task<BoardManifest?> GetManifestAsync(string sessionId, string schoolId);
+	Task<BoardBatchDocument?> GetBatchByIndexKeyAsync(string indexKey);
+	Task<bool> BatchExistsAsync(string sessionId, int batchIndex);
+	Task UpdateAudioFinalUrlAsync(string sessionId, string audioFinalUrl);
+	Task MarkCompletedAsync(string sessionId);
+	Task<BoardManifest?> GetSessionAsync(string sessionId, string schoolId);
 }

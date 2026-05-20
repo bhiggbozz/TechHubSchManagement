@@ -1,4 +1,4 @@
-using MongoDB.Bson.Serialization.Attributes;
+﻿using MongoDB.Bson.Serialization.Attributes;
 
 namespace TechHub.Core.Entities.Board;
 
@@ -38,32 +38,44 @@ namespace TechHub.Core.Entities.Board;
 //    public string EndTime { get; set; } = string.Empty;
 //}
 
-// Stroke inside a batch � compact field names matching frontend
+// Stroke inside a batch — compact field names matching frontend
 public class BoardStroke
 {
 	[BsonElement("id")]
 	public string Id { get; set; }
 
-	[BsonElement("pts")]
-	public List<List<double>> Pts { get; set; }  // [[x,y], [x,y], ...]
+	[BsonElement("sessionId")]
+	public string SessionId { get; set; }
 
-	[BsonElement("c")]
-	public string Color { get; set; }     // hex color
+	[BsonElement("type")]
+	public string Type { get; set; }
 
-	[BsonElement("w")]
-	public double Width { get; set; }     // stroke width
+	[BsonElement("data")]
+	public string Data { get; set; }  // ← compressed stroke data
 
-	[BsonElement("ts")]
-	public long Timestamp { get; set; }     // ms from session start
+	[BsonElement("color")]
+	public string Color { get; set; }
+
+	[BsonElement("width")]
+	public int Width { get; set; }
 
 	[BsonElement("currentBoard")]
 	public int CurrentBoard { get; set; }
 
-	[BsonElement("sessionId")]
-	public string SessionId { get; set; }
+	[BsonElement("timestamp")]
+	public long Timestamp { get; set; }
+
+	[BsonElement("duration")]
+	public long Duration { get; set; }
+
+	[BsonElement("startTime")]
+	public string StartTime { get; set; }
+
+	[BsonElement("endTime")]
+	public string EndTime { get; set; }
 }
 
-// One batch � 1 minute of board activity
+// One batch — 1 minute of board activity
 public class BoardSessionBatch
 {
 	[BsonElement("batchIndex")]

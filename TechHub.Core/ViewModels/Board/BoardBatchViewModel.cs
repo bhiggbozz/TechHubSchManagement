@@ -1,36 +1,34 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 
 namespace TechHub.Core.ViewModels.Board;
 
 public class BoardBatchViewModel
 {
-    [Required]
-    [JsonPropertyName("sessionId")]
-    public string SessionId { get; set; } = string.Empty;
+	[JsonPropertyName("sessionId")]
+	public string SessionId { get; set; } = string.Empty;
 
-    [Required]
-    [JsonPropertyName("lessonId")]
-    public string LessonId { get; set; } = string.Empty;
+	[JsonPropertyName("lessonId")]
+	public string LessonId { get; set; } = string.Empty;
 
-    [Required]
-    [JsonPropertyName("batchIndex")]
-    public int BatchIndex { get; set; }
+	[JsonPropertyName("batchIndex")]
+	public int BatchIndex { get; set; }
 
-    [Required]
-    [JsonPropertyName("startMs")]
-    public long StartMs { get; set; }
+	[JsonPropertyName("startMs")]
+	public long StartMs { get; set; }
 
-    [Required]
-    [JsonPropertyName("endMs")]
-    public long EndMs { get; set; }
+	[JsonPropertyName("endMs")]
+	public long EndMs { get; set; }
 
-    [JsonPropertyName("strokeCount")]
-    public int StrokeCount { get; set; }
+	[JsonPropertyName("strokeCount")]
+	public int StrokeCount { get; set; }
 
-    [JsonPropertyName("sizeBytes")]
-    public long SizeBytes { get; set; }
+	[JsonPropertyName("sizeBytes")]
+	public long SizeBytes { get; set; }
 
-    [JsonPropertyName("strokes")]
-    public List<StrokeViewModel> Strokes { get; set; } = new();
+	[JsonPropertyName("boardIndex")]
+	public int BoardIndex { get; set; }  // ← add
+
+	[JsonPropertyName("strokes")]
+	public List<StrokeViewModel> Strokes { get; set; } = new();
 }

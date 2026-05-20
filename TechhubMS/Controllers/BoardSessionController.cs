@@ -100,47 +100,39 @@ public class BoardSessionController : ControllerBase
         return Ok(result);
     }
 
-    /// <summary>
-    /// Get a session by ID (for debugging/admin purposes)
-    /// </summary>
-    [HttpGet("session/{sessionId}")]
-    [Authorize(Roles = "SubjectTeacher,HeadTeacher,Admin")]
-    [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<BaseResponse>> GetSession([FromRoute] string sessionId)
-    {
-        var claims = User.GetAuthenticatedUserClaims();
+	/// <summary>
+	/// Get a session by ID (for debugging/admin purposes)
+	/// </summary>
+	[HttpGet("session/{sessionId}")]
+	[Authorize(Roles = "SubjectTeacher,HeadTeacher,Administrator,SuperAdministrator")]
+	public async Task<ActionResult<BaseResponse>> GetSession([FromRoute] string sessionId)
+	{
+		var claims = User.GetAuthenticatedUserClaims();
+		if (claims == null || string.IsNullOrEmpty(claims.SchoolId))
+			return Unauthorized(new BaseResponse
+			{
+				ResponseCode = ResponseCode.Unauthorized,
+				ResponseMessage = "Invalid user claims",
+				Status = "failed"
+			});
 
-        if (claims == null || string.IsNullOrEmpty(claims.SchoolId))
-        {
-            return Unauthorized(new BaseResponse
-            {
-                ResponseCode = ResponseCode.Unauthorized,
-                ResponseMessage = "Invalid user claims",
-                Status = "failed"
-            });
-        }
+		var session = await _boardSessionService.GetSessionManifestAsync(sessionId, claims.SchoolId);
+		if (session == null)
+			return NotFound(new BaseResponse
+			{
+				ResponseCode = ResponseCode.NotFound,
+				ResponseMessage = $"Session {sessionId} not found",
+				Status = "failed"
+			});
 
-        var session = await _boardSessionService.GetSessionAsync(sessionId, claims.SchoolId);
-
-        if (session == null)
-        {
-            return NotFound(new BaseResponse
-            {
-                ResponseCode = ResponseCode.NotFound,
-                ResponseMessage = $"Session {sessionId} not found",
-                Status = "failed"
-            });
-        }
-
-        return Ok(new BaseResponse
-        {
-            ResponseCode = ResponseCode.successful,
-            ResponseMessage = "Session retrieved successfully",
-            Status = "success",
-            Data = session
-        });
-    }
+		return Ok(new BaseResponse
+		{
+			ResponseCode = ResponseCode.successful,
+			ResponseMessage = "Session retrieved successfully",
+			Status = "success",
+			Data = session
+		});
+	}
 
 	/// <summary>
 	/// Get session manifest for student download.
@@ -187,9 +179,7 @@ public class BoardSessionController : ControllerBase
 	[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
 	[ProducesResponseType(StatusCodes.Status404NotFound)]
 	[ProducesResponseType(StatusCodes.Status401Unauthorized)]
-	public async Task<ActionResult<BaseResponse>> GetBatch(
-		[FromRoute] string sessionId,
-		[FromRoute] string indexKey)
+	public async Task<ActionResult<BaseResponse>> GetBatch([FromRoute] string sessionId,[FromRoute] string indexKey)
 	{
 		var claims = User.GetAuthenticatedUserClaims();
 		if (claims == null || string.IsNullOrEmpty(claims.UserId))
@@ -218,6 +208,9 @@ public class BoardSessionController : ControllerBase
 			_ => BadRequest(result)
 		};
 	}
+
+
+	
 
 	/// <summary>
 	/// Get a session by ID — admin and teacher use only.

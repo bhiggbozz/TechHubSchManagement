@@ -4,12 +4,15 @@ namespace TechHub.Core.Entities.Board;
 
 public class AudioChunk
 {
-    [BsonElement("url")]
-    public string Url { get; set; } = string.Empty;
+	[BsonElement("url")]
+	public string Url { get; set; } = string.Empty;
 
-    [BsonElement("sizeBytes")]
-    public long SizeBytes { get; set; }
+	[BsonElement("mediaId")]
+	public string MediaId { get; set; } = string.Empty;
 
-    [BsonElement("durationMs")]
-    public long DurationMs { get; set; }
+	[BsonElement("sizeBytes")]
+	public long SizeBytes { get; set; }
+
+	[BsonElement("durationMs")]
+	public long DurationMs { get; set; }
 }

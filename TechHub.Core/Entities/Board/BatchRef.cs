@@ -1,14 +1,16 @@
 ﻿using MongoDB.Bson.Serialization.Attributes;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace TechHub.Core.Entities.Board;
 
-public class BoardBatch
+public class BatchRef
 {
 	[BsonElement("batchIndex")]
 	public int BatchIndex { get; set; }
-
-	[BsonElement("boardIndex")]
-	public int BoardIndex { get; set; }  // ← add
 
 	[BsonElement("indexKey")]
 	public string IndexKey { get; set; } = string.Empty;
@@ -25,9 +27,7 @@ public class BoardBatch
 	[BsonElement("sizeBytes")]
 	public long SizeBytes { get; set; }
 
-	[BsonElement("receivedAt")]
-	public DateTime ReceivedAt { get; set; }
-
-	[BsonElement("strokes")]
-	public List<BoardStroke> Strokes { get; set; } = new();
+	[BsonElement("boardIndex")]
+	public int BoardIndex { get; set; }  
 }
+
