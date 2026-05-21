@@ -99,14 +99,10 @@ public class LessonController : ControllerBase
 	[HttpGet("my-lessons")]
 	[Authorize(Roles = "SubjectTeacher,HeadTeacher,ClassTeacher")]
 	[ProducesResponseType(typeof(BaseResponse), 200)]
-	public async Task<IActionResult> GetMyLessons(
-	[FromQuery] string? status = null,
-	[FromQuery] int pageNumber = 1,
-	[FromQuery] int pageSize = 50)
+	public async Task<IActionResult> GetMyLessons([FromQuery] string? status = null,[FromQuery] int pageNumber = 1,[FromQuery] int pageSize = 50)
 	{
 		var claims = GetClaims();
-		var result = await _lessonService.GetLessonsByTeacher(
-			claims, status, pageNumber, pageSize);
+		var result = await _lessonService.GetLessonsByTeacher(claims, status, pageNumber, pageSize);
 		return Ok(result);
 	}
 
