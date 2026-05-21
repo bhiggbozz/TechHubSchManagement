@@ -2913,8 +2913,7 @@ namespace TechHub.Service.Service
 		}
 
 		// ── POST: HeadTeacher approves or rejects an item ───────────────────────────
-		public async Task<BaseResponse> RespondToApproval(
-	Guid approvalId, ApprovalRespondViewModel model, AuthenticatedUserClaims claims)
+		public async Task<BaseResponse> RespondToApproval(Guid approvalId, ApprovalRespondViewModel model, AuthenticatedUserClaims claims)
 		{
 			try
 			{

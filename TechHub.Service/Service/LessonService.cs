@@ -633,17 +633,14 @@ public class LessonService : ILessonService
 		{
 			if (!Guid.TryParse(claims.UserId, out var teacherId))
 				return Unauthorized();
-
 			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
 				return Unauthorized();
 
 			if (pageNumber < 1) pageNumber = 1;
 			if (pageSize < 1 || pageSize > 100) pageSize = 50;
 
-			// Validate status if provided
 			var validStatuses = new[]
 			{
-			//LessonStatus.Draft,
 				LessonStatus.PendingApproval,
 				LessonStatus.Approved,
 				LessonStatus.Rejected,
@@ -653,34 +650,61 @@ public class LessonService : ILessonService
 			if (!string.IsNullOrWhiteSpace(status) &&
 				!validStatuses.Contains(status, StringComparer.OrdinalIgnoreCase))
 			{
-				return BadRequest($"Invalid status. Valid values: {string.Join(", ", validStatuses)}");
+				return BadRequest(
+					$"Invalid status. Valid values: {string.Join(", ", validStatuses)}");
 			}
 
-			// Single query — get everything then count in memory
-			// Avoids multiple DB round trips
 			var allQuery = $@"
-					SELECT * FROM LessonContent
-					WHERE  CreatedBy = '{teacherId}'
-					AND    SchoolId  = '{schoolId}'
-					ORDER  BY CreatedAt DESC";
+					SELECT
+						lc.Id,
+						lc.Aim,
+						lc.Description,
+						lc.Status,
+						lc.CreatedAt,
+						lc.ModifiedAt,
+						lc.ApprovedAt,
+						lc.RejectionReason,
+						lc.AccessDate,
+						lc.AccessTime,
+						lc.DurationMinutes,
+						lc.AccessEndsAt,
 
-			var allLessons = await _lessonQuery.GetByQuery(allQuery);
-			var allList = allLessons.Where(l => l != null).ToList();
+						s.Subject     AS SubjectName,
+						t.Name        AS TopicName,
+						st.Name       AS SubTopicName,
+						c.ClassName,
+
+						ap.FirstName + ' ' + ap.LastName AS ApprovedByName
+
+					FROM   LessonContent lc
+					LEFT JOIN Subjects   s  ON s.Id  = lc.SubjectId
+					LEFT JOIN Topic      t  ON t.Id  = lc.TopicId
+					LEFT JOIN SubTopic   st ON st.Id = lc.SubTopicId
+					LEFT JOIN Classroom  c  ON c.Id  = lc.ClassroomId
+					LEFT JOIN Users      ap ON ap.Id = lc.ApprovedBy
+
+					WHERE  lc.CreatedBy = '{teacherId}'
+					AND    lc.SchoolId  = '{schoolId}'
+					ORDER  BY lc.CreatedAt DESC";
+
+			var rows = await _lessonQuery.QueryAsync<TeacherLessonRow>(allQuery, new Dictionary<string, object>());
+
+			var allList = rows.Where(l => l != null).ToList();
 
 			var summary = new
 			{
 				Total = allList.Count,
-				//Draft = allList.Count(l => l.Status == LessonStatus.Draft),
 				PendingApproval = allList.Count(l => l.Status == LessonStatus.PendingApproval),
 				Approved = allList.Count(l => l.Status == LessonStatus.Approved),
 				Rejected = allList.Count(l => l.Status == LessonStatus.Rejected),
 				Published = allList.Count(l => l.Status == LessonStatus.Published)
 			};
 
-			var filtered = string.IsNullOrWhiteSpace(status) ? allList : allList
-					.Where(l => l.Status.Equals(status, StringComparison.OrdinalIgnoreCase)).ToList();
+			var filtered = string.IsNullOrWhiteSpace(status)
+				? allList
+				: allList.Where(l => l.Status.Equals(
+					status, StringComparison.OrdinalIgnoreCase)).ToList();
 
-			// ── Pagination ───────────────────────────────────────────────────────
 			var totalCount = filtered.Count;
 			var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
 
@@ -690,7 +714,8 @@ public class LessonService : ILessonService
 				.ToList();
 
 			_logger.Information(
-				"Lessons fetched - TeacherId: {TeacherId}, Total: {Total}, " + "Filter: {Status}, Page: {Page}/{TotalPages}",
+				"Lessons fetched - TeacherId: {TeacherId}, Total: {Total}, " +
+				"Filter: {Status}, Page: {Page}/{TotalPages}",
 				teacherId, totalCount,
 				status ?? "All",
 				pageNumber, totalPages);
@@ -718,8 +743,8 @@ public class LessonService : ILessonService
 		}
 		catch (Exception ex)
 		{
-			_logger.Error(ex,"Error fetching lessons - TeacherId: {TeacherId}",
-				claims?.UserId);
+			_logger.Error(ex,
+				"Error fetching lessons - TeacherId: {TeacherId}", claims?.UserId);
 			return ServerError();
 		}
 	}
