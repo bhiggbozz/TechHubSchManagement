@@ -672,7 +672,7 @@ public class LessonService : ILessonService
 						s.Subject     AS SubjectName,
 						t.Name        AS TopicName,
 						st.Name       AS SubTopicName,
-						c.ClassName,
+						c.Name,
 
 						ap.FirstName + ' ' + ap.LastName AS ApprovedByName
 
