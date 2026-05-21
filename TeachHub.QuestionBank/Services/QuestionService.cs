@@ -131,14 +131,16 @@ public class QuestionService : IQuestionService
 				if (!Guid.TryParse(userClaims?.SchoolId, out var schoolId))
 					return Fail("Invalid school identification");
 
-				if (string.IsNullOrWhiteSpace(model.Title))
-					return Fail("Question title is required");
+				//if (string.IsNullOrWhiteSpace(model.Title))
+				//	return Fail("Question title is required");
 
-				if (model.Title.Trim().Length > 500)
-					return Fail("Question title cannot exceed 500 characters");
+				//if (model.Title.Trim().Length > 500)
+				//	return Fail("Question title cannot exceed 500 characters");
 
 				if (model.SubjectId == Guid.Empty)
 					return Fail("Subject is required");
+				if (model.ClassroomId == Guid.Empty)
+					return Fail("Classroom is required");
 
 				if (model.MarksAllocation <= 0)
 					return Fail("Marks allocation must be greater than zero");
@@ -209,37 +211,30 @@ public class QuestionService : IQuestionService
 					SchoolId = schoolId,
 					SubjectId = model.SubjectId,
 					TopicId = model.TopicId,
+					ClassroomId = model.ClassroomId,  // ← add
 					CreatedBy = userId,
-
 					Title = model.Title.Trim(),
 					Topic = model.Topic?.Trim(),
-					//SubTopic = model.SubTopic.Trim(),
 					SubTopicId = model.SubTopic,
-
 					QuestionType = model.QuestionType,
 					TextContent = model.TextContent?.Trim(),
 					DifficultyLevel = model.DifficultyLevel,
 					MarksAllocation = model.MarksAllocation,
-
 					BoardSessionId = model.BoardSessionId,
 					HasBoardSession = model.BoardSessionId.HasValue,
 					HasMedia = !string.IsNullOrWhiteSpace(model.ImageUrl),
 					ImageUrl = model.ImageUrl?.Trim(),
 					ImagePublicId = model.ImagePublicId?.Trim(),
 					HasAudio = false,
-
 					IsScanned = model.IsScanned,
-
 					Status = model.ScanSessionId != null
 						? QuestionStatus.PendingReview
 						: QuestionStatus.Draft,
 					IsActive = true,
 					IsDeleted = false,
-
 					ClientId = model.ClientId,
 					OriginDevice = model.OriginDevice,
 					LastSyncedAt = DateTime.UtcNow,
-
 					CreationDate = now,
 					ModifiedDate = now
 				};

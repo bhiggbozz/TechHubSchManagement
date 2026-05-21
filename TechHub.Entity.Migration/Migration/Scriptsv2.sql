@@ -334,3 +334,6 @@ ALTER TABLE LessonContent ADD AccessEndsAt    DATETIME2    NULL;
 --    { "schoolId": 1, "status": 1 },
 --    { name: "IX_board_manifests_SchoolId_Status" }
 --);
+-----------------------------------------------------------
+
+ALTER TABLE Questions ADD ClassroomId UNIQUEIDENTIFIER NULL;
