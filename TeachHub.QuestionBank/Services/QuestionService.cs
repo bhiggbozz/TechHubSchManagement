@@ -2656,7 +2656,7 @@ public class QuestionService : IQuestionService
 						s.Subject  AS SubjectName,
 						t.Name     AS TopicName,
 						st.Name    AS SubTopicName,
-						c.ClassName
+						c.Name
 
 					FROM   Questions q
 					LEFT JOIN Subjects  s  ON s.Id  = q.SubjectId
