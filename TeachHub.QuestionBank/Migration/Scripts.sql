@@ -202,4 +202,19 @@ ALTER COLUMN TopicId UNIQUEIDENTIFIER NULL;
 
 ALTER TABLE Questions  
 ALTER COLUMN SubjectId UNIQUEIDENTIFIER NULL;
+--------------------------------------------------
+
+ALTER TABLE Questions ADD ClassroomId UNIQUEIDENTIFIER NULL;
+ALTER TABLE Questions ADD TopicId     UNIQUEIDENTIFIER NULL;
+ALTER TABLE Questions ADD SubTopicId  UNIQUEIDENTIFIER NULL;
+
+-- Indexes for the new filter columns
+CREATE INDEX IX_Questions_ClassroomId 
+    ON Questions (SchoolId, ClassroomId);
+
+CREATE INDEX IX_Questions_SubTopicId  
+    ON Questions (SchoolId, SubTopicId);
+
+CREATE INDEX IX_Questions_TopicId     
+    ON Questions (SchoolId, TopicId);
 

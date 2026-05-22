@@ -236,6 +236,36 @@ public class QuestionController : ControllerBase
 				: BadRequest(result);
 	}
 
+	[HttpPost("classroom/{classroomId}/questions")]
+	[Authorize]
+	public async Task<IActionResult> GetQuestionsByClassroom(Guid classroomId,[FromBody] QuestionFilterViewModelV2 filter)
+	{
+		var claims = GetUserClaims();
+		if (claims == null) return Unauthorized();
+
+		var result = await _questionService.GetQuestionsByClassroom(
+			classroomId, filter, claims);
+
+		return result.ResponseCode == ResponseCode.successful
+			? Ok(result)
+			: BadRequest(result);
+	}
+
+
+	[HttpGet("classroom/{classroomId}/subject/{subjectId}/summary")]
+	[Authorize]
+	public async Task<IActionResult> GetSubjectQuestionSummary(Guid classroomId, Guid subjectId)
+	{
+		var claims = GetUserClaims();
+		if (claims == null) return Unauthorized();
+
+		var result = await _questionService.GetSubjectQuestionSummary(classroomId, subjectId, claims);
+
+		return result.ResponseCode == ResponseCode.successful
+			? Ok(result)
+			: BadRequest(result);
+	}
+
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	// CHECK FOR CONFLICTS
 	// POST api/questions/sync/conflicts/check
@@ -282,6 +312,8 @@ public class QuestionController : ControllerBase
 				? Ok(result)
 				: BadRequest(result);
 	}
+
+
 
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	// PRIVATE HELPERS

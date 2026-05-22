@@ -14,6 +14,7 @@ using TechHub.QuestionBank.Core.DTO;
 using TechHub.QuestionBank.Core.Entities;
 using TechHub.QuestionBank.Core.Enums;
 using TechHub.QuestionBank.Core.Helpers;
+using TechHub.QuestionBank.Core.Model;
 using TechHub.QuestionBank.Core.Response;
 using TechHub.QuestionBank.Core.ViewModel;
 using TechHub.QuestionBank.Services.interfaces;
@@ -157,11 +158,11 @@ public class QuestionService : IQuestionService
 				if (!string.IsNullOrWhiteSpace(model.ClientId))
 				{
 					const string existingSql = @"
-                    SELECT TOP 1 *
-                    FROM   Questions
-                    WHERE  ClientId  = @ClientId
-                    AND    SchoolId  = @SchoolId
-                    AND    IsDeleted = 0";
+						SELECT TOP 1 *
+						FROM   Questions
+						WHERE  ClientId  = @ClientId
+						AND    SchoolId  = @SchoolId
+						AND    IsDeleted = 0";
 
 					var parameters = new Dictionary<string, object>
 					{
@@ -2078,13 +2079,10 @@ public class QuestionService : IQuestionService
 					{ "ModifiedDate",now }
 				};
 
-				await _questionCommandRepo.UpdateTableColumnById(
-					deleteDict,
-					new KeyValuePair<string, object>("Id", questionId),
-					DatabaseTarget.QuestionBank);
+				await _questionCommandRepo.UpdateTableColumnById(deleteDict,new KeyValuePair<string, object>("Id", questionId),DatabaseTarget.QuestionBank);
 
 				_logger.Information(
-					"✅ Question rejected and soft deleted - " +
+					"Question rejected and soft deleted - " +
 					"QuestionId: {QuestionId}",
 					questionId);
 
@@ -2538,10 +2536,417 @@ public class QuestionService : IQuestionService
 			// teacher from completing their review
 			_logger.Error(
 				ex,
-				"⚠️ Error updating scan session counts - " +
+				"Error updating scan session counts - " +
 				"SessionId: {SessionId}",
 				scanSessionId);
 		}
+	}
+
+	public async Task<QuestionListResponse> GetQuestionsByClassroom(Guid classroomId,QuestionFilterViewModelV2 filter,AuthenticatedUserClaims userClaims)
+	{
+		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+		using (LogContext.PushProperty("ClassroomId", classroomId))
+		{
+			try
+			{
+				_logger.Information(
+					"Getting questions by classroom - ClassroomId: {ClassroomId}, UserId: {UserId}",
+					classroomId, userClaims.UserId);
+
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+					return new QuestionListResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new QuestionListResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				filter.Page = filter.Page < 1 ? 1 : filter.Page;
+				filter.PageSize = filter.PageSize < 1 ? 20 : filter.PageSize;
+				filter.PageSize = filter.PageSize > 50 ? 50 : filter.PageSize;
+
+				var offset = (filter.Page - 1) * filter.PageSize;
+
+				var whereClause = $@"
+					WHERE  q.SchoolId    = '{schoolId}'
+					AND    q.ClassroomId = '{classroomId}'
+					AND    q.IsDeleted   = 0
+					AND    q.IsActive    = 1";
+
+				// ── Optional filters ─────────────────────────────────────
+				if (filter.SubjectId.HasValue && filter.SubjectId != Guid.Empty)
+					whereClause += $" AND q.SubjectId = '{filter.SubjectId.Value}'";
+
+				if (filter.TopicId.HasValue && filter.TopicId != Guid.Empty)
+					whereClause += $" AND q.TopicId = '{filter.TopicId.Value}'";
+
+				// Multiple subtopics — IN clause
+				if (filter.SubTopicIds?.Any() == true)
+				{
+					var ids = string.Join(",",
+						filter.SubTopicIds.Select(id => $"'{id}'"));
+					whereClause += $" AND q.SubTopicId IN ({ids})";
+				}
+
+				if (filter.QuestionType.HasValue)
+					whereClause += $" AND q.QuestionType = {(int)filter.QuestionType.Value}";
+
+				if (filter.DifficultyLevel.HasValue)
+					whereClause += $" AND q.DifficultyLevel = {(int)filter.DifficultyLevel.Value}";
+
+				if (filter.Status.HasValue)
+					whereClause += $" AND q.Status = {(int)filter.Status.Value}";
+				else if (!filter.IncludePendingReview)
+					whereClause += $" AND q.Status != {(int)QuestionStatus.PendingReview}";
+
+				if (!string.IsNullOrWhiteSpace(filter.SearchText))
+				{
+						var safeSearch = filter.SearchText.Replace("'", "''").Trim();
+						whereClause += $@" AND (
+						q.Title          LIKE '%{safeSearch}%'
+						OR q.Topic       LIKE '%{safeSearch}%'
+						OR q.TextContent LIKE '%{safeSearch}%'
+					)";
+				}
+
+				// ── Total count ──────────────────────────────────────────
+				var countQuery = $"SELECT COUNT(*) FROM Questions q {whereClause}";
+				var totalCount = await _questionQueryRepo.CountAsync(
+					countQuery, DatabaseTarget.QuestionBank);
+
+				if (totalCount == 0)
+					return new QuestionListResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "No questions found",
+						Status = "successful",
+						Questions = new List<QuestionSummaryDto>(),
+						TotalCount = 0,
+						Page = filter.Page,
+						PageSize = filter.PageSize,
+						HasMore = false
+					};
+
+				// ── Paginated data — names resolved via joins ────────────
+				var dataQuery = $@"
+					SELECT
+						q.Id,
+						q.ClientId,
+						q.Title,
+						q.Topic,
+						q.SubTopic,
+						q.QuestionType,
+						q.DifficultyLevel,
+						q.MarksAllocation,
+						q.HasBoardSession,
+						q.HasMedia,
+						q.HasAudio,
+						q.IsScanned,
+						q.Status,
+						q.CreationDate,
+
+						s.Subject  AS SubjectName,
+						t.Name     AS TopicName,
+						st.Name    AS SubTopicName,
+						c.ClassName
+
+					FROM   Questions q
+					LEFT JOIN Subjects  s  ON s.Id  = q.SubjectId
+					LEFT JOIN Topic     t  ON t.Id  = q.TopicId
+					LEFT JOIN SubTopic  st ON st.Id = q.SubTopicId
+					LEFT JOIN Classroom c  ON c.Id  = q.ClassroomId
+					{whereClause}
+					ORDER  BY q.CreationDate DESC
+					OFFSET {offset} ROWS
+					FETCH NEXT {filter.PageSize} ROWS ONLY";
+
+				var results = await _questionQueryRepo.GetByQuery(
+					dataQuery, DatabaseTarget.QuestionBank);
+
+				var questions = results?
+					.Select(q => MapToClassroomSummaryDto(q))
+					.ToList() ?? new List<QuestionSummaryDto>();
+
+				var hasMore = (filter.Page * filter.PageSize) < totalCount;
+
+				_logger.Information(
+					"Questions retrieved - ClassroomId: {ClassroomId}, " +
+					"Count: {Count}, Total: {Total}, SubTopicFilter: {SubTopicCount}",
+					classroomId, questions.Count, totalCount,
+					filter.SubTopicIds?.Count ?? 0);
+
+				return new QuestionListResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Questions retrieved successfully",
+					Status = "successful",
+					Questions = questions,
+					TotalCount = totalCount,
+					Page = filter.Page,
+					PageSize = filter.PageSize,
+					HasMore = hasMore
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error getting questions by classroom - ClassroomId: {ClassroomId}",
+					classroomId);
+
+				return new QuestionListResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving questions",
+					Status = "failed",
+					Questions = new List<QuestionSummaryDto>()
+				};
+			}
+		}
+	}
+
+
+	public async Task<BaseResponse> GetSubjectQuestionSummary(Guid classroomId,Guid subjectId,AuthenticatedUserClaims userClaims)
+	{
+		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+		using (LogContext.PushProperty("ClassroomId", classroomId))
+		using (LogContext.PushProperty("SubjectId", subjectId))
+		{
+			try
+			{
+				_logger.Information(
+					"Getting subject question summary - " +
+					"ClassroomId: {ClassroomId}, SubjectId: {SubjectId}, UserId: {UserId}",
+					classroomId, subjectId, userClaims.UserId);
+
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				// ── Base filter shared across all queries ────────────────
+				var baseFilter = $@"
+					WHERE  q.SchoolId    = '{schoolId}'
+					AND    q.ClassroomId = '{classroomId}'
+					AND    q.SubjectId   = '{subjectId}'
+					AND    q.IsDeleted   = 0
+					AND    q.IsActive    = 1";
+
+				// ── Total count for this subject in this classroom ───────
+				var totalCount = await _questionQueryRepo.CountAsync($"SELECT COUNT(*) FROM Questions q {baseFilter}",DatabaseTarget.QuestionBank);
+
+				// ── Status breakdown ─────────────────────────────────────
+				var statusQuery = $@"
+					SELECT
+						q.Status,
+						COUNT(q.Id) AS QuestionCount
+					FROM   Questions q
+					{baseFilter}
+					GROUP  BY q.Status";
+
+				var statusRows = await _questionQueryRepo.QueryAsync<StatusCountRow>(statusQuery, new Dictionary<string, object>(),DatabaseTarget.QuestionBank);
+
+				// ── Difficulty breakdown ─────────────────────────────────
+				var difficultyQuery = $@"
+					SELECT
+						q.DifficultyLevel,
+						COUNT(q.Id) AS QuestionCount
+					FROM   Questions q
+					{baseFilter}
+					GROUP  BY q.DifficultyLevel
+					ORDER  BY q.DifficultyLevel ASC";
+
+				var difficultyRows = await _questionQueryRepo.QueryAsync<DifficultyCountRow>(difficultyQuery, new Dictionary<string, object>(),DatabaseTarget.QuestionBank);
+
+				// ── Question type breakdown ──────────────────────────────
+				var typeQuery = $@"
+					SELECT
+						q.QuestionType,
+						COUNT(q.Id) AS QuestionCount
+					FROM   Questions q
+					{baseFilter}
+					GROUP  BY q.QuestionType
+					ORDER  BY q.QuestionType ASC";
+
+				var typeRows = await _questionQueryRepo.QueryAsync<QuestionTypeCountRow>(typeQuery, new Dictionary<string, object>(),
+					DatabaseTarget.QuestionBank);
+
+				// ── Per subtopic counts grouped under topics ─────────────
+				var subTopicQuery = $@"
+					SELECT
+						st.Id          AS SubTopicId,
+						st.Name        AS SubTopicName,
+						t.Id           AS TopicId,
+						t.Name         AS TopicName,
+						COUNT(q.Id)    AS QuestionCount,
+						SUM(CASE WHEN q.Status = {(int)QuestionStatus.Draft}
+								 THEN 1 ELSE 0 END) AS DraftCount,
+						SUM(CASE WHEN q.Status = {(int)QuestionStatus.Published}
+								 THEN 1 ELSE 0 END) AS PublishedCount,
+						SUM(CASE WHEN q.Status = {(int)QuestionStatus.PendingReview}
+								 THEN 1 ELSE 0 END) AS PendingReviewCount
+					FROM   Questions q
+					JOIN   SubTopic  st ON st.Id = q.SubTopicId
+					JOIN   Topic     t  ON t.Id  = q.TopicId
+					{baseFilter}
+					GROUP  BY st.Id, st.Name, t.Id, t.Name
+					ORDER  BY t.Name ASC, COUNT(q.Id) DESC";
+
+				var subTopicRows = await _questionQueryRepo.QueryAsync<SubTopicDetailCountRow>(
+					subTopicQuery, new Dictionary<string, object>(),
+					DatabaseTarget.QuestionBank);
+
+				// ── Group subtopics under their topics ───────────────────
+				var subTopicList = subTopicRows?.ToList() ?? new();
+				var statusList = statusRows?.ToList() ?? new();
+
+				var topics = subTopicList
+					.GroupBy(st => new { st.TopicId, st.TopicName })
+					.Select(g => new TopicSummary
+					{
+						TopicId = g.Key.TopicId,
+						TopicName = g.Key.TopicName,
+						QuestionCount = g.Sum(st => st.QuestionCount),
+						SubTopics = g.Select(st => new SubTopicDetailSummary
+						{
+							SubTopicId = st.SubTopicId,
+							SubTopicName = st.SubTopicName,
+							QuestionCount = st.QuestionCount,
+							DraftCount = st.DraftCount,
+							PublishedCount = st.PublishedCount,
+							PendingReviewCount = st.PendingReviewCount
+						})
+						.OrderByDescending(st => st.QuestionCount)
+						.ToList()
+					})
+					.OrderBy(t => t.TopicName)
+					.ToList();
+
+				_logger.Information(
+					"Subject question summary retrieved - " +
+					"ClassroomId: {ClassroomId}, SubjectId: {SubjectId}, " +
+					"Total: {Total}, Topics: {TopicCount}, SubTopics: {SubTopicCount}",
+					classroomId, subjectId,
+					totalCount, topics.Count, subTopicList.Count);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Question summary retrieved successfully",
+					Status = "successful",
+					Data = new
+					{
+						ClassroomId = classroomId,
+						SubjectId = subjectId,
+						TotalQuestions = totalCount,
+
+						StatusSummary = new
+						{
+							Draft = statusList
+								.FirstOrDefault(s => s.Status == (int)QuestionStatus.Draft)
+								?.QuestionCount ?? 0,
+							Published = statusList
+								.FirstOrDefault(s => s.Status == (int)QuestionStatus.Published)
+								?.QuestionCount ?? 0,
+							PendingReview = statusList
+								.FirstOrDefault(s => s.Status == (int)QuestionStatus.PendingReview)
+								?.QuestionCount ?? 0
+						},
+
+						DifficultyBreakdown = difficultyRows?
+							.Select(d => new
+							{
+								DifficultyLevel = d.DifficultyLevel,
+								DifficultyLevelName = ((DifficultyLevel)d.DifficultyLevel).ToString(),
+								QuestionCount = d.QuestionCount
+							}).ToList(),
+
+						TypeBreakdown = typeRows?
+							.Select(t => new
+							{
+								QuestionType = t.QuestionType,
+								QuestionTypeName = ((QuestionType)t.QuestionType).ToString(),
+								QuestionCount = t.QuestionCount
+							}).ToList(),
+
+						// Topics → SubTopics hierarchy
+						Topics = topics
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error getting subject question summary - " +
+					"ClassroomId: {ClassroomId}, SubjectId: {SubjectId}",
+					classroomId, subjectId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving the summary",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
+	private async Task<int> GetStatusCount(Guid schoolId, Guid classroomId, QuestionStatus status)
+	{
+		var query = $@"
+        SELECT COUNT(*) FROM Questions
+        WHERE  SchoolId    = '{schoolId}'
+        AND    ClassroomId = '{classroomId}'
+        AND    Status      = {(int)status}
+        AND    IsDeleted   = 0
+        AND    IsActive    = 1";
+
+		return await _questionQueryRepo.CountAsync(
+			query, DatabaseTarget.QuestionBank);
+	}
+
+	private QuestionSummaryDto MapToClassroomSummaryDto(Questions question)
+	{
+		return new QuestionSummaryDto
+		{
+			Id = question.Id,
+			ClientId = question.ClientId,
+			Title = question.Title,
+			Topic = question.Topic,
+			SubjectName = question.SubjectName,
+			TopicName = question.TopicName,
+			SubTopicName = question.SubTopicName,
+			ClassName = question.ClassName,
+			QuestionType = (int)question.QuestionType,
+			QuestionTypeName = question.QuestionType.ToString(),
+			DifficultyLevel = (int)question.DifficultyLevel,
+			DifficultyLevelName = question.DifficultyLevel.ToString(),
+			MarksAllocation = question.MarksAllocation,
+			HasBoardSession = question.HasBoardSession,
+			HasMedia = question.HasMedia,
+			IsScanned = question.IsScanned,
+			Status = (int)question.Status,
+			StatusName = question.Status.ToString(),
+			CreationDate = question.CreationDate
+		};
 	}
 
 	/// <summary>
@@ -2564,4 +2969,58 @@ public class QuestionService : IQuestionService
 		};
 	}
 
+	//public Task<CreateQuestionResponse> CreateQuestion(CreateQuestionViewModel model, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<UpdateQuestionResponse> UpdateQuestion(UpdateQuestionViewModel model, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<QuestionDetailResponse> GetQuestion(Guid questionId, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<QuestionListResponse> GetSubjectQuestions(Guid subjectId, QuestionFilterViewModel filter, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<BaseResponse> DeleteQuestion(Guid questionId, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<BaseResponse> PublishQuestion(Guid questionId, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<BaseResponse> ConfirmQuestion(Guid questionId, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<BaseResponse> RejectQuestion(Guid questionId, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<PendingReviewResponse> GetPendingReviewQuestions(Guid scanSessionId, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<QuestionListResponse> GetQuestionsByClassroom(Guid classroomId, QuestionFilterViewModelV2 filter, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
+
+	//public Task<BaseResponse> GetSubjectQuestionSummary(Guid classroomId, Guid subjectId, TechHub.Core.Model.AuthenticatedUserClaims userClaims)
+	//{
+	//	throw new NotImplementedException();
+	//}
 }
