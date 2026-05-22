@@ -220,7 +220,7 @@ public class QuestionService : IQuestionService
 					IsScanned = model.IsScanned,
 					Status = model.ScanSessionId != null
 										? QuestionStatus.PendingReview
-										: QuestionStatus.Draft,
+										: QuestionStatus.Published,
 					IsActive = true,
 					IsDeleted = false,
 					ClientId = model.ClientId,
@@ -2605,7 +2605,7 @@ public class QuestionService : IQuestionService
 				if (filter.Status.HasValue)
 					whereClause += $" AND q.Status = {(int)filter.Status.Value}";
 				else if (!filter.IncludePendingReview)
-					whereClause += $" AND q.Status != {(int)QuestionStatus.PendingReview}";
+					whereClause += $" AND q.Status != {(int)QuestionStatus.Published}";
 
 				if (!string.IsNullOrWhiteSpace(filter.SearchText))
 				{
@@ -2656,7 +2656,7 @@ public class QuestionService : IQuestionService
 						s.Subject  AS SubjectName,
 						t.Name     AS TopicName,
 						st.Name    AS SubTopicName,
-						c.ClassName
+						c.Name
 
 					FROM   Questions q
 					LEFT JOIN Subjects  s  ON s.Id  = q.SubjectId
