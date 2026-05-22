@@ -99,20 +99,16 @@ public class QuestionService : IQuestionService
 	/// - Always return ServerId so frontend can reconcile
 	/// </summary>
 
-	public async Task<CreateQuestionResponse> CreateQuestion(CreateQuestionViewModel model,AuthenticatedUserClaims userClaims)
+	public async Task<CreateQuestionResponse> CreateQuestion(CreateQuestionViewModel model, AuthenticatedUserClaims userClaims)
 	{
 		using (LogContext.PushProperty("RequestedBy", userClaims?.UserId))
 		using (LogContext.PushProperty("ClientId", model?.ClientId))
 		{
-			IDbConnection? connection = null;
-			IDbTransaction? transaction = null;
-
 			try
 			{
 				_logger.Information(
 					"Creating question - ClientId: {ClientId}, UserId: {UserId}",
-					model?.ClientId,
-					userClaims?.UserId);
+					model?.ClientId, userClaims?.UserId);
 
 				CreateQuestionResponse Fail(string message) =>
 					new CreateQuestionResponse
@@ -131,14 +127,9 @@ public class QuestionService : IQuestionService
 				if (!Guid.TryParse(userClaims?.SchoolId, out var schoolId))
 					return Fail("Invalid school identification");
 
-				//if (string.IsNullOrWhiteSpace(model.Title))
-				//	return Fail("Question title is required");
-
-				//if (model.Title.Trim().Length > 500)
-				//	return Fail("Question title cannot exceed 500 characters");
-
 				if (model.SubjectId == Guid.Empty)
 					return Fail("Subject is required");
+
 				if (model.ClassroomId == Guid.Empty)
 					return Fail("Classroom is required");
 
@@ -153,43 +144,41 @@ public class QuestionService : IQuestionService
 					if (model.Options.Count > 6)
 						return Fail("Multiple choice questions cannot have more than 6 options");
 
-					var correctAnswers = model.Options.Count(o => o.IsCorrect);
-					if (correctAnswers != 1)
+					if (model.Options.Count(o => o.IsCorrect) != 1)
 						return Fail("Multiple choice questions must have exactly one correct answer");
 
-					var emptyOption = model.Options.FirstOrDefault(o => string.IsNullOrWhiteSpace(o.OptionText));
+					var emptyOption = model.Options
+						.FirstOrDefault(o => string.IsNullOrWhiteSpace(o.OptionText));
 					if (emptyOption != null)
 						return Fail($"Option {emptyOption.OptionLabel} cannot be empty");
 				}
 
-				// IMPORTANT:
-				// Replace this with the SAME connection/transaction bootstrap used in CreateUser service.
-				//connection = await _questionConnectionFactory.GetOpenConnection(TechHub.Core.Enum.DatabaseTarget.QuestionBank);
-				//transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
-				using var scope = _dbTransactionScopeFactory.Create("QuestionBankConnection");
-
-
-				// Idempotency check inside transaction
+				// Idempotency check — before opening transaction
 				if (!string.IsNullOrWhiteSpace(model.ClientId))
 				{
 					const string existingSql = @"
                     SELECT TOP 1 *
-                    FROM Questions
-                    WHERE ClientId = @ClientId
-                      AND SchoolId = @SchoolId
-                      AND IsDeleted = 0";
+                    FROM   Questions
+                    WHERE  ClientId  = @ClientId
+                    AND    SchoolId  = @SchoolId
+                    AND    IsDeleted = 0";
 
-					var existing = await _questionQueryRepo.GetByQuery(existingSql);
+					var parameters = new Dictionary<string, object>
+					{
+						{ "ClientId", model.ClientId },
+						{ "SchoolId", schoolId }
+					};
+
+					var existing = await _questionQueryRepo
+						.QueryAsync<Questions>(existingSql, parameters);
+
 					var existingQuestion = existing?.FirstOrDefault();
 
-					if (existing != null)
+					if (existingQuestion != null)
 					{
 						_logger.Information(
-							"Duplicate ClientId detected - ClientId: {ClientId}, ExistingServerId: {ServerId}",
-							model.ClientId,
-							existingQuestion.Id);
-
-						transaction.Commit();
+							"Duplicate ClientId - ClientId: {ClientId}, ExistingId: {Id}",
+							model.ClientId, existingQuestion.Id);
 
 						return new CreateQuestionResponse
 						{
@@ -204,16 +193,17 @@ public class QuestionService : IQuestionService
 				}
 
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+				var questionId = Guid.NewGuid();
 
 				var question = new Questions
 				{
-					Id = Guid.NewGuid(),
+					Id = questionId,
 					SchoolId = schoolId,
 					SubjectId = model.SubjectId,
 					TopicId = model.TopicId,
-					ClassroomId = model.ClassroomId,  // ← add
+					ClassroomId = model.ClassroomId,
 					CreatedBy = userId,
-					Title = model.Title.Trim(),
+					Title = model.Title?.Trim(),
 					Topic = model.Topic?.Trim(),
 					SubTopicId = model.SubTopic,
 					QuestionType = model.QuestionType,
@@ -228,8 +218,8 @@ public class QuestionService : IQuestionService
 					HasAudio = false,
 					IsScanned = model.IsScanned,
 					Status = model.ScanSessionId != null
-						? QuestionStatus.PendingReview
-						: QuestionStatus.Draft,
+										? QuestionStatus.PendingReview
+										: QuestionStatus.Draft,
 					IsActive = true,
 					IsDeleted = false,
 					ClientId = model.ClientId,
@@ -239,58 +229,67 @@ public class QuestionService : IQuestionService
 					ModifiedDate = now
 				};
 
-				// IMPORTANT:
-				// Use the same "repo + transaction" call shape as CreateUser service.
-				await _questionCommandRepo.Create(scope.Transaction, scope.Connection,question);
-					
-
-				if (model.QuestionType == QuestionType.MultipleChoice &&
-					model.Options != null &&
-					model.Options.Any())
+				using var scope = _dbTransactionScopeFactory.Create("QuestionBankConnection");
+				try
 				{
-					foreach (var optionModel in model.Options)
-					{
-						var option = new QuestionOptions
-						{
-							Id = Guid.NewGuid(),
-							QuestionId = question.Id,
-							OptionLabel = optionModel.OptionLabel,
-							OptionText = optionModel.OptionText.Trim(),
-							IsCorrect = optionModel.IsCorrect,
-							OrderIndex = optionModel.OrderIndex,
-							CreationDate = now
-						};
+					await _questionCommandRepo.Create(scope.Transaction, scope.Connection, question);
 
-						await _optionCommandRepo.Create(scope.Transaction, scope.Connection, option);
+					if (model.QuestionType == QuestionType.MultipleChoice && model.Options?.Any() == true)
+					{
+						foreach (var optionModel in model.Options)
+						{
+							var option = new QuestionOptions
+							{
+								Id = Guid.NewGuid(),
+								QuestionId = questionId,
+								OptionLabel = optionModel.OptionLabel,
+								OptionText = optionModel.OptionText.Trim(),
+								IsCorrect = optionModel.IsCorrect,
+								OrderIndex = optionModel.OrderIndex,
+								CreationDate = now
+							};
+
+							await _optionCommandRepo.Create(
+								scope.Transaction, scope.Connection, option);
+						}
 					}
+
+					await scope.CommitAsync();  // ← scope not transaction
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Rolling back question creation - ClientId: {ClientId}",
+						model.ClientId);
+
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx,
+							"Rollback failed - ClientId: {ClientId}", model.ClientId);
+					}
+
+					throw;
 				}
 
-				transaction.Commit();
-
-				_logger.Information("Question created successfully - QuestionId: {QuestionId}, ClientId: {ClientId}",question.Id,model.ClientId);
+				_logger.Information(
+					"Question created - QuestionId: {QuestionId}, ClientId: {ClientId}",
+					questionId, model.ClientId);
 
 				return new CreateQuestionResponse
 				{
 					ResponseCode = ResponseCode.successful,
 					ResponseMessage = "Question created successfully",
 					Status = "successful",
-					QuestionId = question.Id,
+					QuestionId = questionId,
 					ClientId = model.ClientId,
 					IsDuplicate = false
 				};
 			}
 			catch (Exception ex)
 			{
-				try
-				{
-					transaction?.Rollback();
-				}
-				catch (Exception rbEx)
-				{
-					_logger.Error(rbEx, "Rollback failed - ClientId: {ClientId}", model?.ClientId);
-				}
-
-				_logger.Error(ex, "Error creating question - ClientId: {ClientId}", model?.ClientId);
+				_logger.Error(ex,
+					"Error creating question - ClientId: {ClientId}", model?.ClientId);
 
 				return new CreateQuestionResponse
 				{
@@ -298,11 +297,6 @@ public class QuestionService : IQuestionService
 					ResponseMessage = "An error occurred while creating the question",
 					Status = "failed"
 				};
-			}
-			finally
-			{
-				transaction?.Dispose();
-				connection?.Dispose();
 			}
 		}
 	}

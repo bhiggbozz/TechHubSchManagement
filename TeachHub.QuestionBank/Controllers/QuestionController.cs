@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core.Model;
@@ -292,10 +293,9 @@ public class QuestionController : ControllerBase
 		{
 			return new AuthenticatedUserClaims
 			{
-				UserId = User.FindFirst("UserId")?.Value,
+				UserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value,
 				SchoolId = User.FindFirst("SchoolId")?.Value,
-				Role = User.FindFirst("Role")?.Value,
-				Email = User.FindFirst("Email")?.Value
+				Role = User.FindFirst(ClaimTypes.Role)?.Value
 			};
 		}
 		catch
