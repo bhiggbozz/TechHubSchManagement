@@ -34,6 +34,8 @@ namespace TechHub.Service.Interface
 		Task<IEnumerable<TeacherResponseModel>> GetTeachersBySchoolAsync(Guid schoolId, DatabaseTarget target);
 		Task<TEntity?> GetByToken(string token);
 		Task<TEntity?> GetByPropertyName(string propertyName, string value, DatabaseTarget target);
+		Task<IEnumerable<T>> QueryAsync<T>(string query, Dictionary<string, object> values, DatabaseTarget target);
+
 
 	}
 }

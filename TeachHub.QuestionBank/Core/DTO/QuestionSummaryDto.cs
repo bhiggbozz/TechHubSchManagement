@@ -29,5 +29,8 @@ public class QuestionSummaryDto
 	public int Status { get; set; }
 	public string StatusName { get; set; }
 	public string CreationDate { get; set; }
+	public string? TopicName { get; set; }  
+	public string? SubTopicName { get; set; } 
+	public string? ClassName { get; set; }
 }
 

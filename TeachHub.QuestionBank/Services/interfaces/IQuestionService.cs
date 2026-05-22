@@ -63,5 +63,10 @@ public interface IQuestionService
 	/// Returns alongside original file url for side by side view
 	/// </summary>
 	Task<PendingReviewResponse> GetPendingReviewQuestions(Guid scanSessionId,AuthenticatedUserClaims userClaims);
-}
+	Task<QuestionListResponse> GetQuestionsByClassroom(Guid classroomId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims);
+	Task<BaseResponse> GetSubjectQuestionSummary(Guid classroomId, Guid subjectId, AuthenticatedUserClaims userClaims);
+	//Task<BaseResponse> GetSubjectQuestionSummary(Guid classroomId, Guid subjectId, AuthenticatedUserClaims userClaims);
+
+
+	}
 

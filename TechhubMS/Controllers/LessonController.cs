@@ -136,6 +136,21 @@ public class LessonController : ControllerBase
 		var result = await _lessonService.GetLessonsByClassroomForAdmin(classroomId, claims);
 		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 	}
+
+	//[HttpGet("classroom/{classroomId}/subject/{subjectId}/summary")]
+	//[Authorize]
+	//public async Task<IActionResult> GetSubjectQuestionSummary(Guid classroomId, Guid subjectId)
+	//{
+	//	var claims = GetClaims();
+	//	if (claims == null) return Unauthorized();
+
+	//	var result = await _questionService.GetSubjectQuestionSummary(classroomId, subjectId, claims);
+
+	//	return result.ResponseCode == ResponseCode.successful
+	//		? Ok(result)
+	//		: BadRequest(result);
+	//}
+
 	private AuthenticatedUserClaims GetClaims() => new AuthenticatedUserClaims
 	{
 		UserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value,

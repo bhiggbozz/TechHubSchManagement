@@ -370,6 +370,22 @@ namespace TechHub.Service.Service
 			});
 		}
 
+		public async Task<IEnumerable<T>> QueryAsync<T>(string query, Dictionary<string, object> values, DatabaseTarget target)
+		{
+			var connectionString = _resolver.Resolve(target);
+			using var conn = new SqlConnection(connectionString);
+			conn.Open();
+
+			var parameter = new DynamicParameters();
+			foreach (var key in values.Keys)
+			{
+				parameter.Add($"@{key}", values[key]);
+			}
+
+			var result = await conn.QueryAsync<T>(query, parameter);
+			return result;
+		}
+
 		public async Task<TEntity?> GetByToken(string token)
 		{
 			using var conn = new SqlConnection(_config);
