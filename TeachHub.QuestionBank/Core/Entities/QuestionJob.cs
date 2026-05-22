@@ -22,6 +22,8 @@ public class QuestionJob
 	public Guid Id { get; set; }
 	public Guid SchoolId { get; set; }
 	public Guid SubTopicId { get; set; }
+	public Guid ClassroomId { get; set; } 
+	public Guid SubjectId { get; set; } 
 	public Guid TeacherId { get; set; }
 
 	// Null until background worker completes successfully

@@ -159,6 +159,8 @@ public class QuestionJobService : IQuestionJobService
 				{
 					Id = jobId,
 					SchoolId = schoolId,
+					ClassroomId = model.ClassroomId,   
+					SubjectId = model.SubjectId,     
 					SubTopicId = model.SubTopicId,
 					TeacherId = userId,
 					QuestionId = subTopic.SchoolId,

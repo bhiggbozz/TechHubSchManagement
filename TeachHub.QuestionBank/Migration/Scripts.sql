@@ -218,3 +218,9 @@ CREATE INDEX IX_Questions_SubTopicId
 CREATE INDEX IX_Questions_TopicId     
     ON Questions (SchoolId, TopicId);
 
+--------------------------------------------
+
+ALTER TABLE QuestionJob ADD ClassroomId UNIQUEIDENTIFIER NULL;
+ALTER TABLE QuestionJob ADD SubjectId   UNIQUEIDENTIFIER NULL;
+ALTER TABLE QuestionJob ADD SubTopicId  UNIQUEIDENTIFIER NULL;
+
