@@ -21,6 +21,9 @@ public class SubmitQuestionJobViewModel
 	// Where this question belongs
 	public Guid SubTopicId { get; set; }
 
+	public Guid ClassroomId { get; set; }  
+	public Guid SubjectId { get; set; }
+
 	// Objective | Theory | TrueFalse
 	public string QuestionType { get; set; }
 
