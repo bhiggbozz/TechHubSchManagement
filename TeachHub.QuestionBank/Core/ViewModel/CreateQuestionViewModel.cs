@@ -11,33 +11,27 @@ namespace TechHub.QuestionBank.Core.ViewModel;
 
 public class CreateQuestionViewModel
 {
-
 	public string ClientId { get; set; }
 	public string OriginDevice { get; set; }
 	public string CreatedAtDevice { get; set; }
 	public Guid SubjectId { get; set; }
 	public Guid? TopicId { get; set; }
 	public string Topic { get; set; }
-	public Guid SubTopic { get; set; } 
-
+	public Guid SubTopic { get; set; }
+	public Guid ClassroomId { get; set; }  
 	public string Title { get; set; }
 	public string TextContent { get; set; }
 	public QuestionType QuestionType { get; set; }
 	public DifficultyLevel DifficultyLevel { get; set; }
 	public int MarksAllocation { get; set; }
-
-	public List<CreateOptionViewModel> Options { get; set; }
-		= new List<CreateOptionViewModel>();
+	public List<CreateOptionViewModel> Options { get; set; } = new();
 	public Guid? BoardSessionId { get; set; }
-
 	public Guid? ScanSessionId { get; set; }
 	public bool IsScanned { get; set; }
 	public int? ExtractedQuestionIndex { get; set; }
 	public string? AIConfidenceScore { get; set; }
 	public string? ImageUrl { get; set; }
 	public string? ImagePublicId { get; set; }
-
-
 }
 
 public class CreateOptionViewModel

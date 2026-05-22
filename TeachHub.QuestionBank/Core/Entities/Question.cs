@@ -13,6 +13,7 @@ public class Questions
 	public Guid SchoolId { get; set; }
 	public Guid SubjectId { get; set; }
 	public Guid? TopicId { get; set; }
+	public Guid ClassroomId { get; set; }
 	public Guid CreatedBy { get; set; }
 
 	// ─────────────────────────────────────────────────────
