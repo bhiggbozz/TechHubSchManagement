@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel;
 using TechHub.QuestionBank.Core.ViewModel;
+using TechHub.QuestionBank.Services;
 using TechHub.QuestionBank.Services.interfaces;
 using TechHub.Service.Extension;
 
@@ -113,6 +114,18 @@ public class QuestionJobController : ControllerBase
 		var userClaims = User.GetAuthenticatedUserClaims();
 		var result = await _jobService.GetQuestionPreview(jobId, userClaims);
 		return result.ResponseCode == ResponseCode.successful? Ok(result) : BadRequest(result);
+	}
+
+	[HttpGet("jobs/status")]
+	[Authorize]
+	public async Task<IActionResult> GetJobStatuses([FromQuery] Guid classroomId,[FromQuery] Guid subjectId,[FromQuery] Guid? topicId,[FromQuery] Guid? subTopicId)
+	{
+		var claims = User.GetAuthenticatedUserClaims();
+		if (claims == null) return Unauthorized();
+
+		var result = await _jobService.GetJobStatuses(classroomId, subjectId, topicId, subTopicId, claims);
+
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 	}
 }
 

@@ -177,12 +177,12 @@ namespace TechHub.Service.Service
 			try
 			{
 
-				using var conn = new SqlConnection(connectionString);
-				conn.Open();
+				//using var conn = new SqlConnection(connectionString);
+				//conn.Open();
 				var tableName = typeof(TEntity).Name;
 				var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
 				var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-				await conn.ExecuteAsync(query, sqlParameter, transaction);
+				await connection.ExecuteAsync(query, sqlParameter, transaction);
 				//using var conn = new SqlConnection(_config);
 				//conn.Open();
 				//var tableName = typeof(TEntity).Name;
@@ -395,9 +395,9 @@ namespace TechHub.Service.Service
 
 		public async Task UpdateTableColumnById(SqlTransaction transaction, SqlConnection connection,Dictionary<string, object> obj, KeyValuePair<string, object> keyValue, DatabaseTarget target)
 		{
-			var connectionString = _resolver.Resolve(target);
-			using var conn = new SqlConnection(connectionString);
-			conn.Open();
+			//var connectionString = _resolver.Resolve(target);
+			//using var conn = new SqlConnection(connectionString);
+			//conn.Open();
 			var tableName = typeof(TEntity).Name;
 			var query = QueryBuilder<TEntity>.UpdateQueryWithSingleColumnName(obj, keyValue.Key, tableName);
 			var parameter = new DynamicParameters();
@@ -407,7 +407,7 @@ namespace TechHub.Service.Service
 			}
 
 			parameter.Add($"@{keyValue.Key}", keyValue.Value);
-			await conn.ExecuteAsync(query, parameter);
+			await connection.ExecuteAsync(query, parameter, transaction);
 		}
 
 		public async Task RevokeToken(SqlTransaction transaction, SqlConnection connection, Guid tokenId, string replacedByToken = null)

@@ -12,6 +12,7 @@ namespace TechHub.Service.Service.DatabaseService
 		private readonly SqlConnection _connection;
 		private readonly SqlTransaction _transaction;
 		private bool _committed = false;
+		private bool _disposed = false;
 
 		public SqlConnection Connection => _connection;
 		public SqlTransaction Transaction => _transaction;
@@ -34,20 +35,23 @@ namespace TechHub.Service.Service.DatabaseService
 		{
 			if (!_committed)
 			{
-				_transaction.Rollback();
+				try { _transaction.Rollback(); } catch { }
 			}
 			await Task.CompletedTask;
 		}
 
 		public void Dispose()
 		{
+			if (_disposed) return;
+			_disposed = true;
+
 			if (!_committed)
 			{
-				_transaction.Rollback();
+				try { _transaction.Rollback(); } catch { }
 			}
 
-			_transaction.Dispose();
-			_connection.Dispose();
+			try { _transaction.Dispose(); } catch { }
+			try { _connection.Dispose(); } catch { }
 		}
 	}
 

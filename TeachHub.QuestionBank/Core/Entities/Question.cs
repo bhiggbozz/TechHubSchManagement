@@ -87,9 +87,9 @@ public class Questions
 	public Guid? DeletedBy { get; set; }
 	public string? CreationDate { get; set; }
 	public string? ModifiedDate { get; set; }
-	public string? SubjectName { get; set; }
-	public string? TopicName { get; set; }
-	public string? SubTopicName { get; set; }
-	public string? ClassName { get; set; }
+	public string? SubjectName { get; set; } = string.Empty;
+	public string? TopicName { get; set; } = string.Empty;	
+	public string? SubTopicName { get; set; } = string.Empty;
+	public string? ClassName { get; set; } = string.Empty;
 
 }
