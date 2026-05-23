@@ -4,12 +4,14 @@ using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core.Model;
 using TechHub.QuestionBank.Core.ViewModel;
 using TechHub.QuestionBank.Services;
 using TechHub.QuestionBank.Services.interfaces;
+using TechHub.Service.Extension;
 
 namespace TechHub.QuestionBank.Controllers;
 
@@ -21,9 +23,7 @@ public class QuestionBoardController : ControllerBase
 	private readonly IQuestionBoardService _boardService;
 	private readonly ILogger _logger;
 
-	public QuestionBoardController(
-		IQuestionBoardService boardService,
-		ILogger logger)
+	public QuestionBoardController(IQuestionBoardService boardService,ILogger logger)
 	{
 		_boardService = boardService;
 		_logger = logger;
@@ -39,10 +39,10 @@ public class QuestionBoardController : ControllerBase
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 	[HttpPost("board/attach")]
-	public async Task<IActionResult> AttachBoardSession(
-		[FromBody] AttachBoardSessionViewModel model)
+	public async Task<IActionResult> AttachBoardSession([FromBody] AttachBoardSessionViewModel model)
 	{
-		var userClaims = GetUserClaims();
+		var userClaims = User.GetAuthenticatedUserClaims();
+
 		if (userClaims == null)
 			return Unauthorized();
 
@@ -62,7 +62,8 @@ public class QuestionBoardController : ControllerBase
 	[HttpDelete("{questionId:guid}/board/detach")]
 	public async Task<IActionResult> DetachBoardSession(Guid questionId)
 	{
-		var userClaims = GetUserClaims();
+		var userClaims = User.GetAuthenticatedUserClaims();
+
 		if (userClaims == null)
 			return Unauthorized();
 
@@ -87,7 +88,8 @@ public class QuestionBoardController : ControllerBase
 	[HttpGet("{questionId:guid}/board")]
 	public async Task<IActionResult> GetBoardSession(Guid questionId)
 	{
-		var userClaims = GetUserClaims();
+		var userClaims =  User.GetAuthenticatedUserClaims();
+
 		if (userClaims == null)
 			return Unauthorized();
 
@@ -100,7 +102,8 @@ public class QuestionBoardController : ControllerBase
 	[Authorize]
 	public async Task<IActionResult> GetQuestionsByJobId(Guid jobId)
 	{
-		var claims = GetUserClaims();
+		var claims = User.GetAuthenticatedUserClaims();
+
 		if (claims == null) return Unauthorized();
 
 		var result = await _boardService.GetQuestionsByJobId(jobId, claims);

@@ -554,7 +554,6 @@ public class QuestionBoardService : IQuestionBoardService
 						q.ContentParts,
 						q.HasLatex,
 						q.HasMedia,
-						q.HasImages,
 						q.CorrectAnswer,
 						q.DifficultyLevel,
 						q.MarksAllocation,
