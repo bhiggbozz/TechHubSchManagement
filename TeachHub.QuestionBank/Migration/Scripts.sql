@@ -224,3 +224,10 @@ ALTER TABLE QuestionJob ADD ClassroomId UNIQUEIDENTIFIER NULL;
 ALTER TABLE QuestionJob ADD SubjectId   UNIQUEIDENTIFIER NULL;
 ALTER TABLE QuestionJob ADD SubTopicId  UNIQUEIDENTIFIER NULL;
 
+--------------------------------------------------------------
+
+ALTER TABLE Questions ADD SubjectName  NVARCHAR(200) NULL;
+ALTER TABLE Questions ADD TopicName    NVARCHAR(200) NULL;
+ALTER TABLE Questions ADD SubTopicName NVARCHAR(200) NULL;
+ALTER TABLE Questions ADD ClassName    NVARCHAR(200) NULL;
+

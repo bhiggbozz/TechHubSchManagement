@@ -49,6 +49,7 @@ namespace TechHub.QuestionBank.Services.interfaces;
 		/// Returns HTML + ContentParts for preview and edit
 		/// </summary>
 		Task<QuestionPreviewResponse> GetQuestionPreview(Guid jobId,AuthenticatedUserClaims userClaims);
+		Task<BaseResponse> GetJobStatuses(Guid classroomId, Guid subjectId, Guid? topicId, Guid? subTopicId, AuthenticatedUserClaims userClaims);
 
 		/// <summary>
 		/// Called by background worker only

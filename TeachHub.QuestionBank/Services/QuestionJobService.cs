@@ -16,6 +16,7 @@ using TechHub.Core.Enum;
 using TechHub.Core.Model;
 using TechHub.QuestionBank.Core.Entities;
 using TechHub.QuestionBank.Core.Enums;
+using TechHub.QuestionBank.Core.Model;
 using TechHub.QuestionBank.Core.Response;
 using TechHub.QuestionBank.Core.ViewModel;
 using TechHub.QuestionBank.Services.interfaces;
@@ -479,6 +480,103 @@ public class QuestionJobService : IQuestionJobService
 		}
 	}
 
+
+	public async Task<BaseResponse> GetJobStatuses(Guid classroomId,Guid subjectId,Guid? topicId,Guid? subTopicId,AuthenticatedUserClaims userClaims)
+	{
+		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+				var whereClause = $@"
+					WHERE  j.SchoolId    = '{schoolId}'
+					AND    j.ClassroomId = '{classroomId}'
+					AND    j.SubjectId   = '{subjectId}'
+					AND    j.TeacherId   = '{userId}'";
+
+				if (topicId.HasValue && topicId != Guid.Empty)
+					whereClause += $" AND st.TopicId = '{topicId.Value}'";
+
+				if (subTopicId.HasValue && subTopicId != Guid.Empty)
+					whereClause += $" AND j.SubTopicId = '{subTopicId.Value}'";
+
+				var query = $@"
+					SELECT
+						j.Id              AS JobId,
+						j.Status,
+						j.QuestionType,
+						j.ExtractedCount,
+						j.FailureReason,
+						j.AttemptCount,
+						j.CreatedAt,
+						j.CompletedAt,
+						st.Name           AS SubTopicName,
+						st.TopicId        AS TopicId
+					FROM   QuestionJob   j
+					LEFT JOIN SubTopic   st ON st.Id = j.SubTopicId
+					{whereClause}
+					ORDER  BY j.CreatedAt DESC";
+
+				var rows = await _jobQueryRepo.QueryAsync<JobStatusRow>(query, new Dictionary<string, object>(),DatabaseTarget.QuestionBank);
+
+				var list = rows?.ToList() ?? new();
+
+				// Summary counts
+				var summary = new
+				{
+					Total = list.Count,
+					Pending = list.Count(j => j.Status == "Pending"),
+					Processing = list.Count(j => j.Status == "Processing"),
+					Completed = list.Count(j => j.Status == "Completed"),
+					Failed = list.Count(j => j.Status == "Failed")
+				};
+
+				_logger.Information(
+					"Job statuses retrieved - ClassroomId: {ClassroomId}, " +
+					"SubjectId: {SubjectId}, Count: {Count}",
+					classroomId, subjectId, list.Count);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = list.Any()
+						? $"{list.Count} job(s) found"
+						: "No jobs found",
+					Status = "successful",
+					Data = new
+					{
+						Summary = summary,
+						Jobs = list
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error retrieving job statuses");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving job statuses",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
 	/// <summary>
 	/// Called by QuestionJobWorker every 30 seconds
 	/// Picks up ONE pending job at a time
@@ -503,24 +601,15 @@ public class QuestionJobService : IQuestionJobService
 	public async Task ProcessNextPendingJob()
 	{
 		QuestionJob? job = null;
-		IDbTransactionScope? scope = null;
 		try
 		{
-			// ────────────────────────────────────────────────────
-			// STEP 1: Fetch next Pending job
-			// FIFO order — oldest job processed first
-			// TOP 1 — one job per worker cycle
-			// AttemptCount < MaxAttempts — skip permanently failed
-			// ────────────────────────────────────────────────────
-			var connectionString = _resolver.Resolve(DatabaseTarget.QuestionBank);
-
-			scope = _dbTransactionScopeFactory.Create("QuestionBankConnection");
+			// ── STEP 1: Fetch next pending job — NO transaction needed ──
 			var pendingQuery = $@"
-            SELECT TOP 1 *
-            FROM QuestionJob
-            WHERE Status  in ('Pending', 'Processing')
-            AND   AttemptCount < {MaxAttempts}
-            ORDER BY CreatedAt ASC";
+				SELECT TOP 1 *
+				FROM   QuestionJob
+				WHERE  Status IN ('Pending', 'Processing')
+				AND    AttemptCount < {MaxAttempts}
+				ORDER  BY CreatedAt ASC";
 
 			var pending = await _jobQueryRepo.GetByQuery(pendingQuery, DatabaseTarget.QuestionBank);
 
@@ -532,261 +621,230 @@ public class QuestionJobService : IQuestionJobService
 				return;
 			}
 
-			_logger.Information("Processing job - JobId: {JobId}, SubTopicId: {SubTopicId}, " + "QuestionType: {Type}, Attempt: {Attempt}",
+			_logger.Information(
+				"Processing job - JobId: {JobId}, SubTopicId: {SubTopicId}, " +
+				"QuestionType: {Type}, Attempt: {Attempt}",
 				job.Id, job.SubTopicId, job.QuestionType, job.AttemptCount + 1);
 
-			var subTopic = await _subTopicQueryRepo.Get(job.SubTopicId, DatabaseTarget.QuestionBank);
+			// ── STEP 2: Mark as Processing — own transaction ─────────────
+			using (var markScope = _dbTransactionScopeFactory.Create("QuestionBankConnection"))
+			{
+				var processingDict = new Dictionary<string, object>
+				{
+					{ "Status",       "Processing" },
+					{ "AttemptCount", job.AttemptCount + 1 }
+				};
+
+				await _jobCommandRepo.UpdateTableColumnById(
+					markScope.Transaction, markScope.Connection,
+					processingDict,
+					new KeyValuePair<string, object>("Id", job.Id),
+					DatabaseTarget.QuestionBank);
+
+				await markScope.CommitAsync();
+			}
+
+			_logger.Information("Job marked as Processing - JobId: {JobId}", job.Id);
+
+			// ── STEP 3: Validate subtopic ────────────────────────────────
+			var subTopic = await _subTopicQueryRepo.Get(
+				job.SubTopicId, DatabaseTarget.QuestionBank);
 
 			if (subTopic == null)
 				throw new Exception($"SubTopic not found - SubTopicId: {job.SubTopicId}");
 
-			// ────────────────────────────────────────────────────
-			// STEP 2: Mark as Processing immediately
-			// Prevents another worker instance picking up same job
-			// AttemptCount incremented here — tracks total tries
-			// ────────────────────────────────────────────────────
-			var processingDict = new Dictionary<string, object>
-			{
-				{ "Status",       "Processing" },
-				{ "AttemptCount", job.AttemptCount + 1 }
-			};
-
-			await _jobCommandRepo.UpdateTableColumnById(scope.Transaction, scope.Connection,processingDict, new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
-
-			_logger.Information("Job marked as Processing - JobId: {JobId}", job.Id);
-
-			// ────────────────────────────────────────────────────
-			// STEP 3: Download image from Cloudinary temp folder
-			// TempImagePath is the Cloudinary public_id
-			// stored at upload time in SubmitJob()
-			// ────────────────────────────────────────────────────
+			// ── STEP 4: Download image from Cloudinary ───────────────────
 			if (string.IsNullOrWhiteSpace(job.TempImagePath))
 				throw new Exception("TempImagePath is missing on job record");
 
 			var imageBytes = await DownloadImageFromCloudinary(job.TempImagePath);
 
 			if (imageBytes == null || imageBytes.Length == 0)
-				throw new Exception($"Failed to download temp image from Cloudinary. " + $"PublicId: {job.TempImagePath}");
+				throw new Exception(
+					$"Failed to download temp image. PublicId: {job.TempImagePath}");
 
-			_logger.Information("Image downloaded - JobId: {JobId}, Size: {Size} bytes",job.Id, imageBytes.Length);
+			_logger.Information(
+				"Image downloaded - JobId: {JobId}, Size: {Size} bytes",
+				job.Id, imageBytes.Length);
 
-			// ────────────────────────────────────────────────────
-			// STEP 4: Call Claude Vision
-			// Sends image + structured prompt
-			// Returns all questions extracted from the image
-			// ────────────────────────────────────────────────────
-			var claudeResult = await CallClaude(imageBytes,job.QuestionType,job.HasImages);
+			// ── STEP 5: Call Claude Vision ───────────────────────────────
+			var claudeResult = await CallClaude(imageBytes, job.QuestionType, job.HasImages);
 
 			if (!claudeResult.Success)
 				throw new Exception($"Claude processing failed: {claudeResult.ErrorMessage}");
 
 			if (claudeResult.Questions == null || !claudeResult.Questions.Any())
-				throw new Exception("Claude returned no questions from the image. " + "Image may be too blurry or unclear.");
+				throw new Exception("Claude returned no questions. Image may be too blurry or unclear.");
 
 			_logger.Information(
 				"Claude extracted {Count} question(s) - JobId: {JobId}", claudeResult.Questions.Count, job.Id);
 
-			// ────────────────────────────────────────────────────
-			// STEP 5: Save all extracted questions
-			// Each question gets its own Question record
-			// All inherit the same SubTopicId from the job
-			// Options saved per question for Objective type
-			// ────────────────────────────────────────────────────
+			// ── STEP 6: Save questions + options + mark completed ─────────
 			var savedQuestionIds = new List<Guid>();
 			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-			
-			foreach (var extracted in claudeResult.Questions)
+
+			using (var saveScope = _dbTransactionScopeFactory.Create("QuestionBankConnection"))
 			{
-				// ── 5a: Save Question record ──────────────────
-				var questionId = Guid.NewGuid();
-
-				var question = new Questions
+				try
 				{
-					// ── Identity ──────────────────────────────────
-					Id = questionId,
-					SchoolId = job.SchoolId,
-					SubjectId = Guid.Empty,
-					TopicId = subTopic.TopicId,
-					SubTopicId = job.SubTopicId,
-					CreatedBy = job.TeacherId,
-
-					// ── Legacy string fields (kept for compatibility) ──
-					Topic = string.Empty,
-					SubTopic = string.Empty,
-
-					// ── Content — plain text (not used in AI pipeline) ──
-					Title = string.Empty,
-					TextContent = string.Empty,
-
-					// ── Content — AI generated ────────────────────
-					QuestionType = ParseQuestionType(job.QuestionType),
-					QuestionHtml = extracted.QuestionHtml ?? string.Empty,
-					ContentParts = extracted.ContentPartsJson ?? string.Empty,
-					HasLatex = extracted.HasLatex,
-					DifficultyLevel = DifficultyLevel.Medium,
-					MarksAllocation = 1,
-
-					// ── Answer (TrueFalse only) ───────────────────
-					CorrectAnswer = job.QuestionType == "TrueFalse"? extracted.CorrectAnswer ?? string.Empty: string.Empty,
-					// ── Job link ──────────────────────────────────
-					JobId = job.Id,
-
-					// ── Board session (not used in job pipeline) ──
-					BoardSessionId = null,
-					HasBoardSession = false,
-					HasMedia = extracted.HasImages,
-					HasAudio = false,
-					SnapshotUrl = string.Empty,
-					SnapshotPublicId = null,
-
-					// ── Scan pipeline (not used in job pipeline) ──
-					ScanSessionId = null,
-					IsScanned = false,
-					ExtractedQuestionIndex = null,
-					AIConfidenceScore = null,
-					//OriginalFileUrl = string.Empty,
-					//OriginalFileName = string.Empty,
-
-					// ── Status ────────────────────────────────────
-					Status = QuestionStatus.Draft,
-					IsActive = true,
-					IsDeleted = false,
-
-					// ── Review / Publish (not yet actioned) ───────
-					ReviewedDate = null,
-					ReviewedBy = null,
-					PublishedDate = null,
-					PublishedBy = null,
-
-					// ── Sync (not applicable for AI pipeline) ─────
-					ClientId = null,
-					OriginDevice = null,
-					LastSyncedAt = null,
-
-					// ── Soft delete fields (not deleted yet) ──────
-					DeletedDate = null,
-					DeletedBy = null,
-
-					// ── Audit ─────────────────────────────────────
-					CreationDate = now,
-					ModifiedDate = now
-				};
-				
-				await _questionCommandRepo.Create(scope.Transaction, scope.Connection,question, DatabaseTarget.QuestionBank);
-
-				_logger.Information("Question saved - QuestionId: {QuestionId}, " + "JobId: {JobId}, HasLatex: {HasLatex}, HasImages: {HasImages}",questionId, job.Id, extracted.HasLatex, extracted.HasImages);
-
-				// ── 5b: Save options for Objective questions ──
-				if (job.QuestionType == "Objective" && extracted.Options?.Any() == true)
-				{
-					var optionCount = 0;
-
-					foreach (var opt in extracted.Options)
+					foreach (var extracted in claudeResult.Questions)
 					{
-						// Skip empty options — Claude occasionally
-						// returns empty option shells
-						if (string.IsNullOrWhiteSpace(opt.PlainText) && string.IsNullOrWhiteSpace(opt.Html))
+						var questionId = Guid.NewGuid();
+
+						var question = new Questions
 						{
-							_logger.Warning("Skipping empty option - QuestionId: {QuestionId}, " + "Label: {Label}", questionId, opt.Label);
-							continue;
-						}
-
-						var option = new QuestionOptions
-						{
-							Id = Guid.NewGuid(),
-							QuestionId = questionId,
-							OptionLabel = opt.Label,
-							// A | B | C | D | E etc
-
-							OptionText = opt.PlainText,
-							// Plain text version — used for simple display
-							// and search indexing
-
-							OptionHtml = opt.Html,
-							// Claude-generated HTML — used for rich rendering
-							// may contain LaTeX spans or image placeholders
-
-							ContentParts = opt.ContentPartsJson,
-							// Structured JSON — used for editing
-
-							IsCorrect = opt.IsCorrect,
-							HasLatex = opt.HasLatex,
-							HasImages = opt.HasImages,
-							OrderIndex = opt.OrderIndex,
+							Id = questionId,
+							SchoolId = job.SchoolId,
+							ClassroomId = job.ClassroomId,
+							SubjectId = job.SubjectId,
+							TopicId = subTopic.TopicId,
+							SubTopicId = job.SubTopicId,
+							CreatedBy = job.TeacherId,
+							Topic = string.Empty,
+							SubTopic = string.Empty,
+							Title = string.Empty,
+							TextContent = string.Empty,
+							QuestionType = ParseQuestionType(job.QuestionType),
+							QuestionHtml = extracted.QuestionHtml ?? string.Empty,
+							ContentParts = extracted.ContentPartsJson ?? string.Empty,
+							HasLatex = extracted.HasLatex,
+							DifficultyLevel = DifficultyLevel.Medium,
+							MarksAllocation = 1,
+							CorrectAnswer = job.QuestionType == "TrueFalse"
+												? extracted.CorrectAnswer ?? string.Empty
+												: string.Empty,
+							JobId = job.Id,
+							BoardSessionId = null,
+							HasBoardSession = false,
+							HasMedia = extracted.HasImages,
+							HasAudio = false,
+							SnapshotUrl = string.Empty,
+							SnapshotPublicId = null,
+							ScanSessionId = null,
+							IsScanned = false,
+							ExtractedQuestionIndex = null,
+							AIConfidenceScore = null,
+							Status = QuestionStatus.Draft,
 							IsActive = true,
 							IsDeleted = false,
-							CreationDate = now
+							ReviewedDate = null,
+							ReviewedBy = null,
+							PublishedDate = null,
+							PublishedBy = null,
+							ClientId = null,
+							OriginDevice = null,
+							LastSyncedAt = null,
+							DeletedDate = null,
+							DeletedBy = null,
+							CreationDate = now,
+							ModifiedDate = now,
+							SubjectName = string.Empty,
+							TopicName = string.Empty,
+							SubTopicName = string.Empty,
+							ClassName = string.Empty
+
 						};
 
-						await _optionCommandRepo.Create(scope.Transaction, scope.Connection,option, DatabaseTarget.QuestionBank);
 
-						optionCount++;
+						await _questionCommandRepo.Create(saveScope.Transaction, saveScope.Connection, question, DatabaseTarget.QuestionBank);
+
+						_logger.Information(
+							"Question saved - QuestionId: {QuestionId}, JobId: {JobId}",
+							questionId, job.Id);
+
+						// Save options for Objective questions
+						if (job.QuestionType == "Objective" && extracted.Options?.Any() == true)
+						{
+							var optionCount = 0;
+
+							foreach (var opt in extracted.Options)
+							{
+								if (string.IsNullOrWhiteSpace(opt.PlainText) &&
+									string.IsNullOrWhiteSpace(opt.Html))
+								{
+									_logger.Warning(
+										"Skipping empty option - QuestionId: {QuestionId}, Label: {Label}",
+										questionId, opt.Label);
+									continue;
+								}
+
+								var option = new QuestionOptions
+								{
+									Id = Guid.NewGuid(),
+									QuestionId = questionId,
+									OptionLabel = opt.Label,
+									OptionText = opt.PlainText,
+									OptionHtml = opt.Html,
+									ContentParts = opt.ContentPartsJson,
+									IsCorrect = opt.IsCorrect,
+									HasLatex = opt.HasLatex,
+									HasImages = opt.HasImages,
+									OrderIndex = opt.OrderIndex,
+									IsActive = true,
+									IsDeleted = false,
+									CreationDate = now
+								};
+
+								await _optionCommandRepo.Create(saveScope.Transaction, saveScope.Connection, option, DatabaseTarget.QuestionBank);
+
+								optionCount++;
+							}
+
+							_logger.Information(
+								"Options saved - QuestionId: {QuestionId}, Count: {Count}",
+								questionId, optionCount);
+						}
+
+						savedQuestionIds.Add(questionId);
 					}
 
-					_logger.Information("Options saved - QuestionId: {QuestionId}, " + "Count: {Count}", questionId, optionCount);
-				}
+					// Mark job completed inside same transaction
+					var completedDict = new Dictionary<string, object>
+					{
+						{ "Status",         "Completed" },
+						{ "ExtractedCount", savedQuestionIds.Count },
+						{ "CompletedAt",    now }
+					};
 
-				savedQuestionIds.Add(questionId);
+					await _jobCommandRepo.UpdateTableColumnById(saveScope.Transaction, saveScope.Connection,completedDict,
+						new KeyValuePair<string, object>("Id", job.Id), DatabaseTarget.QuestionBank);
+
+					await saveScope.CommitAsync();
+
+					_logger.Information(
+						"Job completed - JobId: {JobId}, ExtractedCount: {Count}",
+						job.Id, savedQuestionIds.Count);
+				}
+				catch
+				{
+					try { await saveScope.RollbackAsync(); } catch { }
+					throw;
+				}
 			}
 
-			_logger.Information(
-				"All questions saved - JobId: {JobId}, " + "TotalExtracted: {Total}", job.Id, savedQuestionIds.Count);
-
-			// ────────────────────────────────────────────────────
-			// STEP 6: Update job → Completed
-			// ExtractedCount tells teacher how many questions
-			// were found and saved from this image
-			// Note: No single QuestionId stored —
-			// teacher fetches questions by JobId
-			// ────────────────────────────────────────────────────
-			var completedDict = new Dictionary<string, object>
-			{
-				{ "Status",         "Completed" },
-				{ "ExtractedCount", savedQuestionIds.Count },
-				{ "CompletedAt",    now }
-			};
-
-			await _jobCommandRepo.UpdateTableColumnById(scope.Transaction, scope.Connection,completedDict, new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
-			await scope.CommitAsync();
-			_logger.Information(
-				"Job completed - JobId: {JobId}, " +
-				"ExtractedCount: {Count}",
-				job.Id, savedQuestionIds.Count);
-
-			// ────────────────────────────────────────────────────
-			// STEP 7: Delete temp image from Cloudinary
-			// Fire and forget — job already marked Completed
-			// Teacher is unaffected if cleanup fails
-			// Cloudinary auto-delete policy is the safety net
-			// ────────────────────────────────────────────────────
+			// ── STEP 7: Delete temp image — fire and forget ───────────────
 			_ = Task.Run(async () =>
 			{
 				try
 				{
-					await _cloudinaryService.DeleteMediaAsync(job.TempImagePath, MediaType.Image);
+					await _cloudinaryService.DeleteMediaAsync(
+						job.TempImagePath, MediaType.Image);
 
-					_logger.Information("Temp image deleted - PublicId: {PublicId}", job.TempImagePath);
+					_logger.Information(
+						"Temp image deleted - PublicId: {PublicId}", job.TempImagePath);
 				}
 				catch (Exception ex)
 				{
-					_logger.Warning(ex,"Temp image deletion failed - PublicId: {PublicId}. " + "Cloudinary auto-delete policy will handle cleanup",
+					_logger.Warning(ex,
+						"Temp image deletion failed - PublicId: {PublicId}",
 						job.TempImagePath);
 				}
 			});
 		}
 		catch (Exception ex)
 		{
-			// ────────────────────────────────────────────────────
-			// FAILURE HANDLING
-			// Under max attempts → reset to Pending for auto retry
-			// At max attempts → permanently Failed
-			// Teacher sees FailureReason and can retry manually
-			// ────────────────────────────────────────────────────
-			//try { scope.RollbackAsync(); } catch { }
-
 			_logger.Error(ex,
-				"Job processing failed - JobId: {JobId}",
-				job?.Id);
+				"Job processing failed - JobId: {JobId}", job?.Id);
 
 			if (job == null) return;
 
@@ -794,32 +852,30 @@ public class QuestionJobService : IQuestionJobService
 			var permanentlyFailed = newAttemptCount >= MaxAttempts;
 
 			var failDict = new Dictionary<string, object>
-			{
-				{
-					"Status",
-					permanentlyFailed ? "Failed" : "Pending"
-					// Under max → back to Pending, worker retries next cycle
-					// At max → permanently Failed, teacher must retry manually
-				},
-				{
-					"FailureReason",
-					permanentlyFailed
-						? $"Failed after {MaxAttempts} attempts. " +
-						  $"Last error: {ex.Message}"
-						: string.Empty
-					// Only set reason on permanent failure
-					// Transient failures do not surface to teacher
-				},
-				{ "AttemptCount", newAttemptCount }
-			};
-
-			await _jobCommandRepo.UpdateTableColumnById(failDict,new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
-
-			_logger.Warning("Job {Status} - JobId: {JobId}, " +"Attempts: {Attempts}/{Max}",permanentlyFailed ? "permanently failed" : "reset for retry",job.Id,newAttemptCount,MaxAttempts);
-		}
-		finally
 		{
-			scope?.Dispose();
+			{
+				"Status",
+				permanentlyFailed ? "Failed" : "Pending"
+			},
+			{
+				"FailureReason",
+				permanentlyFailed
+					? $"Failed after {MaxAttempts} attempts. Last error: {ex.Message}"
+					: string.Empty
+			},
+			{ "AttemptCount", newAttemptCount }
+		};
+
+			// Failure update — no transaction, direct write
+			await _jobCommandRepo.UpdateTableColumnById(
+				failDict,
+				new KeyValuePair<string, object>("Id", job.Id),
+				DatabaseTarget.QuestionBank);
+
+			_logger.Warning(
+				"Job {Status} - JobId: {JobId}, Attempts: {Attempts}/{Max}",
+				permanentlyFailed ? "permanently failed" : "reset for retry",
+				job.Id, newAttemptCount, MaxAttempts);
 		}
 	}
 
