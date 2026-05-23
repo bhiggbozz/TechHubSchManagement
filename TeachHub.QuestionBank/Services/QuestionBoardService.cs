@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using TechHub.Core;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
+using TechHub.QuestionBank.Core.DTO;
 using TechHub.QuestionBank.Core.Entities;
 using TechHub.QuestionBank.Core.Enums;
 using TechHub.QuestionBank.Core.Helpers;
@@ -22,14 +23,18 @@ public class QuestionBoardService : IQuestionBoardService
 	private readonly IQueryRepository<Questions> _questionQueryRepo;
 	private readonly ICommandRespository<Questions> _questionCommandRepo;
 	private readonly ICloudinaryService _cloudinaryService;
+	private readonly IQueryRepository<QuestionJob> _jobQueryRepo;
+	private readonly IQueryRepository<QuestionOptions> _optionQueryRepo;
 	private readonly ILogger _logger;
 
 	public QuestionBoardService(IQueryRepository<Questions> questionQueryRepo, ICommandRespository<Questions> questionCommandRepo,
-		 ICloudinaryService cloudinaryService,ILogger logger)
+		 ICloudinaryService cloudinaryService, IQueryRepository<QuestionJob> jobQueryRepo, IQueryRepository<QuestionOptions> optionQueryRepo, ILogger logger)
 	{
 		_questionQueryRepo = questionQueryRepo;
 		_questionCommandRepo = questionCommandRepo;
 		_cloudinaryService = cloudinaryService;
+		_jobQueryRepo = jobQueryRepo;
+		_optionQueryRepo = optionQueryRepo;
 		_logger = logger;
 	}
 
@@ -482,6 +487,175 @@ public class QuestionBoardService : IQuestionBoardService
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
 					ResponseMessage ="An error occurred while detaching " + "board session",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
+
+	public async Task<BaseResponse> GetQuestionsByJobId(Guid jobId,AuthenticatedUserClaims userClaims)
+	{
+		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+		using (LogContext.PushProperty("JobId", jobId))
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				// Verify job exists and belongs to this school/teacher
+				var job = await _jobQueryRepo.Get(jobId, DatabaseTarget.QuestionBank);
+
+				if (job == null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Job not found",
+						Status = "failed"
+					};
+
+				if (job.SchoolId != schoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Job not found",
+						Status = "failed"
+					};
+
+				if (job.Status != "Completed")
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = $"Job is not completed yet. Current status: {job.Status}",
+						Status = "failed",
+						Data = new { job.Status, job.AttemptCount }
+					};
+
+				// Fetch all questions for this job
+				var questionQuery = $@"
+					SELECT
+						q.Id,
+						q.QuestionType,
+						q.QuestionHtml,
+						q.ContentParts,
+						q.HasLatex,
+						q.HasMedia,
+						q.HasImages,
+						q.CorrectAnswer,
+						q.DifficultyLevel,
+						q.MarksAllocation,
+						q.Status,
+						q.CreationDate,
+						st.Name  AS SubTopicName,
+						t.Name   AS TopicName
+					FROM   Questions q
+					LEFT JOIN SubTopic st ON st.Id = q.SubTopicId
+					LEFT JOIN Topic    t  ON t.Id  = q.TopicId
+					WHERE  q.JobId     = '{jobId}'
+					AND    q.SchoolId  = '{schoolId}'
+					AND    q.IsDeleted = 0
+					AND    q.IsActive  = 1
+					ORDER  BY q.CreationDate ASC";
+
+				var questionRows = await _questionQueryRepo.QueryAsync<JobQuestionRow>(
+					questionQuery, new Dictionary<string, object>(),
+					DatabaseTarget.QuestionBank);
+
+				var questions = questionRows?.ToList() ?? new();
+
+				// Fetch options for each objective question
+				var result = new List<JobQuestionDto>();
+
+				foreach (var q in questions)
+				{
+					var options = new List<JobQuestionOptionDto>();
+
+					if (q.QuestionType == (int)QuestionType.MultipleChoice)
+					{
+						var optionQuery = $@"
+							SELECT
+								Id,
+								OptionLabel,
+								OptionText,
+								OptionHtml,
+								ContentParts,
+								IsCorrect,
+								HasLatex,
+								HasImages,
+								OrderIndex
+							FROM   QuestionOptions
+							WHERE  QuestionId = '{q.Id}'
+							AND    IsDeleted  = 0
+							AND    IsActive   = 1
+							ORDER  BY OrderIndex ASC";
+
+						var optionRows = await _optionQueryRepo.QueryAsync<JobQuestionOptionDto>(optionQuery, new Dictionary<string, object>(),DatabaseTarget.QuestionBank);
+
+						options = optionRows?.ToList() ?? new();
+					}
+
+					result.Add(new JobQuestionDto
+					{
+						Id = q.Id,
+						QuestionType = q.QuestionType,
+						QuestionTypeName = ((QuestionType)q.QuestionType).ToString(),
+						QuestionHtml = q.QuestionHtml,
+						ContentParts = q.ContentParts,
+						HasLatex = q.HasLatex,
+						HasMedia = q.HasMedia,
+						CorrectAnswer = q.CorrectAnswer,
+						DifficultyLevel = q.DifficultyLevel,
+						MarksAllocation = q.MarksAllocation,
+						Status = q.Status,
+						StatusName = ((QuestionStatus)q.Status).ToString(),
+						SubTopicName = q.SubTopicName,
+						TopicName = q.TopicName,
+						CreationDate = q.CreationDate,
+						Options = options
+					});
+				}
+
+				_logger.Information(
+					"Questions retrieved by JobId - JobId: {JobId}, Count: {Count}",
+					jobId, result.Count);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = $"{result.Count} question(s) retrieved",
+					Status = "successful",
+					Data = new
+					{
+						JobId = jobId,
+						QuestionType = job.QuestionType,
+						TotalQuestions = result.Count,
+						Questions = result
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error retrieving questions by JobId - JobId: {JobId}", jobId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving questions",
 					Status = "failed"
 				};
 			}
