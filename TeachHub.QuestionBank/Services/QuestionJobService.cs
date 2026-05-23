@@ -867,10 +867,7 @@ public class QuestionJobService : IQuestionJobService
 		};
 
 			// Failure update — no transaction, direct write
-			await _jobCommandRepo.UpdateTableColumnById(
-				failDict,
-				new KeyValuePair<string, object>("Id", job.Id),
-				DatabaseTarget.QuestionBank);
+			await _jobCommandRepo.UpdateTableColumnById(failDict,new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
 
 			_logger.Warning(
 				"Job {Status} - JobId: {JobId}, Attempts: {Attempts}/{Max}",

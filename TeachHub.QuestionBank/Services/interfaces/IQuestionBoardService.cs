@@ -36,4 +36,5 @@ public interface IQuestionBoardService
 	/// Does not return strokes directly
 	/// </summary>
 	Task<BoardSessionResponse> GetBoardSession(Guid questionId,AuthenticatedUserClaims userClaims);
+	Task<BaseResponse> GetQuestionsByJobId(Guid jobId, AuthenticatedUserClaims userClaims);
 }

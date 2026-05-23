@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core.Model;
 using TechHub.QuestionBank.Core.ViewModel;
+using TechHub.QuestionBank.Services;
 using TechHub.QuestionBank.Services.interfaces;
 
 namespace TechHub.QuestionBank.Controllers;
@@ -93,6 +94,18 @@ public class QuestionBoardController : ControllerBase
 		var result = await _boardService.GetBoardSession(questionId, userClaims);
 
 		return result.ResponseCode ==ResponseCode.successful ? Ok(result) : NotFound(result);
+	}
+
+	[HttpGet("jobs/{jobId}/questions")]
+	[Authorize]
+	public async Task<IActionResult> GetQuestionsByJobId(Guid jobId)
+	{
+		var claims = GetUserClaims();
+		if (claims == null) return Unauthorized();
+
+		var result = await _boardService.GetQuestionsByJobId(jobId, claims);
+
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 	}
 
 
