@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Serilog;
 using Serilog.Context;
+using SkiaSharp;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,6 +15,7 @@ using System.Threading.Tasks;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
+using TechHub.QuestionBank.Core.DTO;
 using TechHub.QuestionBank.Core.Entities;
 using TechHub.QuestionBank.Core.Enums;
 using TechHub.QuestionBank.Core.Model;
@@ -34,6 +36,8 @@ public class QuestionJobService : IQuestionJobService
 	private readonly ICommandRespository<Questions> _questionCommandRepo;
 	private readonly IQueryRepository<QuestionOptions> _optionQueryRepo;
 	private readonly ICommandRespository<QuestionOptions> _optionCommandRepo;
+	private readonly ICommandRespository<QuestionImage> _questionImageCommandRepo;
+
 	private readonly IQueryRepository<SubTopic> _subTopicQueryRepo;
 	private readonly IConnectionStringResolver _resolver;
 
@@ -53,6 +57,7 @@ public class QuestionJobService : IQuestionJobService
 		ICommandRespository<Questions> questionCommandRepo,
 		IQueryRepository<QuestionOptions> optionQueryRepo,
 		ICommandRespository<QuestionOptions> optionCommandRepo,
+	    ICommandRespository<QuestionImage> questionImageCommandRepo,
 		IQueryRepository<SubTopic> subTopicQueryRepo,
 		IDbTransactionScopeFactory dbTransactionScopeFactory,
 		IConnectionStringResolver resolver,
@@ -67,6 +72,8 @@ public class QuestionJobService : IQuestionJobService
 		_optionQueryRepo = optionQueryRepo;
 		_optionCommandRepo = optionCommandRepo;
 		_subTopicQueryRepo = subTopicQueryRepo;
+		_questionCommandRepo = questionCommandRepo;
+
 		_cloudinaryService = cloudinaryService;
 		_dbTransactionScopeFactory = dbTransactionScopeFactory;
 		_resolver = resolver;
@@ -603,7 +610,7 @@ public class QuestionJobService : IQuestionJobService
 		QuestionJob? job = null;
 		try
 		{
-			// ── STEP 1: Fetch next pending job — NO transaction needed ──
+			// ── STEP 1: Fetch next pending job — no transaction needed ───
 			var pendingQuery = $@"
 				SELECT TOP 1 *
 				FROM   QuestionJob
@@ -631,24 +638,20 @@ public class QuestionJobService : IQuestionJobService
 			{
 				var processingDict = new Dictionary<string, object>
 				{
-					{ "Status",       "Processing" },
+					{ "Status",       "Processing"       },
 					{ "AttemptCount", job.AttemptCount + 1 }
 				};
 
-				await _jobCommandRepo.UpdateTableColumnById(
-					markScope.Transaction, markScope.Connection,
-					processingDict,
-					new KeyValuePair<string, object>("Id", job.Id),
-					DatabaseTarget.QuestionBank);
+				await _jobCommandRepo.UpdateTableColumnById(markScope.Transaction, markScope.Connection,processingDict,new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
 
 				await markScope.CommitAsync();
 			}
 
-			_logger.Information("Job marked as Processing - JobId: {JobId}", job.Id);
+			_logger.Information(
+				"Job marked as Processing - JobId: {JobId}", job.Id);
 
 			// ── STEP 3: Validate subtopic ────────────────────────────────
-			var subTopic = await _subTopicQueryRepo.Get(
-				job.SubTopicId, DatabaseTarget.QuestionBank);
+			var subTopic = await _subTopicQueryRepo.Get(job.SubTopicId, DatabaseTarget.QuestionBank);
 
 			if (subTopic == null)
 				throw new Exception($"SubTopic not found - SubTopicId: {job.SubTopicId}");
@@ -660,11 +663,9 @@ public class QuestionJobService : IQuestionJobService
 			var imageBytes = await DownloadImageFromCloudinary(job.TempImagePath);
 
 			if (imageBytes == null || imageBytes.Length == 0)
-				throw new Exception(
-					$"Failed to download temp image. PublicId: {job.TempImagePath}");
+				throw new Exception($"Failed to download temp image. PublicId: {job.TempImagePath}");
 
-			_logger.Information(
-				"Image downloaded - JobId: {JobId}, Size: {Size} bytes",
+			_logger.Information("Image downloaded - JobId: {JobId}, Size: {Size} bytes",
 				job.Id, imageBytes.Length);
 
 			// ── STEP 5: Call Claude Vision ───────────────────────────────
@@ -674,12 +675,48 @@ public class QuestionJobService : IQuestionJobService
 				throw new Exception($"Claude processing failed: {claudeResult.ErrorMessage}");
 
 			if (claudeResult.Questions == null || !claudeResult.Questions.Any())
-				throw new Exception("Claude returned no questions. Image may be too blurry or unclear.");
+				throw new Exception(
+					"Claude returned no questions. Image may be too blurry or unclear.");
 
 			_logger.Information(
-				"Claude extracted {Count} question(s) - JobId: {JobId}", claudeResult.Questions.Count, job.Id);
+				"Claude extracted {Count} question(s) - JobId: {JobId}",
+				claudeResult.Questions.Count, job.Id);
 
-			// ── STEP 6: Save questions + options + mark completed ─────────
+			// ── STEP 5b: Crop and upload diagram images ──────────────────
+			// Build map: { "circuit_diagram" → "https://cloudinary.com/..." }
+			var imageUrlMap = new Dictionary<string, string>();
+
+			if (job.HasImages && claudeResult.ImageBounds?.Any() == true)
+			{
+				_logger.Information(
+					"Processing {Count} image bounds - JobId: {JobId}",
+					claudeResult.ImageBounds.Count, job.Id);
+
+				imageUrlMap = await ProcessImageBounds(imageBytes,claudeResult.ImageBounds,job.Id,job.SchoolId);
+
+				_logger.Information(
+					"Image processing complete - JobId: {JobId}, " + "Uploaded: {Uploaded}/{Total}",job.Id, imageUrlMap.Count,claudeResult.ImageBounds.Count);
+
+				// Replace placeholders in all questions before saving
+				foreach (var extracted in claudeResult.Questions)
+				{
+					extracted.QuestionHtml = ReplacePlaceholdersInHtml(extracted.QuestionHtml, imageUrlMap);
+
+					extracted.ContentPartsJson = ReplacePlaceholders(extracted.ContentPartsJson, imageUrlMap);
+
+					if (extracted.Options?.Any() == true)
+					{
+						foreach (var opt in extracted.Options)
+						{
+							opt.Html = ReplacePlaceholdersInHtml(opt.Html, imageUrlMap);
+
+							opt.ContentPartsJson = ReplacePlaceholders(opt.ContentPartsJson, imageUrlMap);
+						}
+					}
+				}
+			}
+
+			// ── STEP 6: Save questions + options + images + complete ─────
 			var savedQuestionIds = new List<Guid>();
 			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
@@ -691,6 +728,7 @@ public class QuestionJobService : IQuestionJobService
 					{
 						var questionId = Guid.NewGuid();
 
+						// ── 6a: Save question record ──────────────────────
 						var question = new Questions
 						{
 							Id = questionId,
@@ -701,59 +739,90 @@ public class QuestionJobService : IQuestionJobService
 							SubTopicId = job.SubTopicId,
 							CreatedBy = job.TeacherId,
 							Topic = string.Empty,
-							SubTopic = string.Empty,
 							Title = string.Empty,
 							TextContent = string.Empty,
 							QuestionType = ParseQuestionType(job.QuestionType),
-							QuestionHtml = extracted.QuestionHtml ?? string.Empty,
-							ContentParts = extracted.ContentPartsJson ?? string.Empty,
+							QuestionHtml = extracted.QuestionHtml
+												?? string.Empty,
+							ContentParts = extracted.ContentPartsJson
+												?? string.Empty,
 							HasLatex = extracted.HasLatex,
 							DifficultyLevel = DifficultyLevel.Medium,
 							MarksAllocation = 1,
 							CorrectAnswer = job.QuestionType == "TrueFalse"
-												? extracted.CorrectAnswer ?? string.Empty
+												? extracted.CorrectAnswer
+												  ?? string.Empty
 												: string.Empty,
 							JobId = job.Id,
-							BoardSessionId = null,
 							HasBoardSession = false,
 							HasMedia = extracted.HasImages,
 							HasAudio = false,
 							SnapshotUrl = string.Empty,
 							SnapshotPublicId = null,
-							ScanSessionId = null,
 							IsScanned = false,
-							ExtractedQuestionIndex = null,
-							AIConfidenceScore = null,
 							Status = QuestionStatus.Draft,
 							IsActive = true,
 							IsDeleted = false,
-							ReviewedDate = null,
-							ReviewedBy = null,
-							PublishedDate = null,
-							PublishedBy = null,
-							ClientId = null,
-							OriginDevice = null,
-							LastSyncedAt = null,
-							DeletedDate = null,
-							DeletedBy = null,
 							CreationDate = now,
-							ModifiedDate = now,
-							SubjectName = string.Empty,
-							TopicName = string.Empty,
-							SubTopicName = string.Empty,
-							ClassName = string.Empty
-
+							ModifiedDate = now
 						};
-
 
 						await _questionCommandRepo.Create(saveScope.Transaction, saveScope.Connection, question, DatabaseTarget.QuestionBank);
 
 						_logger.Information(
-							"Question saved - QuestionId: {QuestionId}, JobId: {JobId}",
-							questionId, job.Id);
+							"Question saved - QuestionId: {QuestionId}, " +
+							"JobId: {JobId}, HasLatex: {HasLatex}, " +
+							"HasImages: {HasImages}",
+							questionId, job.Id,
+							extracted.HasLatex, extracted.HasImages);
 
-						// Save options for Objective questions
-						if (job.QuestionType == "Objective" && extracted.Options?.Any() == true)
+						// ── 6b: Save diagram image records ────────────────
+						if (extracted.HasImages && imageUrlMap.Any())
+						{
+							// Extract placeholder keys from original HTML
+							// before replacement happened — so we know which
+							// images belong to this specific question
+							var placeholderKeys =
+								ExtractPlaceholderKeysFromOriginal(
+									extracted.QuestionHtml ?? string.Empty,
+									extracted.ContentPartsJson ?? string.Empty,
+									extracted.Options);
+
+							var displayOrder = 0;
+
+							foreach (var key in placeholderKeys)
+							{
+								if (!imageUrlMap.TryGetValue(
+									key, out var imageUrl))
+									continue;
+
+								var questionImage = new QuestionImage
+								{
+									Id = Guid.NewGuid(),
+									QuestionId = questionId,
+									JobId = job.Id,
+									SchoolId = job.SchoolId,
+									Label = key,
+									CloudinaryUrl = imageUrl,
+									PublicId = $"qimg_{job.Id}_{key}",
+									DisplayOrder = displayOrder++,
+									CreatedAt = now
+								};
+
+								await _questionImageCommandRepo.Create(
+									saveScope.Transaction, saveScope.Connection,
+									questionImage, DatabaseTarget.QuestionBank);
+
+								_logger.Information(
+									"Question image saved - QuestionId: {QuestionId}, " +
+									"Key: {Key}, Url: {Url}",
+									questionId, key, imageUrl);
+							}
+						}
+
+						// ── 6c: Save options for Objective questions ───────
+						if (job.QuestionType == "Objective" &&
+							extracted.Options?.Any() == true)
 						{
 							var optionCount = 0;
 
@@ -763,7 +832,8 @@ public class QuestionJobService : IQuestionJobService
 									string.IsNullOrWhiteSpace(opt.Html))
 								{
 									_logger.Warning(
-										"Skipping empty option - QuestionId: {QuestionId}, Label: {Label}",
+										"Skipping empty option - " +
+										"QuestionId: {QuestionId}, Label: {Label}",
 										questionId, opt.Label);
 									continue;
 								}
@@ -785,29 +855,35 @@ public class QuestionJobService : IQuestionJobService
 									CreationDate = now
 								};
 
-								await _optionCommandRepo.Create(saveScope.Transaction, saveScope.Connection, option, DatabaseTarget.QuestionBank);
+								await _optionCommandRepo.Create(
+									saveScope.Transaction, saveScope.Connection,
+									option, DatabaseTarget.QuestionBank);
 
 								optionCount++;
 							}
 
 							_logger.Information(
-								"Options saved - QuestionId: {QuestionId}, Count: {Count}",
+								"Options saved - QuestionId: {QuestionId}, " +
+								"Count: {Count}",
 								questionId, optionCount);
 						}
 
 						savedQuestionIds.Add(questionId);
 					}
 
-					// Mark job completed inside same transaction
+					// ── 6d: Mark job completed ────────────────────────────
 					var completedDict = new Dictionary<string, object>
 					{
-						{ "Status",         "Completed" },
+						{ "Status",         "Completed"            },
 						{ "ExtractedCount", savedQuestionIds.Count },
-						{ "CompletedAt",    now }
+						{ "CompletedAt",    now                    }
 					};
 
-					await _jobCommandRepo.UpdateTableColumnById(saveScope.Transaction, saveScope.Connection,completedDict,
-						new KeyValuePair<string, object>("Id", job.Id), DatabaseTarget.QuestionBank);
+					await _jobCommandRepo.UpdateTableColumnById(
+						saveScope.Transaction, saveScope.Connection,
+						completedDict,
+						new KeyValuePair<string, object>("Id", job.Id),
+						DatabaseTarget.QuestionBank);
 
 					await saveScope.CommitAsync();
 
@@ -831,12 +907,14 @@ public class QuestionJobService : IQuestionJobService
 						job.TempImagePath, MediaType.Image);
 
 					_logger.Information(
-						"Temp image deleted - PublicId: {PublicId}", job.TempImagePath);
+						"Temp image deleted - PublicId: {PublicId}",
+						job.TempImagePath);
 				}
 				catch (Exception ex)
 				{
 					_logger.Warning(ex,
-						"Temp image deletion failed - PublicId: {PublicId}",
+						"Temp image deletion failed - PublicId: {PublicId}. " +
+						"Cloudinary auto-delete policy will handle cleanup",
 						job.TempImagePath);
 				}
 			});
@@ -852,22 +930,26 @@ public class QuestionJobService : IQuestionJobService
 			var permanentlyFailed = newAttemptCount >= MaxAttempts;
 
 			var failDict = new Dictionary<string, object>
-		{
 			{
-				"Status",
-				permanentlyFailed ? "Failed" : "Pending"
-			},
-			{
-				"FailureReason",
-				permanentlyFailed
-					? $"Failed after {MaxAttempts} attempts. Last error: {ex.Message}"
-					: string.Empty
-			},
-			{ "AttemptCount", newAttemptCount }
-		};
+				{
+					"Status",
+					permanentlyFailed ? "Failed" : "Pending"
+				},
+				{
+					"FailureReason",
+					permanentlyFailed
+						? $"Failed after {MaxAttempts} attempts. " +
+						  $"Last error: {ex.Message}"
+						: string.Empty
+				},
+				{ "AttemptCount", newAttemptCount }
+			};
 
 			// Failure update — no transaction, direct write
-			await _jobCommandRepo.UpdateTableColumnById(failDict,new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
+			await _jobCommandRepo.UpdateTableColumnById(
+				failDict,
+				new KeyValuePair<string, object>("Id", job.Id),
+				DatabaseTarget.QuestionBank);
 
 			_logger.Warning(
 				"Job {Status} - JobId: {JobId}, Attempts: {Attempts}/{Max}",
@@ -875,6 +957,7 @@ public class QuestionJobService : IQuestionJobService
 				job.Id, newAttemptCount, MaxAttempts);
 		}
 	}
+
 
 	// ═══════════════════════════════════════════════════════════
 	// PRIVATE: CALL CLAUDE
@@ -1005,20 +1088,29 @@ QUESTION TYPE: Theory/Essay
 			_ => string.Empty
 		};
 
-		// ── Image instruction — strong and at the top ──────────
 		var imageInstruction = hasImages
-	? @"
+			? @"
 !!MANDATORY IMAGE RULE — READ THIS FIRST!!
 
 This question contains diagrams, graphs or figures — in BOTH the question body AND possibly in the answer options.
 
 QUESTION BODY IMAGES:
-For every diagram or figure in the question text — place a placeholder token exactly where it appears:
-  {{image:snake_case_description}}
-Examples:
-  {{image:velocity_time_graph}}
-  {{image:circuit_diagram}}
-  {{image:rectangular_block_water}}
+For every diagram or figure in the question text:
+1. Place a placeholder token exactly where it appears in the content:
+   {{image:snake_case_description}}
+   Examples:
+     {{image:velocity_time_graph}}
+     {{image:circuit_diagram}}
+     {{image:rectangular_block_water}}
+
+2. Also record its bounding box as a percentage of the FULL image dimensions:
+   x      = left edge distance from left of full image (0-100)
+   y      = top edge distance from top of full image (0-100)
+   width  = width of the diagram as % of full image width (0-100)
+   height = height of the diagram as % of full image height (0-100)
+
+   Example:
+   { ""key"": ""circuit_diagram"", ""x"": 5, ""y"": 35, ""width"": 90, ""height"": 28 }
 
 OPTION IMAGES:
 Some answer options may themselves BE images (a graph, a diagram, a shape).
@@ -1026,26 +1118,39 @@ For each option that is an image:
 - Set the option html to: <div class='th-option'>{{image:option_a_description}}</div>
 - Set plainText to a brief description: 'Graph showing increasing velocity'
 - Set hasImages to true for that option
-- Use a unique description per option
+- Use a unique snake_case description per option
+- Also record its bounding box in the imageBounds array
 
 Examples of image options:
   Option A is a velocity-time graph:
-    html: <div class='th-option'>{{image:option_a_velocity_graph}}</div>
+    html:      <div class='th-option'>{{image:option_a_velocity_graph}}</div>
     plainText: Graph showing constant velocity
     hasImages: true
+    bound:     { ""key"": ""option_a_velocity_graph"", ""x"": 5, ""y"": 60, ""width"": 40, ""height"": 20 }
 
   Option B is a displacement diagram:
-    html: <div class='th-option'>{{image:option_b_displacement_diagram}}</div>
+    html:      <div class='th-option'>{{image:option_b_displacement_diagram}}</div>
     plainText: Diagram showing displacement
     hasImages: true
+    bound:     { ""key"": ""option_b_displacement_diagram"", ""x"": 50, ""y"": 60, ""width"": 40, ""height"": 20 }
+
+BOUNDING BOX RULES:
+- All coordinates are PERCENTAGES of the full uploaded image (0-100)
+- x + width must not exceed 100
+- y + height must not exceed 100
+- Be as precise as possible — these are used to crop the actual image
+- Every {{image:key}} placeholder MUST have a matching entry in imageBounds
+- If two diagrams share the same region — give each a unique key and separate bounds
 
 NEVER skip a diagram in EITHER the question body or the options.
-If unclear — still place the token with your best description.
-hasImages MUST be true in your response when images are present."
-	: @"
+If a diagram is unclear — still place the token and record approximate bounds.
+hasImages MUST be true in your response when any images are present."
+
+			: @"
 No diagrams in this question — text and math only.
 hasImages must be false in your response.
-All option hasImages must be false.";
+All option hasImages must be false.
+imageBounds must be an empty array [].";
 
 		return $@"
 {imageInstruction}
@@ -1061,25 +1166,41 @@ Return JSON in exactly this structure — no preamble, no markdown:
     {{
       ""questionHtml"": ""<div class='th-question'>...</div>"",
       ""contentParts"": [
-        {{""type"": ""text"",  ""value"": ""..."", ""display"": ""inline""}},
-        {{""type"": ""latex"", ""value"": ""..."", ""display"": ""block""}},
-        {{""type"": ""image"", ""value"": ""{{{{image:description}}}}"", ""display"": ""block""}}
+        {{""type"": ""text"",  ""value"": ""..."",                        ""display"": ""inline""}},
+        {{""type"": ""latex"", ""value"": ""..."",                        ""display"": ""block""}},
+        {{""type"": ""image"", ""value"": ""{{{{image:description}}}}"",  ""display"": ""block""}}
       ],
-      ""hasLatex"": false,
-      ""hasImages"": false,
+      ""hasLatex"":     false,
+      ""hasImages"":    false,
       ""correctAnswer"": null,
       ""options"": [
         {{
-          ""label"": ""A"",
-          ""html"": ""<div class='th-option'>...</div>"",
+          ""label"":      ""A"",
+          ""html"":       ""<div class='th-option'>...</div>"",
           ""contentParts"": [],
-          ""plainText"": ""..."",
-          ""isCorrect"": false,
-          ""hasLatex"": false,
-          ""hasImages"": false,
+          ""plainText"":  ""..."",
+          ""isCorrect"":  false,
+          ""hasLatex"":   false,
+          ""hasImages"":  false,
           ""orderIndex"": 0
         }}
       ]
+    }}
+  ],
+  ""imageBounds"": [
+    {{
+      ""key"":    ""circuit_diagram"",
+      ""x"":      5,
+      ""y"":      35,
+      ""width"":  90,
+      ""height"": 28
+    }},
+    {{
+      ""key"":    ""option_a_velocity_graph"",
+      ""x"":      5,
+      ""y"":      60,
+      ""width"":  40,
+      ""height"": 20
     }}
   ],
   ""totalExtracted"": 1
@@ -1087,13 +1208,19 @@ Return JSON in exactly this structure — no preamble, no markdown:
 
 STRICT RULES:
 - Return an array of questions — even if only one question found
-- questionHtml uses ONLY these classes: th-question th-block th-center th-inline th-row th-col th-img th-math-block th-math-inline th-option
+- questionHtml uses ONLY these classes:
+    th-question th-block th-center th-inline
+    th-row th-col th-img th-math-block th-math-inline th-option
 - Inline math wrapped in \( \) — block math wrapped in \[ \]
 - No inline styles. No other CSS classes. No markdown.
-- options array is empty [] for Theory and TrueFalse questions.
-- hasLatex true if ANY part of that question contains math.
-- hasImages true if ANY part contains an image placeholder token.
-- correctAnswer null unless answer is explicitly marked in the image.";
+- options array is empty [] for Theory and TrueFalse questions
+- hasLatex true if ANY part of that question contains math
+- hasImages true if ANY part contains an image placeholder token
+- correctAnswer null unless answer is explicitly marked in the image
+- Every {{image:key}} in contentParts or options MUST have a matching
+  entry in the top-level imageBounds array
+- imageBounds is always present — empty array [] if no images
+- All bounding box values are integers 0-100 representing percentages";
 	}
 	// ═══════════════════════════════════════════════════════════
 	// PRIVATE: PARSE CLAUDE RESPONSE
@@ -1108,6 +1235,7 @@ STRICT RULES:
 
 			var result = new ClaudeProcessingResult { Success = true };
 
+			// ── Validate questions array exists ──────────────────────────
 			if (!root.TryGetProperty("questions", out var questionsEl)
 				|| questionsEl.ValueKind != JsonValueKind.Array)
 			{
@@ -1118,18 +1246,20 @@ STRICT RULES:
 				};
 			}
 
+			// ── Parse each question ──────────────────────────────────────
 			foreach (var qEl in questionsEl.EnumerateArray())
 			{
 				var extracted = new ExtractedQuestion
 				{
 					QuestionHtml = GetString(qEl, "questionHtml"),
-					ContentPartsJson = GetString(qEl, "contentParts"),
+					ContentPartsJson = GetRawString(qEl, "contentParts"),
 					HasLatex = GetBool(qEl, "hasLatex"),
 					HasImages = GetBool(qEl, "hasImages"),
 					CorrectAnswer = GetString(qEl, "correctAnswer"),
 					Options = new List<ParsedOption>()
 				};
 
+				// ── Parse options (Objective only) ───────────────────────
 				if (questionType == "Objective"
 					&& qEl.TryGetProperty("options", out var optsEl)
 					&& optsEl.ValueKind == JsonValueKind.Array)
@@ -1141,7 +1271,7 @@ STRICT RULES:
 						{
 							Label = GetString(opt, "label"),
 							Html = GetString(opt, "html"),
-							ContentPartsJson = GetString(opt, "contentParts"),
+							ContentPartsJson = GetRawString(opt, "contentParts"),
 							PlainText = GetString(opt, "plainText"),
 							IsCorrect = GetBool(opt, "isCorrect"),
 							HasLatex = GetBool(opt, "hasLatex"),
@@ -1154,19 +1284,396 @@ STRICT RULES:
 				result.Questions.Add(extracted);
 			}
 
-			_logger.Information("Claude extracted {Count} questions", result.Questions.Count);
+			// ── Parse imageBounds array ──────────────────────────────────
+			if (root.TryGetProperty("imageBounds", out var boundsEl)
+				&& boundsEl.ValueKind == JsonValueKind.Array)
+			{
+				foreach (var b in boundsEl.EnumerateArray())
+				{
+					var key = GetString(b, "key");
+
+					if (string.IsNullOrWhiteSpace(key))
+					{
+						_logger.Warning("Skipping imageBound with empty key");
+						continue;
+					}
+
+					var bound = new ImageBoundDto
+					{
+						Key = key,
+						X = GetInt(b, "x"),
+						Y = GetInt(b, "y"),
+						Width = GetInt(b, "width"),
+						Height = GetInt(b, "height")
+					};
+
+					// Validate bounds are within 0-100 range
+					if (bound.X < 0 || bound.X > 100 ||
+						bound.Y < 0 || bound.Y > 100 ||
+						bound.Width <= 0 || bound.Width > 100 ||
+						bound.Height <= 0 || bound.Height > 100)
+					{
+						_logger.Warning(
+							"Invalid imageBound skipped - Key: {Key}, " +
+							"X: {X}, Y: {Y}, W: {W}, H: {H}",
+							bound.Key, bound.X, bound.Y,
+							bound.Width, bound.Height);
+						continue;
+					}
+
+					// Clamp x + width and y + height to 100
+					if (bound.X + bound.Width > 100)
+					{
+						bound.Width = 100 - bound.X;
+						_logger.Warning(
+							"ImageBound width clamped - Key: {Key}", bound.Key);
+					}
+
+					if (bound.Y + bound.Height > 100)
+					{
+						bound.Height = 100 - bound.Y;
+						_logger.Warning(
+							"ImageBound height clamped - Key: {Key}", bound.Key);
+					}
+
+					result.ImageBounds.Add(bound);
+				}
+			}
+
+			// ── Cross-check: every {{image:key}} has a bound ─────────────
+			if (result.Questions.Any(q => q.HasImages))
+			{
+				var boundKeys = result.ImageBounds.Select(b => b.Key).ToHashSet();
+
+				foreach (var question in result.Questions.Where(q => q.HasImages))
+				{
+					var placeholders = ExtractPlaceholderKeys(
+						question.QuestionHtml ?? string.Empty);
+
+					// Also check option placeholders
+					if (question.Options?.Any() == true)
+					{
+						foreach (var opt in question.Options.Where(o => o.HasImages))
+						{
+							placeholders.AddRange(
+								ExtractPlaceholderKeys(opt.Html ?? string.Empty));
+						}
+					}
+
+					foreach (var key in placeholders)
+					{
+						if (!boundKeys.Contains(key))
+						{
+							_logger.Warning(
+								"Placeholder {{{{image:{Key}}}}} has no matching " +
+								"imageBound — image cannot be cropped", key);
+						}
+					}
+				}
+			}
+
+			_logger.Information(
+				"Claude response parsed - Questions: {QCount}, ImageBounds: {BCount}",
+				result.Questions.Count, result.ImageBounds.Count);
 
 			return result;
 		}
+		catch (JsonException jsonEx)
+		{
+			_logger.Error(jsonEx, "Failed to parse Claude JSON response");
+			return new ClaudeProcessingResult
+			{
+				Success = false,
+				ErrorMessage = $"Invalid JSON from Claude: {jsonEx.Message}"
+			};
+		}
 		catch (Exception ex)
 		{
-			_logger.Error(ex, "Failed to parse Claude response");
+			_logger.Error(ex, "Unexpected error parsing Claude response");
 			return new ClaudeProcessingResult
 			{
 				Success = false,
 				ErrorMessage = $"Failed to parse Claude response: {ex.Message}"
 			};
 		}
+	}
+
+	private async Task<Dictionary<string, string>> ProcessImageBounds(byte[] originalImageBytes,List<ImageBoundDto> imageBounds,Guid jobId,Guid schoolId)
+	{
+		var imageUrlMap = new Dictionary<string, string>();
+
+		if (imageBounds == null || !imageBounds.Any())
+			return imageUrlMap;
+
+		foreach (var bound in imageBounds)
+		{
+			try
+			{
+				_logger.Information(
+					"Cropping image - Key: {Key}, " +
+					"X: {X}%, Y: {Y}%, W: {W}%, H: {H}%",
+					bound.Key, bound.X, bound.Y,
+					bound.Width, bound.Height);
+
+				// ── Crop the region from the original image ───────────
+				var croppedBytes = CropImage(
+					originalImageBytes,
+					bound.X, bound.Y,
+					bound.Width, bound.Height);
+
+				if (croppedBytes == null || croppedBytes.Length == 0)
+				{
+					_logger.Warning(
+						"Crop returned empty bytes - Key: {Key}",
+						bound.Key);
+					continue;
+				}
+
+				_logger.Information(
+					"Image cropped - Key: {Key}, Size: {Size} bytes",
+					bound.Key, croppedBytes.Length);
+
+				// ── Upload cropped image to Cloudinary ────────────────
+				// Use a deterministic key so duplicate jobs
+				// do not create duplicate Cloudinary assets
+				var imageKey = $"qimg_{jobId}_{bound.Key}";
+
+				using var stream = new MemoryStream(croppedBytes);
+
+				var uploadResult = await _cloudinaryService.UploadMediaAsync(
+					stream,
+					imageKey,
+					schoolId,
+					MediaType.Image,
+					isTemporary: false);  // permanent — question image
+
+				if (!uploadResult.Success)
+				{
+					_logger.Warning(
+						"Diagram upload failed - Key: {Key}, Error: {Error}",
+						bound.Key, uploadResult.ErrorMessage);
+					continue;
+				}
+
+				imageUrlMap[bound.Key] = uploadResult.SecureUrl;
+
+				_logger.Information(
+					"Diagram uploaded - Key: {Key}, Url: {Url}",
+					bound.Key, uploadResult.SecureUrl);
+			}
+			catch (Exception ex)
+			{
+				// Log and continue — one failed crop should not
+				// block the rest of the question from being saved
+				_logger.Error(ex,
+					"Error processing image bound - Key: {Key}", bound.Key);
+			}
+		}
+
+		_logger.Information(
+			"ProcessImageBounds complete - " +
+			"Requested: {Total}, Uploaded: {Uploaded}",
+			imageBounds.Count, imageUrlMap.Count);
+
+		return imageUrlMap;
+	}
+
+	//private byte[] CropImage(
+	//	byte[] sourceBytes,
+	//	int xPct, int yPct,
+	//	int widthPct, int heightPct)
+	//{
+	//	using var image = SixLabors.ImageSharp.Image.Load(sourceBytes);
+
+	//	var x = (int)(image.Width * xPct / 100.0);
+	//	var y = (int)(image.Height * yPct / 100.0);
+	//	var width = (int)(image.Width * widthPct / 100.0);
+	//	var height = (int)(image.Height * heightPct / 100.0);
+
+	//	// Clamp to image bounds — prevents out of range exceptions
+	//	x = Math.Max(0, Math.Min(x, image.Width - 1));
+	//	y = Math.Max(0, Math.Min(y, image.Height - 1));
+	//	width = Math.Max(1, Math.Min(width, image.Width - x));
+	//	height = Math.Max(1, Math.Min(height, image.Height - y));
+
+	//	_logger.Information(
+	//		"Crop pixels - X: {X}, Y: {Y}, W: {W}, H: {H} " +
+	//		"(Image: {IW}x{IH})",
+	//		x, y, width, height,
+	//		image.Width, image.Height);
+
+	//	image.Mutate(ctx => ctx.Crop(
+	//		new SixLabors.ImageSharp.Rectangle(x, y, width, height)));
+
+	//	using var ms = new MemoryStream();
+	//	image.SaveAsJpeg(ms, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder
+	//	{
+	//		Quality = 90
+	//	});
+
+	//	return ms.ToArray();
+	//}
+
+
+private byte[] CropImage(byte[] sourceBytes,int xPct, int yPct,int widthPct, int heightPct)
+{
+		using var bitmap = SKBitmap.Decode(sourceBytes);
+
+		var x = (int)(bitmap.Width * xPct / 100.0);
+		var y = (int)(bitmap.Height * yPct / 100.0);
+		var width = (int)(bitmap.Width * widthPct / 100.0);
+		var height = (int)(bitmap.Height * heightPct / 100.0);
+
+		// Clamp to bitmap bounds
+		x = Math.Max(0, Math.Min(x, bitmap.Width - 1));
+		y = Math.Max(0, Math.Min(y, bitmap.Height - 1));
+		width = Math.Max(1, Math.Min(width, bitmap.Width - x));
+		height = Math.Max(1, Math.Min(height, bitmap.Height - y));
+
+		_logger.Information(
+			"Crop pixels - X: {X}, Y: {Y}, W: {W}, H: {H} " +
+			"(Image: {IW}x{IH})",
+			x, y, width, height,
+			bitmap.Width, bitmap.Height);
+
+		// Extract the cropped region
+		var cropRect = new SKRectI(x, y, x + width, y + height);
+		using var cropped = new SKBitmap();
+		bitmap.ExtractSubset(cropped, cropRect);
+
+		// Encode to JPEG
+		using var image = SKImage.FromBitmap(cropped);
+		using var data = image.Encode(SKEncodedImageFormat.Jpeg, 90);
+		using var ms = new MemoryStream();
+		data.SaveTo(ms);
+
+		return ms.ToArray();
+}
+// ── Extract all {{image:key}} keys from an HTML string ───────────────────
+private List<string> ExtractPlaceholderKeys(string html)
+{
+		var keys = new List<string>();
+		var start = 0;
+
+		while (true)
+		{
+			var open = html.IndexOf("{{image:", start, StringComparison.Ordinal);
+			if (open < 0) break;
+
+			var close = html.IndexOf("}}", open + 8, StringComparison.Ordinal);
+			if (close < 0) break;
+
+			var key = html.Substring(open + 8, close - open - 8).Trim();
+			if (!string.IsNullOrWhiteSpace(key))
+				keys.Add(key);
+
+			start = close + 2;
+		}
+
+		return keys;
+	}
+
+	private string ReplacePlaceholders(string? content,Dictionary<string, string> imageUrlMap)
+	{
+		if (string.IsNullOrWhiteSpace(content) || !imageUrlMap.Any())
+			return content ?? string.Empty;
+
+		foreach (var kvp in imageUrlMap)
+		{
+			var placeholder = $"{{{{image:{kvp.Key}}}}}";
+			content = content.Replace(placeholder, kvp.Value);
+		}
+
+		return content;
+	}
+
+	private string ReplacePlaceholdersInHtml(string? html, Dictionary<string, string> imageUrlMap)
+	{
+		if (string.IsNullOrWhiteSpace(html) || !imageUrlMap.Any())
+			return html ?? string.Empty;
+
+		foreach (var kvp in imageUrlMap)
+		{
+			var placeholder = $"{{{{image:{kvp.Key}}}}}";
+			var imgTag = $"<img class='th-img' src='{kvp.Value}' alt='{kvp.Key}' />";
+			html = html.Replace(placeholder, imgTag);
+		}
+
+		return html;
+	}
+
+
+
+	private List<string> ExtractPlaceholderKeysFromOriginal(string questionHtml,string contentPartsJson,List<ParsedOption> options)
+	{
+		var keys = new List<string>();
+
+		keys.AddRange(ExtractPlaceholderKeys(questionHtml));
+		keys.AddRange(ExtractPlaceholderKeys(contentPartsJson));
+
+		if (options?.Any() == true)
+		{
+			foreach (var opt in options)
+			{
+				keys.AddRange(ExtractPlaceholderKeys(opt.Html ?? string.Empty));
+				keys.AddRange(ExtractPlaceholderKeys(opt.ContentPartsJson ?? string.Empty));
+			}
+		}
+
+		return keys.Distinct().ToList();
+	}
+
+	// ── Helper: get string value from JsonElement ─────────────────────────────
+	//private string GetString(JsonElement el, string key)
+	//{
+	//	if (el.TryGetProperty(key, out var prop)
+	//		&& prop.ValueKind != JsonValueKind.Null)
+	//		return prop.GetString() ?? string.Empty;
+
+	//	return string.Empty;
+	//}
+
+	// ── Helper: get raw JSON string (for arrays like contentParts) ────────────
+	private string GetRawString(JsonElement el, string key)
+	{
+		if (el.TryGetProperty(key, out var prop))
+		{
+			return prop.ValueKind switch
+			{
+				JsonValueKind.String => prop.GetString() ?? string.Empty,
+				JsonValueKind.Array => prop.GetRawText(),
+				JsonValueKind.Null => string.Empty,
+				_ => prop.GetRawText()
+			};
+		}
+		return string.Empty;
+	}
+
+	// ── Helper: get bool value from JsonElement ───────────────────────────────
+	//private bool GetBool(JsonElement el, string key)
+	//{
+	//	if (el.TryGetProperty(key, out var prop)
+	//		&& prop.ValueKind == JsonValueKind.True
+	//		|| (el.TryGetProperty(key, out prop)
+	//			&& prop.ValueKind == JsonValueKind.False))
+	//		return prop.GetBoolean();
+
+	//	return false;
+	//}
+
+	// ── Helper: get int value from JsonElement ────────────────────────────────
+	private int GetInt(JsonElement el, string key)
+	{
+		if (el.TryGetProperty(key, out var prop))
+		{
+			return prop.ValueKind switch
+			{
+				JsonValueKind.Number => prop.TryGetInt32(out var i) ? i : 0,
+				JsonValueKind.String => int.TryParse(prop.GetString(), out var s) ? s : 0,
+				_ => 0
+			};
+		}
+		return 0;
 	}
 	// ═══════════════════════════════════════════════════════════
 	// PRIVATE: DOWNLOAD IMAGE FROM CLOUDINARY
@@ -1273,6 +1780,8 @@ internal class ClaudeProcessingResult
 
 	// Now a list — one entry per extracted question
 	public List<ExtractedQuestion> Questions { get; set; } = new();
+	public List<ImageBoundDto> ImageBounds { get; set; } = new();
+
 }
 
 internal class ExtractedQuestion

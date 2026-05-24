@@ -231,3 +231,26 @@ ALTER TABLE Questions ADD TopicName    NVARCHAR(200) NULL;
 ALTER TABLE Questions ADD SubTopicName NVARCHAR(200) NULL;
 ALTER TABLE Questions ADD ClassName    NVARCHAR(200) NULL;
 
+----------------------------------------------------------------
+
+CREATE TABLE QuestionImages (
+    Id            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+    QuestionId    UNIQUEIDENTIFIER NOT NULL,
+    JobId         UNIQUEIDENTIFIER NOT NULL,
+    SchoolId      UNIQUEIDENTIFIER NOT NULL,
+    Label         NVARCHAR(100)    NOT NULL,
+    CloudinaryUrl NVARCHAR(500)    NOT NULL,
+    PublicId      NVARCHAR(200)    NOT NULL,
+    DisplayOrder  INT              NOT NULL DEFAULT 0,
+    CreatedAt     NVARCHAR(30)     NOT NULL,
+
+    CONSTRAINT FK_QuestionImages_Question
+        FOREIGN KEY (QuestionId) REFERENCES Questions(Id)
+);
+
+CREATE INDEX IX_QuestionImages_QuestionId
+    ON QuestionImages (QuestionId);
+
+CREATE INDEX IX_QuestionImages_JobId
+    ON QuestionImages (JobId);
+
