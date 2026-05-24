@@ -12,6 +12,8 @@ public class JobQuestionRow
 	public int QuestionType { get; set; }
 	public string QuestionHtml { get; set; }
 	public string ContentParts { get; set; }
+	public int? QuestionNumber { get; set; } 
+	public bool IsPartial { get; set; }
 	public bool HasLatex { get; set; }
 	public bool HasMedia { get; set; }
 	public string? CorrectAnswer { get; set; }
@@ -27,6 +29,8 @@ public class JobQuestionDto
 {
 	public Guid Id { get; set; }
 	public int QuestionType { get; set; }
+	public int? QuestionNumber { get; set; }
+	public bool IsPartial { get; set; }
 	public string QuestionTypeName { get; set; }
 	public string QuestionHtml { get; set; }
 	public string ContentParts { get; set; }
@@ -41,8 +45,17 @@ public class JobQuestionDto
 	public string? TopicName { get; set; }
 	public string CreationDate { get; set; }
 	public List<JobQuestionOptionDto> Options { get; set; } = new();
+	public List<JobQuestionImageDto> Images { get; set; } = new();
 }
 
+public class JobQuestionImageDto
+{
+	public Guid Id { get; set; }
+	public string Label { get; set; }
+	public string CloudinaryUrl { get; set; }
+	public string PublicId { get; set; }
+	public int DisplayOrder { get; set; }
+}
 public class JobQuestionOptionDto
 {
 	public Guid Id { get; set; }

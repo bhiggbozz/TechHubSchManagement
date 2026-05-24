@@ -48,9 +48,7 @@ public class QuestionJobController : ControllerBase
 	/// </summary>
 	[HttpPost("submit")]
 	[Consumes("multipart/form-data")]
-	public async Task<IActionResult> SubmitJob(
-		[FromForm] IFormFile image,
-		[FromForm] SubmitQuestionJobViewModel model)
+	public async Task<IActionResult> SubmitJob([FromForm] IFormFile image,[FromForm] SubmitQuestionJobViewModel model)
 	{
 		var userClaims = User.GetAuthenticatedUserClaims();
 		var result = await _jobService.SubmitJob(image, model, userClaims);

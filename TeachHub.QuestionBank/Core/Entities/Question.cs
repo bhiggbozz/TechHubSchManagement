@@ -92,4 +92,8 @@ public class Questions
 	public string? SubTopicName { get; set; } = string.Empty;
 	public string? ClassName { get; set; } = string.Empty;
 
+
+	public int? QuestionNumber { get; set; }
+	public bool IsPartial { get; set; }
+
 }
