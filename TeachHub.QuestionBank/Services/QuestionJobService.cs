@@ -171,7 +171,7 @@ public class QuestionJobService : IQuestionJobService
 					SubjectId = model.SubjectId,     
 					SubTopicId = model.SubTopicId,
 					TeacherId = userId,
-					QuestionId = subTopic.SchoolId,
+					QuestionId = subTopic.SchoolId,   /// lokt this later ... it should be null , guess nulable ain't working atm
 					// Null until background worker completes
 					QuestionType = model.QuestionType,
 					HasImages = model.HasImages,
@@ -686,7 +686,7 @@ public class QuestionJobService : IQuestionJobService
 			// Build map: { "circuit_diagram" → "https://cloudinary.com/..." }
 			var imageUrlMap = new Dictionary<string, string>();
 
-			if (job.HasImages && claudeResult.ImageBounds?.Any() == true)
+			if (claudeResult.ImageBounds?.Any() == true)
 			{
 				_logger.Information(
 					"Processing {Count} image bounds - JobId: {JobId}",
@@ -764,7 +764,9 @@ public class QuestionJobService : IQuestionJobService
 							IsActive = true,
 							IsDeleted = false,
 							CreationDate = now,
-							ModifiedDate = now
+							ModifiedDate = now,
+							QuestionNumber = extracted.QuestionNumber, 
+							IsPartial = extracted.IsPartial
 						};
 
 						await _questionCommandRepo.Create(saveScope.Transaction, saveScope.Connection, question, DatabaseTarget.QuestionBank);
@@ -1071,8 +1073,9 @@ public class QuestionJobService : IQuestionJobService
 			"Objective" => @"
 QUESTION TYPE: Multiple Choice
 - Extract the question body and ALL answer options (A B C D E etc)
-- Identify correct answer only if clearly marked in image
-- If correct answer not marked — set isCorrect false for all options",
+- Options may appear on the next line or in the right column
+- Identify correct answer only if clearly marked
+- If not marked — set isCorrect false for all options",
 
 			"TrueFalse" => @"
 QUESTION TYPE: True/False
@@ -1088,101 +1091,86 @@ QUESTION TYPE: Theory/Essay
 			_ => string.Empty
 		};
 
-		var imageInstruction = hasImages
-			? @"
-!!MANDATORY IMAGE RULE — READ THIS FIRST!!
+		return $@"
+!!IMAGE DETECTION — ALWAYS ACTIVE!!
 
-This question contains diagrams, graphs or figures — in BOTH the question body AND possibly in the answer options.
+Always scan the ENTIRE image for diagrams, graphs, figures or tables.
+Do not rely on any prior indication of whether images are present.
 
-QUESTION BODY IMAGES:
-For every diagram or figure in the question text:
-1. Place a placeholder token exactly where it appears in the content:
-   {{image:snake_case_description}}
-   Examples:
-     {{image:velocity_time_graph}}
-     {{image:circuit_diagram}}
-     {{image:rectangular_block_water}}
+If you find ANY visual content:
+1. Set hasImages = true on that question
+2. Place placeholder at exact position: {{{{image:snake_case_description}}}}
+3. Record bounding box as % of full image:
+   {{ ""key"": ""description"", ""x"": 5, ""y"": 35, ""width"": 40, ""height"": 20 }}
 
-2. Also record its bounding box as a percentage of the FULL image dimensions:
-   x      = left edge distance from left of full image (0-100)
-   y      = top edge distance from top of full image (0-100)
-   width  = width of the diagram as % of full image width (0-100)
-   height = height of the diagram as % of full image height (0-100)
-
-   Example:
-   { ""key"": ""circuit_diagram"", ""x"": 5, ""y"": 35, ""width"": 90, ""height"": 28 }
-
-OPTION IMAGES:
-Some answer options may themselves BE images (a graph, a diagram, a shape).
-For each option that is an image:
-- Set the option html to: <div class='th-option'>{{image:option_a_description}}</div>
-- Set plainText to a brief description: 'Graph showing increasing velocity'
-- Set hasImages to true for that option
-- Use a unique snake_case description per option
-- Also record its bounding box in the imageBounds array
-
-Examples of image options:
-  Option A is a velocity-time graph:
-    html:      <div class='th-option'>{{image:option_a_velocity_graph}}</div>
-    plainText: Graph showing constant velocity
-    hasImages: true
-    bound:     { ""key"": ""option_a_velocity_graph"", ""x"": 5, ""y"": 60, ""width"": 40, ""height"": 20 }
-
-  Option B is a displacement diagram:
-    html:      <div class='th-option'>{{image:option_b_displacement_diagram}}</div>
-    plainText: Diagram showing displacement
-    hasImages: true
-    bound:     { ""key"": ""option_b_displacement_diagram"", ""x"": 50, ""y"": 60, ""width"": 40, ""height"": 20 }
+For option images:
+- html: <div class='th-option'>{{{{image:option_a_description}}}}</div>
+- plainText: brief text description
+- hasImages: true
+- Record bounding box in imageBounds
 
 BOUNDING BOX RULES:
-- All coordinates are PERCENTAGES of the full uploaded image (0-100)
+- All values are PERCENTAGES of the full image (0-100)
 - x + width must not exceed 100
 - y + height must not exceed 100
-- Be as precise as possible — these are used to crop the actual image
-- Every {{image:key}} placeholder MUST have a matching entry in imageBounds
-- If two diagrams share the same region — give each a unique key and separate bounds
+- Every {{{{image:key}}}} MUST have a matching imageBounds entry
+- imageBounds always present — empty [] if truly no images
 
-NEVER skip a diagram in EITHER the question body or the options.
-If a diagram is unclear — still place the token and record approximate bounds.
-hasImages MUST be true in your response when any images are present."
+!!MATH DETECTION — ALWAYS ACTIVE!!
 
-			: @"
-No diagrams in this question — text and math only.
-hasImages must be false in your response.
-All option hasImages must be false.
-imageBounds must be an empty array [].";
+Scan every question for mathematical content.
+Wrap ALL math in LaTeX delimiters — never leave as plain text.
 
-		return $@"
-{imageInstruction}
+Always wrap in LaTeX:
+  10^14           → \(10^{{14}}\)
+  ms^-1           → \(\text{{ms}}^{{-1}}\)
+  4/3 as ratio    → \(\frac{{4}}{{3}}\)
+  5.0 x 10^14     → \(5.0 \times 10^{{14}}\)
+  Ω               → \(\Omega\)
+  E = V + IR      → \(E = V + IR\)
+  √2              → \(\sqrt{{2}}\)
+  cm²             → \(\text{{cm}}^2\)
+  H₂O             → \(\text{{H}}_2\text{{O}}\)
+  θ, π, μ, Δ      → \(\theta\), \(\pi\), \(\mu\), \(\Delta\)
+
+hasLatex MUST be true if ANY math exists — even one superscript.
 
 {typeInstruction}
 
-Extract ALL exam questions visible in this image.
-Do NOT add titles, headings or question numbers.
+COLUMN LAYOUT RULES:
+- Page may have TWO COLUMNS — process each top to bottom independently
+- Never mix left and right column content
+- Question numbers mark boundaries (35. 36. 37. etc)
+- Options always belong to nearest question above them
+- If question is cut off — prefix questionHtml with [PARTIAL]
 
-Return JSON in exactly this structure — no preamble, no markdown:
+Extract ALL questions visible in this image.
+
+Return JSON — no preamble, no markdown:
 {{
   ""questions"": [
     {{
-      ""questionHtml"": ""<div class='th-question'>...</div>"",
+      ""questionNumber"":  35,
+      ""questionHtml"":    ""<div class='th-question'>...</div>"",
       ""contentParts"": [
-        {{""type"": ""text"",  ""value"": ""..."",                        ""display"": ""inline""}},
-        {{""type"": ""latex"", ""value"": ""..."",                        ""display"": ""block""}},
-        {{""type"": ""image"", ""value"": ""{{{{image:description}}}}"",  ""display"": ""block""}}
+        {{""type"": ""text"",  ""value"": ""..."",                       ""display"": ""inline""}},
+        {{""type"": ""latex"", ""value"": ""5.0 \\times 10^{{14}}"",     ""display"": ""inline""}},
+        {{""type"": ""image"", ""value"": ""{{{{image:description}}}}"", ""display"": ""block""}}
       ],
-      ""hasLatex"":     false,
-      ""hasImages"":    false,
+      ""hasLatex"":      false,
+      ""hasImages"":     false,
+      ""isPartial"":     false,
       ""correctAnswer"": null,
       ""options"": [
         {{
-          ""label"":      ""A"",
-          ""html"":       ""<div class='th-option'>...</div>"",
+          ""label"":        ""A"",
+          ""html"":         ""<div class='th-option'>...</div>"",
           ""contentParts"": [],
-          ""plainText"":  ""..."",
-          ""isCorrect"":  false,
-          ""hasLatex"":   false,
-          ""hasImages"":  false,
-          ""orderIndex"": 0
+          ""plainText"":    ""..."",
+          ""isCorrect"":    false,
+          ""hasLatex"":     false,
+          ""hasImages"":    false,
+          ""orderIndex"":   0
         }}
       ]
     }}
@@ -1190,16 +1178,9 @@ Return JSON in exactly this structure — no preamble, no markdown:
   ""imageBounds"": [
     {{
       ""key"":    ""circuit_diagram"",
-      ""x"":      5,
-      ""y"":      35,
-      ""width"":  90,
-      ""height"": 28
-    }},
-    {{
-      ""key"":    ""option_a_velocity_graph"",
-      ""x"":      5,
-      ""y"":      60,
-      ""width"":  40,
+      ""x"":      62,
+      ""y"":      42,
+      ""width"":  35,
       ""height"": 20
     }}
   ],
@@ -1207,26 +1188,23 @@ Return JSON in exactly this structure — no preamble, no markdown:
 }}
 
 STRICT RULES:
-- Return an array of questions — even if only one question found
-- questionHtml uses ONLY these classes:
-    th-question th-block th-center th-inline
-    th-row th-col th-img th-math-block th-math-inline th-option
-- Inline math wrapped in \( \) — block math wrapped in \[ \]
+- Return array even if only one question found
+- questionHtml uses ONLY: th-question th-block th-center th-inline
+  th-row th-col th-img th-math-block th-math-inline th-option
 - No inline styles. No other CSS classes. No markdown.
-- options array is empty [] for Theory and TrueFalse questions
-- hasLatex true if ANY part of that question contains math
-- hasImages true if ANY part contains an image placeholder token
-- correctAnswer null unless answer is explicitly marked in the image
-- Every {{image:key}} in contentParts or options MUST have a matching
-  entry in the top-level imageBounds array
-- imageBounds is always present — empty array [] if no images
-- All bounding box values are integers 0-100 representing percentages";
+- options [] for Theory and TrueFalse
+- hasLatex true if ANY math present anywhere in question
+- hasImages true if ANY image placeholder present
+- isPartial true if question text is cut off
+- Every {{{{image:key}}}} must have matching imageBounds entry
+- imageBounds always returned — empty [] if no images";
 	}
 	// ═══════════════════════════════════════════════════════════
 	// PRIVATE: PARSE CLAUDE RESPONSE
 	// ═══════════════════════════════════════════════════════════
 
-	private ClaudeProcessingResult ParseClaudeResponse(string rawJson, string questionType)
+	private ClaudeProcessingResult ParseClaudeResponse(
+	string rawJson, string questionType)
 	{
 		try
 		{
@@ -1251,6 +1229,11 @@ STRICT RULES:
 			{
 				var extracted = new ExtractedQuestion
 				{
+					QuestionNumber = qEl.TryGetProperty("questionNumber", out var qn)
+										&& qn.ValueKind == JsonValueKind.Number
+										? qn.GetInt32()
+										: null,
+					IsPartial = GetBool(qEl, "isPartial"),
 					QuestionHtml = GetString(qEl, "questionHtml"),
 					ContentPartsJson = GetRawString(qEl, "contentParts"),
 					HasLatex = GetBool(qEl, "hasLatex"),
@@ -1259,7 +1242,7 @@ STRICT RULES:
 					Options = new List<ParsedOption>()
 				};
 
-				// ── Parse options (Objective only) ───────────────────────
+				// ── Parse options ────────────────────────────────────────
 				if (questionType == "Objective"
 					&& qEl.TryGetProperty("options", out var optsEl)
 					&& optsEl.ValueKind == JsonValueKind.Array)
@@ -1285,8 +1268,16 @@ STRICT RULES:
 			}
 
 			// ── Parse imageBounds array ──────────────────────────────────
-			if (root.TryGetProperty("imageBounds", out var boundsEl)
-				&& boundsEl.ValueKind == JsonValueKind.Array)
+			if (!root.TryGetProperty("imageBounds", out var boundsEl)
+				|| boundsEl.ValueKind != JsonValueKind.Array)
+			{
+				// Not an error — question may genuinely have no images
+				_logger.Warning(
+					"Claude response missing imageBounds array — " +
+					"no images will be cropped. " +
+					"Questions with HasImages=true may have broken placeholders.");
+			}
+			else
 			{
 				foreach (var b in boundsEl.EnumerateArray())
 				{
@@ -1307,7 +1298,7 @@ STRICT RULES:
 						Height = GetInt(b, "height")
 					};
 
-					// Validate bounds are within 0-100 range
+					// ── Validate bounds are within 0-100 range ───────────
 					if (bound.X < 0 || bound.X > 100 ||
 						bound.Y < 0 || bound.Y > 100 ||
 						bound.Width <= 0 || bound.Width > 100 ||
@@ -1321,7 +1312,7 @@ STRICT RULES:
 						continue;
 					}
 
-					// Clamp x + width and y + height to 100
+					// ── Clamp x+width and y+height to 100 ───────────────
 					if (bound.X + bound.Width > 100)
 					{
 						bound.Width = 100 - bound.X;
@@ -1340,17 +1331,18 @@ STRICT RULES:
 				}
 			}
 
-			// ── Cross-check: every {{image:key}} has a bound ─────────────
+			// ── Cross-check every {{image:key}} has a matching bound ─────
 			if (result.Questions.Any(q => q.HasImages))
 			{
-				var boundKeys = result.ImageBounds.Select(b => b.Key).ToHashSet();
+				var boundKeys = result.ImageBounds
+					.Select(b => b.Key)
+					.ToHashSet();
 
 				foreach (var question in result.Questions.Where(q => q.HasImages))
 				{
 					var placeholders = ExtractPlaceholderKeys(
 						question.QuestionHtml ?? string.Empty);
 
-					// Also check option placeholders
 					if (question.Options?.Any() == true)
 					{
 						foreach (var opt in question.Options.Where(o => o.HasImages))
@@ -1363,18 +1355,32 @@ STRICT RULES:
 					foreach (var key in placeholders)
 					{
 						if (!boundKeys.Contains(key))
-						{
 							_logger.Warning(
-								"Placeholder {{{{image:{Key}}}}} has no matching " +
-								"imageBound — image cannot be cropped", key);
-						}
+								"Placeholder {{image:{Key}}} has no matching " +
+								"imageBound — image cannot be cropped. " +
+								"Placeholder will remain unreplaced in saved question.",
+								key);
 					}
 				}
 			}
 
+			// ── Final log ────────────────────────────────────────────────
+			var partialCount = result.Questions.Count(q => q.IsPartial);
+			var latexCount = result.Questions.Count(q => q.HasLatex);
+			var imageCount = result.Questions.Count(q => q.HasImages);
+
 			_logger.Information(
-				"Claude response parsed - Questions: {QCount}, ImageBounds: {BCount}",
-				result.Questions.Count, result.ImageBounds.Count);
+				"Claude response parsed - " +
+				"Questions: {QCount}, " +
+				"WithLatex: {LatexCount}, " +
+				"WithImages: {ImageCount}, " +
+				"Partial: {PartialCount}, " +
+				"ImageBounds: {BCount}",
+				result.Questions.Count,
+				latexCount,
+				imageCount,
+				partialCount,
+				result.ImageBounds.Count);
 
 			return result;
 		}
@@ -1786,6 +1792,8 @@ internal class ClaudeProcessingResult
 
 internal class ExtractedQuestion
 {
+	public int? QuestionNumber { get; set; }  // ← add
+	public bool IsPartial { get; set; }  // ← add
 	public string QuestionHtml { get; set; } = string.Empty;
 	public string ContentPartsJson { get; set; } = string.Empty;
 	public bool HasLatex { get; set; }

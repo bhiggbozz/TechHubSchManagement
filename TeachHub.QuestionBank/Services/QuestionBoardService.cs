@@ -25,16 +25,20 @@ public class QuestionBoardService : IQuestionBoardService
 	private readonly ICloudinaryService _cloudinaryService;
 	private readonly IQueryRepository<QuestionJob> _jobQueryRepo;
 	private readonly IQueryRepository<QuestionOptions> _optionQueryRepo;
+	private readonly IQueryRepository<QuestionImage> _imageQueryRepo;
+
 	private readonly ILogger _logger;
 
 	public QuestionBoardService(IQueryRepository<Questions> questionQueryRepo, ICommandRespository<Questions> questionCommandRepo,
-		 ICloudinaryService cloudinaryService, IQueryRepository<QuestionJob> jobQueryRepo, IQueryRepository<QuestionOptions> optionQueryRepo, ILogger logger)
+		 ICloudinaryService cloudinaryService, IQueryRepository<QuestionJob> jobQueryRepo, 
+		 IQueryRepository<QuestionOptions> optionQueryRepo, IQueryRepository<QuestionImage> imageQueryRepo,ILogger logger)
 	{
 		_questionQueryRepo = questionQueryRepo;
 		_questionCommandRepo = questionCommandRepo;
 		_cloudinaryService = cloudinaryService;
 		_jobQueryRepo = jobQueryRepo;
 		_optionQueryRepo = optionQueryRepo;
+		_imageQueryRepo = imageQueryRepo;
 		_logger = logger;
 	}
 
@@ -494,7 +498,7 @@ public class QuestionBoardService : IQuestionBoardService
 	}
 
 
-	public async Task<BaseResponse> GetQuestionsByJobId(Guid jobId,AuthenticatedUserClaims userClaims)
+	public async Task<BaseResponse> GetQuestionsByJobId(Guid jobId, AuthenticatedUserClaims userClaims)
 	{
 		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 		using (LogContext.PushProperty("JobId", jobId))
@@ -517,7 +521,7 @@ public class QuestionBoardService : IQuestionBoardService
 						Status = "failed"
 					};
 
-				// Verify job exists and belongs to this school/teacher
+				// ── Verify job exists and belongs to this school ─────────
 				var job = await _jobQueryRepo.Get(jobId, DatabaseTarget.QuestionBank);
 
 				if (job == null)
@@ -545,7 +549,7 @@ public class QuestionBoardService : IQuestionBoardService
 						Data = new { job.Status, job.AttemptCount }
 					};
 
-				// Fetch all questions for this job
+				// ── Fetch all questions for this job ─────────────────────
 				var questionQuery = $@"
 					SELECT
 						q.Id,
@@ -559,6 +563,8 @@ public class QuestionBoardService : IQuestionBoardService
 						q.MarksAllocation,
 						q.Status,
 						q.CreationDate,
+						q.QuestionNumber,
+						q.IsPartial,
 						st.Name  AS SubTopicName,
 						t.Name   AS TopicName
 					FROM   Questions q
@@ -568,7 +574,7 @@ public class QuestionBoardService : IQuestionBoardService
 					AND    q.SchoolId  = '{schoolId}'
 					AND    q.IsDeleted = 0
 					AND    q.IsActive  = 1
-					ORDER  BY q.CreationDate ASC";
+					ORDER  BY q.QuestionNumber ASC, q.CreationDate ASC";
 
 				var questionRows = await _questionQueryRepo.QueryAsync<JobQuestionRow>(
 					questionQuery, new Dictionary<string, object>(),
@@ -576,40 +582,71 @@ public class QuestionBoardService : IQuestionBoardService
 
 				var questions = questionRows?.ToList() ?? new();
 
-				// Fetch options for each objective question
+				// ── Build result with options and images per question ─────
 				var result = new List<JobQuestionDto>();
 
 				foreach (var q in questions)
 				{
 					var options = new List<JobQuestionOptionDto>();
+					var images = new List<JobQuestionImageDto>();
 
+					// ── Fetch options for MCQ ─────────────────────────────
 					if (q.QuestionType == (int)QuestionType.MultipleChoice)
 					{
 						var optionQuery = $@"
-							SELECT
-								Id,
-								OptionLabel,
-								OptionText,
-								OptionHtml,
-								ContentParts,
-								IsCorrect,
-								HasLatex,
-								HasImages,
-								OrderIndex
-							FROM   QuestionOptions
-							WHERE  QuestionId = '{q.Id}'
-							AND    IsDeleted  = 0
-							AND    IsActive   = 1
-							ORDER  BY OrderIndex ASC";
+                        SELECT
+                            Id,
+                            OptionLabel,
+                            OptionText,
+                            OptionHtml,
+                            ContentParts,
+                            IsCorrect,
+                            HasLatex,
+                            HasImages,
+                            OrderIndex
+                        FROM   QuestionOptions
+                        WHERE  QuestionId = '{q.Id}'
+                        AND    IsDeleted  = 0
+                        AND    IsActive   = 1
+                        ORDER  BY OrderIndex ASC";
 
-						var optionRows = await _optionQueryRepo.QueryAsync<JobQuestionOptionDto>(optionQuery, new Dictionary<string, object>(),DatabaseTarget.QuestionBank);
+						var optionRows = await _optionQueryRepo
+							.QueryAsync<JobQuestionOptionDto>(
+								optionQuery,
+								new Dictionary<string, object>(),
+								DatabaseTarget.QuestionBank);
 
 						options = optionRows?.ToList() ?? new();
+					}
+
+					// ── Fetch images if question has media ────────────────
+					if (q.HasMedia)
+					{
+						var imageQuery = $@"
+                        SELECT
+                            Id,
+                            Label,
+                            CloudinaryUrl,
+                            PublicId,
+                            DisplayOrder
+                        FROM   QuestionImages
+                        WHERE  QuestionId = '{q.Id}'
+                        ORDER  BY DisplayOrder ASC";
+
+						var imageRows = await _imageQueryRepo
+							.QueryAsync<JobQuestionImageDto>(
+								imageQuery,
+								new Dictionary<string, object>(),
+								DatabaseTarget.QuestionBank);
+
+						images = imageRows?.ToList() ?? new();
 					}
 
 					result.Add(new JobQuestionDto
 					{
 						Id = q.Id,
+						QuestionNumber = q.QuestionNumber,
+						IsPartial = q.IsPartial,
 						QuestionType = q.QuestionType,
 						QuestionTypeName = ((QuestionType)q.QuestionType).ToString(),
 						QuestionHtml = q.QuestionHtml,
@@ -624,7 +661,8 @@ public class QuestionBoardService : IQuestionBoardService
 						SubTopicName = q.SubTopicName,
 						TopicName = q.TopicName,
 						CreationDate = q.CreationDate,
-						Options = options
+						Options = options,
+						Images = images   // ← now populated
 					});
 				}
 
@@ -660,6 +698,7 @@ public class QuestionBoardService : IQuestionBoardService
 			}
 		}
 	}
+	
 
 	/// <summary>
 	/// Get board session reference for a question

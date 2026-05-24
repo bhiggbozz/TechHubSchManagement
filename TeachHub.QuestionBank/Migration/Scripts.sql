@@ -254,3 +254,8 @@ CREATE INDEX IX_QuestionImages_QuestionId
 CREATE INDEX IX_QuestionImages_JobId
     ON QuestionImages (JobId);
 
+--------------------------------------------
+
+ALTER TABLE Questions ADD QuestionNumber INT NOT NULL DEFAULT 0;
+ALTER TABLE Questions ADD IsPartial      BIT NOT NULL DEFAULT 0;
+
