@@ -181,7 +181,9 @@ public class QuestionJobService : IQuestionJobService
 					AttemptCount = 0,
 					CreatedAt = now,
 					CompletedAt = "",
-					FailureReason = ""
+					FailureReason = "",
+					ProcessedAt = null,
+					ProcessedBy = null
 				};
 
 				await _jobCommandRepo.Create(job, DatabaseTarget.QuestionBank);
@@ -487,6 +489,117 @@ public class QuestionJobService : IQuestionJobService
 		}
 	}
 
+	public async Task<BaseResponse> ConfirmJobQuestions(Guid jobId,AuthenticatedUserClaims userClaims)
+	{
+		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+		using (LogContext.PushProperty("JobId", jobId))
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				// Fetch job
+				var job = await _jobQueryRepo.Get(jobId, DatabaseTarget.QuestionBank);
+
+				if (job == null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Job not found",
+						Status = "failed"
+					};
+
+				if (job.SchoolId != schoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Job not found",
+						Status = "failed"
+					};
+
+				// Only the teacher who submitted can confirm
+				if (job.TeacherId != userId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You do not have permission to confirm this job",
+						Status = "failed"
+					};
+
+				// Already processed — idempotent
+				if (job.Status == "Processed")
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Questions already confirmed and saved",
+						Status = "successful",
+						Data = new { job.AttemptCount }
+					};
+
+				// Must be Completed before confirming
+				if (job.Status != "Completed")
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = $"Job must be Completed before confirming. Current status: {job.Status}",
+						Status = "failed"
+					};
+
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+				// Mark job as Processed
+				var updateDict = new Dictionary<string, object>
+				{
+					{ "Status",      "Processed" },
+					{ "ProcessedAt", now          },
+					{ "ProcessedBy", userId        }
+				};
+
+				await _jobCommandRepo.UpdateTableColumnById(updateDict,new KeyValuePair<string, object>("Id", jobId),DatabaseTarget.QuestionBank);
+
+				_logger.Information("Job confirmed - JobId: {JobId}, " + "ExtractedCount: {Count}, UserId: {UserId}",
+					jobId, job.AttemptCount, userId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = $"{job.AttemptCount} question(s) confirmed and saved to question bank",
+					Status = "successful",
+					Data = new
+					{
+						JobId = jobId,
+						ExtractedCount = job.AttemptCount,
+						Status = "Processed"
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,"Error confirming job - JobId: {JobId}", jobId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while confirming the job",
+					Status = "failed"
+				};
+			}
+		}
+	}
 
 	public async Task<BaseResponse> GetJobStatuses(Guid classroomId,Guid subjectId,Guid? topicId,Guid? subTopicId,AuthenticatedUserClaims userClaims)
 	{
@@ -823,8 +936,7 @@ public class QuestionJobService : IQuestionJobService
 						}
 
 						// ── 6c: Save options for Objective questions ───────
-						if (job.QuestionType == "Objective" &&
-							extracted.Options?.Any() == true)
+						if (job.QuestionType == "Objective" && extracted.Options?.Any() == true)
 						{
 							var optionCount = 0;
 

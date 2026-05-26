@@ -259,3 +259,8 @@ CREATE INDEX IX_QuestionImages_JobId
 ALTER TABLE Questions ADD QuestionNumber INT NOT NULL DEFAULT 0;
 ALTER TABLE Questions ADD IsPartial      BIT NOT NULL DEFAULT 0;
 
+-----------------------------------------------
+
+ALTER TABLE QuestionJob ADD ProcessedAt NVARCHAR(30) NULL;
+ALTER TABLE QuestionJob ADD ProcessedBy UNIQUEIDENTIFIER NULL;
+

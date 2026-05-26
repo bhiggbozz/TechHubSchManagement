@@ -304,8 +304,7 @@ public class QuestionController : ControllerBase
 		if (userClaims == null)
 			return Unauthorized();
 
-		var result = await _questionSyncService
-			.ResolveConflict(model, userClaims);
+		var result = await _questionSyncService.ResolveConflict(model, userClaims);
 
 		return result.ResponseCode ==
 			ResponseCode.successful
