@@ -25,9 +25,7 @@ namespace TechHub.QuestionBank.Services.interfaces;
 		/// Returns Pending | Processing | Completed | Failed
 		/// When Completed → QuestionId is populated
 		/// </summary>
-		Task<JobStatusResponse> GetJobStatus(
-			Guid jobId,
-			AuthenticatedUserClaims userClaims);
+		Task<JobStatusResponse> GetJobStatus(Guid jobId,AuthenticatedUserClaims userClaims);
 
 		/// <summary>
 		/// Returns all jobs for this teacher
@@ -50,6 +48,8 @@ namespace TechHub.QuestionBank.Services.interfaces;
 		/// </summary>
 		Task<QuestionPreviewResponse> GetQuestionPreview(Guid jobId,AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> GetJobStatuses(Guid classroomId, Guid subjectId, Guid? topicId, Guid? subTopicId, AuthenticatedUserClaims userClaims);
+
+	Task<BaseResponse> ConfirmJobQuestions(Guid jobId, AuthenticatedUserClaims userClaims);
 
 		/// <summary>
 		/// Called by background worker only

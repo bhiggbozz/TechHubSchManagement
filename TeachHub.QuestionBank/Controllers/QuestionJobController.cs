@@ -125,5 +125,20 @@ public class QuestionJobController : ControllerBase
 
 		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 	}
+
+
+	[HttpPost("jobs/{jobId}/confirm")]
+	[Authorize]
+	public async Task<IActionResult> ConfirmJobQuestions(Guid jobId)
+	{
+		var claims = User.GetAuthenticatedUserClaims();
+		if (claims == null) return Unauthorized();
+
+		var result = await _jobService.ConfirmJobQuestions(jobId, claims);
+
+		return result.ResponseCode == ResponseCode.successful
+			? Ok(result)
+			: BadRequest(result);
+	}
 }
 

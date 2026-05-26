@@ -539,7 +539,16 @@ public class QuestionBoardService : IQuestionBoardService
 						ResponseMessage = "Job not found",
 						Status = "failed"
 					};
+				if (job.Status == "Processed")
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Questions from this job have already been saved to the question bank",
+						Status = "failed",
+						Data = new { job.Status, job.AttemptCount }
+					};
 
+				
 				if (job.Status != "Completed")
 					return new BaseResponse
 					{
@@ -548,6 +557,8 @@ public class QuestionBoardService : IQuestionBoardService
 						Status = "failed",
 						Data = new { job.Status, job.AttemptCount }
 					};
+
+
 
 				// ── Fetch all questions for this job ─────────────────────
 				var questionQuery = $@"

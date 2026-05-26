@@ -55,4 +55,6 @@ public class QuestionJob
 
 	public string CreatedAt { get; set; }
 	public string? CompletedAt { get; set; }
+	public string? ProcessedAt { get; set; }
+	public Guid? ProcessedBy { get; set; }
 }
