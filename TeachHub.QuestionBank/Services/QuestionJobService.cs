@@ -1,6 +1,8 @@
 ﻿using Anthropic.SDK;
 using Anthropic.SDK.Constants;
 using Anthropic.SDK.Messaging;
+using Docnet.Core;
+using Docnet.Core.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Serilog;
@@ -96,7 +98,7 @@ public class QuestionJobService : IQuestionJobService
 	/// 5. Log QuestionJob as Pending
 	/// 6. Return JobId immediately
 	/// </summary>
-	public async Task<SubmitJobResponse> SubmitJob(IFormFile image,SubmitQuestionJobViewModel model,AuthenticatedUserClaims userClaims)
+	public async Task<SubmitJobResponse> SubmitJob(IFormFile file,SubmitQuestionJobViewModel model,AuthenticatedUserClaims userClaims)
 	{
 		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 		{
@@ -112,71 +114,85 @@ public class QuestionJobService : IQuestionJobService
 				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
 					return Fail<SubmitJobResponse>("Invalid school identification");
 
-				// ── Validate image ──────────────────────────────────
-				if (image == null || image.Length == 0)
-					return Fail<SubmitJobResponse>("Image file is required");
+				// ── Validate file ────────────────────────────────────
+				if (file == null || file.Length == 0)
+					return Fail<SubmitJobResponse>("File is required");
 
-				var allowedTypes = new[] { "image/jpeg", "image/jpg", "image/png", "image/webp" };
-				if (!allowedTypes.Contains(image.ContentType?.ToLower()))
-					return Fail<SubmitJobResponse>("Only JPEG, PNG and WebP images are supported");
+				var allowedTypes = new[]
+				{
+                // Images
+                "image/jpeg",
+				"image/jpg",
+				"image/png",
+				"image/webp",
+                // PDF
+                "application/pdf"
+			};
 
-				var maxSizeMb = 10;
-				if (image.Length > maxSizeMb * 1024 * 1024)
-					return Fail<SubmitJobResponse>($"Image cannot exceed {maxSizeMb}MB");
+				if (!allowedTypes.Contains(file.ContentType?.ToLower()))
+					return Fail<SubmitJobResponse>(
+						"Only JPEG, PNG, WebP and PDF files are supported");
 
-				// ── Validate question type ─────────────────────────
+				var maxSizeMb = 20;  // ← increased for PDFs
+				if (file.Length > maxSizeMb * 1024 * 1024)
+					return Fail<SubmitJobResponse>(
+						$"File cannot exceed {maxSizeMb}MB");
+
+				// ── Determine file type ──────────────────────────────
+				var isPdf = file.ContentType?.ToLower() == "application/pdf";
+				var fileType = isPdf ? "PDF" : "Image";
+
+				// ── Validate question type ───────────────────────────
 				var validTypes = new[] { "Objective", "Theory", "TrueFalse" };
 				if (!validTypes.Contains(model.QuestionType))
-					return Fail<SubmitJobResponse>("Question type must be Objective, Theory or TrueFalse");
+					return Fail<SubmitJobResponse>(
+						"Question type must be Objective, Theory or TrueFalse");
 
-				if (model.MarksAllocation <= 0)
-					return Fail<SubmitJobResponse>("Marks allocation must be greater than zero");
+				//if (model.MarksAllocation <= 0)
+				//	return Fail<SubmitJobResponse>(
+				//		"Marks allocation must be greater than zero");
 
-				// ── Verify SubTopic exists and belongs to school ───
-				var subTopic = await _subTopicQueryRepo.Get(
-					model.SubTopicId, DatabaseTarget.QuestionBank);
+				// ── Verify SubTopic exists and belongs to school ─────
+				var subTopic = await _subTopicQueryRepo.Get(model.SubTopicId, DatabaseTarget.QuestionBank);
 
 				if (subTopic == null || subTopic.IsDeleted || subTopic.SchoolId != schoolId)
 					return Fail<SubmitJobResponse>("SubTopic not found");
 
-				// ── Upload image to Cloudinary temp folder ─────────
-				// Uses TempPending folder — auto-deleted by policy
-				// Background worker reads from here
-				// No processing — just a raw dump, fast
+				// ── Upload file to Cloudinary temp folder ────────────
 				var jobId = Guid.NewGuid();
 				var mediaKey = $"qjob_{jobId}";
 
-				using var stream = image.OpenReadStream();
+				using var stream = file.OpenReadStream();
 
-				var uploadResult = await _cloudinaryService.UploadMediaAsync(stream,mediaKey,schoolId,MediaType.Image,isTemporary: true);
+				var mediaType = isPdf ? MediaType.Document : MediaType.Image;
+				var uploadResult = await _cloudinaryService.UploadMediaAsync(stream, mediaKey, schoolId, mediaType, isTemporary: true);
 
 				if (!uploadResult.Success)
 				{
 					_logger.Error(
-						"Temp image upload failed - JobId: {JobId}, Error: {Error}",
+						"Temp file upload failed - JobId: {JobId}, Error: {Error}",
 						jobId, uploadResult.ErrorMessage);
 
 					return Fail<SubmitJobResponse>(
-						"Failed to save image. Please try again");
+						"Failed to save file. Please try again");
 				}
 
-				// ── Log QuestionJob as Pending ─────────────────────
+				// ── Create QuestionJob record ────────────────────────
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
 				var job = new QuestionJob
 				{
 					Id = jobId,
 					SchoolId = schoolId,
-					ClassroomId = model.ClassroomId,   
-					SubjectId = model.SubjectId,     
+					ClassroomId = model.ClassroomId,
+					SubjectId = model.SubjectId,
 					SubTopicId = model.SubTopicId,
 					TeacherId = userId,
-					QuestionId = subTopic.SchoolId,   /// lokt this later ... it should be null , guess nulable ain't working atm
-					// Null until background worker completes
+					QuestionId = null,              // ← fixed
 					QuestionType = model.QuestionType,
 					HasImages = model.HasImages,
+					FileType = fileType,          // ← Image | PDF
 					TempImagePath = uploadResult.PublicId,
-					// Cloudinary public_id — worker reads from here
 					Status = "Pending",
 					AttemptCount = 0,
 					CreatedAt = now,
@@ -189,15 +205,14 @@ public class QuestionJobService : IQuestionJobService
 				await _jobCommandRepo.Create(job, DatabaseTarget.QuestionBank);
 
 				_logger.Information(
-					"QuestionJob logged - JobId: {JobId}, Status: Pending", jobId);
+					"QuestionJob created - JobId: {JobId}, FileType: {FileType}, " + "Status: Pending", jobId, fileType);
 
 				return new SubmitJobResponse
 				{
 					ResponseCode = ResponseCode.successful,
 					ResponseMessage = "Job submitted successfully",
 					Status = "successful",
-					JobId = jobId,
-					// "Pending" — teacher polls GetJobStatus
+					JobId = jobId
 				};
 			}
 			catch (Exception ex)
@@ -773,10 +788,35 @@ public class QuestionJobService : IQuestionJobService
 			if (string.IsNullOrWhiteSpace(job.TempImagePath))
 				throw new Exception("TempImagePath is missing on job record");
 
-			var imageBytes = await DownloadImageFromCloudinary(job.TempImagePath);
+			//var imageBytes = await DownloadImageFromCloudinary(job.TempImagePath);
+			var fileBytes = await DownloadImageFromCloudinary(job.TempImagePath);
 
-			if (imageBytes == null || imageBytes.Length == 0)
-				throw new Exception($"Failed to download temp image. PublicId: {job.TempImagePath}");
+			if (fileBytes == null || fileBytes.Length == 0)
+				throw new Exception(
+					$"Failed to download temp file. PublicId: {job.TempImagePath}");
+
+			byte[] imageBytes;
+
+			if (job.FileType == "PDF")
+			{
+				_logger.Information("Converting PDF to image - JobId: {JobId}", job.Id);
+				imageBytes = await ConvertPdfToImageAsync(fileBytes);
+
+				if (imageBytes == null || imageBytes.Length == 0)
+					throw new Exception("PDF conversion to image failed");
+
+				_logger.Information(
+					"PDF converted - JobId: {JobId}, Size: {Size} bytes",
+					job.Id, imageBytes.Length);
+			}
+			else
+			{
+				imageBytes = fileBytes;
+			}
+
+
+			//if (imageBytes == null || imageBytes.Length == 0)
+			//	throw new Exception($"Failed to download temp image. PublicId: {job.TempImagePath}");
 
 			_logger.Information("Image downloaded - JobId: {JobId}, Size: {Size} bytes",
 				job.Id, imageBytes.Length);
@@ -1315,8 +1355,7 @@ STRICT RULES:
 	// PRIVATE: PARSE CLAUDE RESPONSE
 	// ═══════════════════════════════════════════════════════════
 
-	private ClaudeProcessingResult ParseClaudeResponse(
-	string rawJson, string questionType)
+	private ClaudeProcessingResult ParseClaudeResponse(string rawJson, string questionType)
 	{
 		try
 		{
@@ -1632,8 +1671,58 @@ STRICT RULES:
 	//	return ms.ToArray();
 	//}
 
+	private async Task<byte[]> ConvertPdfToImageAsync(byte[] pdfBytes)
+	{
+		try
+		{
+			using var library = DocLib.Instance;
+			using var docReader = library.GetDocReader(
+				pdfBytes,
+				new PageDimensions(1920, 2560));  // high res for Claude to read clearly
 
-private byte[] CropImage(byte[] sourceBytes,int xPct, int yPct,int widthPct, int heightPct)
+			// Convert first page only
+			// Teacher should upload one page at a time
+			using var pageReader = docReader.GetPageReader(0);
+
+			var rawBytes = pageReader.GetImage();
+			var width = pageReader.GetPageWidth();
+			var height = pageReader.GetPageHeight();
+
+			_logger.Information(
+				"PDF page extracted - Width: {W}, Height: {H}, RawSize: {Size}",
+				width, height, rawBytes.Length);
+
+			// rawBytes is BGRA format — convert to JPEG using SkiaSharp
+			var bitmap = new SKBitmap(
+				width, height,
+				SKColorType.Bgra8888,
+				SKAlphaType.Premul);
+
+			System.Runtime.InteropServices.Marshal.Copy(
+				rawBytes, 0, bitmap.GetPixels(), rawBytes.Length);
+
+			using var skImage = SKImage.FromBitmap(bitmap);
+			using var data = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
+			using var ms = new MemoryStream();
+
+			data.SaveTo(ms);
+
+			var result = ms.ToArray();
+
+			_logger.Information(
+				"PDF converted to JPEG - Size: {Size} bytes", result.Length);
+
+			return result;
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex, "Failed to convert PDF to image");
+			throw;
+		}
+	}
+
+
+	private byte[] CropImage(byte[] sourceBytes,int xPct, int yPct,int widthPct, int heightPct)
 {
 		using var bitmap = SKBitmap.Decode(sourceBytes);
 

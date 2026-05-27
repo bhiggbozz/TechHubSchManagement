@@ -264,3 +264,7 @@ ALTER TABLE Questions ADD IsPartial      BIT NOT NULL DEFAULT 0;
 ALTER TABLE QuestionJob ADD ProcessedAt NVARCHAR(30) NULL;
 ALTER TABLE QuestionJob ADD ProcessedBy UNIQUEIDENTIFIER NULL;
 
+--------------------------------------------------------------------
+
+ALTER TABLE QuestionJob ADD FileType NVARCHAR(20) NOT NULL DEFAULT 'Image';
+
