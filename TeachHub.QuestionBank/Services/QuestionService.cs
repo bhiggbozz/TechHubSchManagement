@@ -227,8 +227,11 @@ public class QuestionService : IQuestionService
 					OriginDevice = model.OriginDevice,
 					LastSyncedAt = DateTime.UtcNow,
 					CreationDate = now,
-					ModifiedDate = now
+					ModifiedDate = now,
+					QuestionNumber = 0,
+					IsPartial = false
 				};
+
 
 				using var scope = _dbTransactionScopeFactory.Create("QuestionBankConnection");
 				try
