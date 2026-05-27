@@ -57,4 +57,5 @@ public class QuestionJob
 	public string? CompletedAt { get; set; }
 	public string? ProcessedAt { get; set; }
 	public Guid? ProcessedBy { get; set; }
+	public string? FileType { get; internal set; }
 }
