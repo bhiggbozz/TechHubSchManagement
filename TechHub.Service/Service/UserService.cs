@@ -1666,18 +1666,15 @@ namespace TechHub.Service.Service
 		}
 
 
-		public async Task<BaseResponse> EditUser(UpdateUserView updateUserViewModel,AuthenticatedUserClaims? userClaims)
+		public async Task<BaseResponse> EditUser(UpdateUserView updateUserViewModel, AuthenticatedUserClaims? userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims?.UserId))
-			//using (LogContext.PushProperty("TenantId", userClaims?.TenantIdentifier))
 			{
 				try
 				{
-
 					if (updateUserViewModel is null)
 					{
 						_logger.Warning("EditUser called with null model");
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -1689,7 +1686,6 @@ namespace TechHub.Service.Service
 					if (string.IsNullOrEmpty(userClaims?.SchoolId) || string.IsNullOrEmpty(userClaims?.UserId))
 					{
 						_logger.Warning("EditUser called with missing authentication information");
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Unauthorized,
@@ -1701,7 +1697,6 @@ namespace TechHub.Service.Service
 					if (!Guid.TryParse(userClaims.SchoolId, out var claimSchoolId))
 					{
 						_logger.Warning("Invalid SchoolId format - SchoolId: {SchoolId}", userClaims.SchoolId);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -1713,7 +1708,6 @@ namespace TechHub.Service.Service
 					if (!Guid.TryParse(userClaims.UserId, out var modifiedBy))
 					{
 						_logger.Warning("Invalid UserId format - UserId: {UserId}", userClaims.UserId);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -1725,7 +1719,6 @@ namespace TechHub.Service.Service
 					if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true, out UserRole userRole))
 					{
 						_logger.Warning("Invalid role format - Role: {Role}", userClaims.Role);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -1738,7 +1731,6 @@ namespace TechHub.Service.Service
 					if (modifier is null)
 					{
 						_logger.Warning("Modifier user does not exist - UserId: {UserId}", modifiedBy);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -1750,7 +1742,6 @@ namespace TechHub.Service.Service
 					if (!modifier.IsActive)
 					{
 						_logger.Warning("Inactive user attempted to edit user - UserId: {UserId}", modifiedBy);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Forbidden,
@@ -1763,7 +1754,6 @@ namespace TechHub.Service.Service
 					if (existingUser is null)
 					{
 						_logger.Warning("Target user not found - UserId: {UserId}", updateUserViewModel.Id);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.NotFound,
@@ -1775,12 +1765,8 @@ namespace TechHub.Service.Service
 					if (existingUser.SchoolId != claimSchoolId)
 					{
 						_logger.Warning(
-							"Cross-school user edit attempt - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}, ModifierSchool: {ModifierSchool}, TargetSchool: {TargetSchool}",
-							modifiedBy,
-							updateUserViewModel.Id,
-							claimSchoolId,
-							existingUser.SchoolId);
-
+							"Cross-school user edit attempt - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}",
+							modifiedBy, updateUserViewModel.Id);
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Forbidden,
@@ -1789,21 +1775,51 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					// ===== AUTHORIZATION SECTION =====
+					// ===== AUTHORIZATION =====
 
 					bool isSelfEdit = updateUserViewModel.Id == modifiedBy;
 
-					if (userRole != UserRole.Administrator && userRole != UserRole.SuperAdministrator)
+					if (!isSelfEdit)
 					{
-						// Non-admins can only edit themselves
-						if (!isSelfEdit)
+						// Only SuperAdmin or Admin with CreateUsers permission can edit other users
+						if (userRole == UserRole.SuperAdministrator)
 						{
-							_logger.Warning(
-								"Unauthorized user edit attempt - ModifiedBy: {ModifiedBy}, Role: {Role}, TargetUserId: {TargetUserId}",
+							// SuperAdmin always allowed
+							_logger.Information(
+								"SuperAdmin editing user - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
+								modifiedBy, updateUserViewModel.Id);
+						}
+						else if (userRole == UserRole.Administrator)
+						{
+							var hasPermission = await this.HasPermission(
 								modifiedBy,
-								((UserRole)userRole).ToString(),
-								updateUserViewModel.Id);
+								claimSchoolId,
+								AdminPermission.CreateUsers
+							);
 
+							if (!hasPermission)
+							{
+								_logger.Warning(
+									"Admin lacks CreateUsers permission - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
+									modifiedBy, updateUserViewModel.Id);
+								return new BaseResponse
+								{
+									ResponseCode = ResponseCode.Forbidden,
+									ResponseMessage = "You don't have permission to edit users. Contact your SuperAdministrator.",
+									Status = "failed"
+								};
+							}
+
+							_logger.Information(
+								"Admin with CreateUsers permission editing user - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
+								modifiedBy, updateUserViewModel.Id);
+						}
+						else
+						{
+							// Teachers and other roles cannot edit other users
+							_logger.Warning(
+								"Unauthorized edit attempt - ModifiedBy: {ModifiedBy}, Role: {Role}, TargetUserId: {TargetUserId}",
+								modifiedBy, userRole.ToString(), updateUserViewModel.Id);
 							return new BaseResponse
 							{
 								ResponseCode = ResponseCode.Forbidden,
@@ -1811,65 +1827,18 @@ namespace TechHub.Service.Service
 								Status = "failed"
 							};
 						}
-
-						// TODO: For non-admins editing themselves, you might want to restrict which fields they can update
-						// For now, we allow it but you should add field-level restrictions
-						_logger.Information("User editing own profile - UserId: {UserId}", modifiedBy);
 					}
 					else
 					{
-						if (!isSelfEdit)
-						{
-							// SuperAdministrators always have permission
-							if (userRole == UserRole.Administrator)
-							{
-								var hasPermission = await this.HasPermission(
-									modifiedBy,
-									claimSchoolId,
-									AdminPermission.ManageStudents
-								);
-
-								if (!hasPermission)
-								{
-									_logger.Warning(
-										"Admin lacks ManageUsers permission - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
-										modifiedBy,
-										updateUserViewModel.Id);
-
-									return new BaseResponse
-									{
-										ResponseCode = ResponseCode.Forbidden,
-										ResponseMessage = "You don't have permission to manage users. Contact your SuperAdministrator.",
-										Status = "failed"
-									};
-								}
-
-								_logger.Information(
-									"Admin has ManageUsers permission - AdminId: {AdminId}",
-									modifiedBy);
-							}
-
-							_logger.Information(
-								"Editing user - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}, IsSelfEdit: {IsSelfEdit}",
-								modifiedBy,
-								updateUserViewModel.Id,
-								isSelfEdit);
-						}
-						else
-						{
-							_logger.Information("Admin editing own profile - UserId: {UserId}", modifiedBy);
-						}
+						_logger.Information("User editing own profile - UserId: {UserId}", modifiedBy);
 					}
 
-					// Validation 8: SuperAdmin restrictions
-					if (existingUser.RoleId == (int)UserRole.SuperAdministrator &&
-						userRole != UserRole.SuperAdministrator)
+					// SuperAdmin protection — only SuperAdmin can edit another SuperAdmin
+					if (existingUser.RoleId == (int)UserRole.SuperAdministrator && userRole != UserRole.SuperAdministrator)
 					{
 						_logger.Warning(
 							"Non-SuperAdmin attempted to edit SuperAdmin - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}",
-							modifiedBy,
-							updateUserViewModel.Id);
-
+							modifiedBy, updateUserViewModel.Id);
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Forbidden,
@@ -1878,7 +1847,7 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					// Validation 9: Check email uniqueness
+					// Email uniqueness check
 					if (!string.IsNullOrWhiteSpace(updateUserViewModel.EmailAddress) &&
 						updateUserViewModel.EmailAddress.Trim().ToLower() != existingUser.EmailAddress?.ToLower())
 					{
@@ -1891,9 +1860,7 @@ namespace TechHub.Service.Service
 						{
 							_logger.Warning(
 								"Email already in use - Email: {Email}, TargetUserId: {TargetUserId}",
-								updateUserViewModel.EmailAddress,
-								updateUserViewModel.Id);
-
+								updateUserViewModel.EmailAddress, updateUserViewModel.Id);
 							return new BaseResponse
 							{
 								ResponseCode = ResponseCode.Conflict,
@@ -1903,7 +1870,7 @@ namespace TechHub.Service.Service
 						}
 					}
 
-					// ===== UPDATE SECTION =====
+					// ===== BUILD UPDATE =====
 
 					var updateDict = new Dictionary<string, object>
 					{
@@ -1912,7 +1879,6 @@ namespace TechHub.Service.Service
 
 					var updatedFields = new List<string>();
 
-					// Build update dictionary
 					if (!string.IsNullOrWhiteSpace(updateUserViewModel.FirstName))
 					{
 						updateDict["FirstName"] = updateUserViewModel.FirstName.Trim();
@@ -1953,15 +1919,12 @@ namespace TechHub.Service.Service
 					if (updateUserViewModel.RoleId.HasValue &&
 						updateUserViewModel.RoleId.Value != existingUser.RoleId)
 					{
-						// Validate role change permissions
 						if (updateUserViewModel.RoleId.Value == (int)UserRole.SuperAdministrator &&
 							userRole != UserRole.SuperAdministrator)
 						{
 							_logger.Warning(
 								"Unauthorized SuperAdmin promotion attempt - ModifiedBy: {ModifiedBy}, TargetUserId: {TargetUserId}",
-								modifiedBy,
-								updateUserViewModel.Id);
-
+								modifiedBy, updateUserViewModel.Id);
 							return new BaseResponse
 							{
 								ResponseCode = ResponseCode.Forbidden,
@@ -1986,10 +1949,9 @@ namespace TechHub.Service.Service
 						updatedFields.Add("GuardianName");
 					}
 
-					if (updateDict.Count == 1) // Only ModifiedDate
+					if (updateDict.Count == 1)
 					{
 						_logger.Warning("No fields to update - UserId: {UserId}", updateUserViewModel.Id);
-
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
@@ -2023,10 +1985,7 @@ namespace TechHub.Service.Service
 				}
 				catch (SqlException ex)
 				{
-					_logger.Error(
-						ex,
-						"SQL error occurred while updating user - UserId: {UserId}",
-						updateUserViewModel?.Id);
+					_logger.Error(ex, "SQL error occurred while updating user - UserId: {UserId}", updateUserViewModel?.Id);
 
 					if (ex.Message.ToLower().Contains("duplicate"))
 					{
@@ -2047,11 +2006,7 @@ namespace TechHub.Service.Service
 				}
 				catch (Exception ex)
 				{
-					_logger.Error(
-						ex,
-						"Unexpected error occurred while updating user - UserId: {UserId}",
-						updateUserViewModel?.Id);
-
+					_logger.Error(ex, "Unexpected error occurred while updating user - UserId: {UserId}", updateUserViewModel?.Id);
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.ErrorOccured,
@@ -3650,9 +3605,7 @@ namespace TechHub.Service.Service
 		/// 4. Convert List<int> to single int using bitwise OR
 		/// 5. Store in database
 		/// </summary>
-		public async Task<BaseResponse> AssignAdminPermissions(
-			AssignAdminPermissionsViewModel model,
-			AuthenticatedUserClaims userClaims)
+		public async Task<BaseResponse> AssignAdminPermissions(AssignAdminPermissionsViewModel model,AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
@@ -3890,6 +3843,8 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		
+
 		#endregion
 
 		#region GetAdminPermissions
@@ -4011,10 +3966,7 @@ namespace TechHub.Service.Service
 		/// <summary>
 		/// Get all admin permissions for the school (paginated)
 		/// </summary>
-		public async Task<BaseResponse> GetAllAdminPermissions(
-			AuthenticatedUserClaims userClaims,
-			int pageNumber = 1,
-			int pageSize = 50)
+		public async Task<BaseResponse> GetAllAdminPermissions(AuthenticatedUserClaims userClaims,int pageNumber = 1,int pageSize = 50)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))

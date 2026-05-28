@@ -115,7 +115,7 @@ namespace TechhubMS.Controllers
 
 
 		[HttpPost("AssignPermissions")]
-		//[Authorize(Roles = "SuperAdministrator")]
+		[Authorize(Roles = "SuperAdministrator")]
 		[ProducesResponseType(typeof(BaseResponse), 200)]
 		[ProducesResponseType(typeof(BaseResponse), 400)]
 		[ProducesResponseType(typeof(BaseResponse), 403)]
