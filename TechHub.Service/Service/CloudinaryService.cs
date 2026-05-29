@@ -907,9 +907,8 @@ namespace TechHub.Service.Service
 				MediaType.Image => "image",
 				MediaType.Video => "video",
 				MediaType.Audio => "video",
-				// Cloudinary treats audio as video
-				MediaType.Document => "raw",
-				_ => "raw"
+				MediaType.Document => "image", 
+				_ => "image"
 			};
 
 			return new CloudinarySignatureResponse
