@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using TechHub.Core;
+using TechHub.Core.Enum;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel;
 using TechHub.Service.Interface;
@@ -23,7 +24,7 @@ public class LessonController : ControllerBase
 
 
 	[HttpGet("upload-signature")]
-	public IActionResult GetUploadSignature()
+	public IActionResult GetUploadSignature([FromQuery] MediaType mediaType)
 	{
 		var claims = GetClaims();
 		if (!Guid.TryParse(claims.SchoolId, out var schoolId))
@@ -31,7 +32,8 @@ public class LessonController : ControllerBase
 		if (!Guid.TryParse(claims.UserId, out var teacherId))
 			return Unauthorized();
 
-		var signature = _signatureService.GenerateUploadSignature(schoolId, teacherId);
+		var signature = _signatureService.GenerateUploadSignature(schoolId, teacherId, mediaType);
+
 		return Ok(new BaseResponse
 		{
 			ResponseCode = ResponseCode.successful,

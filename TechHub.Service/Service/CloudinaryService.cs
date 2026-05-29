@@ -27,9 +27,9 @@ namespace TechHub.Service.Service
 		private readonly CloudinarySettings _settings;
 		private readonly IConfiguration _configuration;
 
-		public CloudinaryService(IOptions<CloudinarySettings> options,ILogger logger, IConfiguration configuration)
+		public CloudinaryService(IOptions<CloudinarySettings> options, ILogger logger, IConfiguration configuration)
 		{
-	
+
 			_settings = options.Value;
 			_logger = logger;
 			_configuration = configuration;
@@ -44,7 +44,7 @@ namespace TechHub.Service.Service
 			}
 
 			// Initialize Cloudinary
-			var account = new Account(_settings.CloudName,_settings.ApiKey,_settings.ApiSecret);
+			var account = new Account(_settings.CloudName, _settings.ApiKey, _settings.ApiSecret);
 
 			_cloudinary = new Cloudinary(account);
 			_cloudinary.Api.Secure = true;
@@ -67,7 +67,7 @@ namespace TechHub.Service.Service
 		/// Enforces O(1) key-value structure: {schoolId}/{resourceType}/{mediaKey}
 		/// This guarantees deterministic, scan-free retrieval from Cloudinary.
 		/// </summary>
-		public async Task<CloudinaryUploadResult> UploadMediaAsync(Stream mediaStream,string mediaKey,Guid schoolId,MediaType mediaType,bool isTemporary = true)
+		public async Task<CloudinaryUploadResult> UploadMediaAsync(Stream mediaStream, string mediaKey, Guid schoolId, MediaType mediaType, bool isTemporary = true)
 		{
 			try
 			{
@@ -159,12 +159,12 @@ namespace TechHub.Service.Service
 				if (result.Success)
 				{
 					_logger.Information(
-						"Upload completed successfully - PublicId: {PublicId}, Size: {Size}, Type: {MediaType}",result.PublicId,FormatFileSize(result.FileSizeBytes),mediaType);
+						"Upload completed successfully - PublicId: {PublicId}, Size: {Size}, Type: {MediaType}", result.PublicId, FormatFileSize(result.FileSizeBytes), mediaType);
 				}
 				else
 				{
 					_logger.Error(
-						"Upload failed - StructuredKey: {StructuredKey}, Error: {Error}",structuredKey,result.ErrorMessage);
+						"Upload failed - StructuredKey: {StructuredKey}, Error: {Error}", structuredKey, result.ErrorMessage);
 				}
 
 				return result;
@@ -194,7 +194,7 @@ namespace TechHub.Service.Service
 		/// - Quality: Still excellent for educational content
 		/// - Benefits: Faster uploads, cheaper storage, faster downloads
 		/// </remarks>
-		private async Task<CloudinaryUploadResult> UploadVideoAsync(Stream mediaStream,string mediaKey,string folder)
+		private async Task<CloudinaryUploadResult> UploadVideoAsync(Stream mediaStream, string mediaKey, string folder)
 		{
 			try
 			{
@@ -205,7 +205,7 @@ namespace TechHub.Service.Service
 					videoSettings.MaxWidth,
 					videoSettings.Bitrate);
 
-				
+
 
 				var videoParams = new VideoUploadParams
 				{
@@ -242,7 +242,7 @@ namespace TechHub.Service.Service
 
 				var uploadResult = await _cloudinary.UploadAsync(videoParams);
 
-				
+
 
 				if (uploadResult.Error != null)
 				{
@@ -265,7 +265,7 @@ namespace TechHub.Service.Service
 
 				_logger.Information(
 					"Video uploaded successfully - PublicId: {PublicId}, Size: {Size}, Duration: {Duration}s, Dimensions: {Width}x{Height}",
-					uploadResult.PublicId,FormatFileSize(uploadResult.Bytes),uploadResult.Duration,uploadResult.Width,uploadResult.Height);
+					uploadResult.PublicId, FormatFileSize(uploadResult.Bytes), uploadResult.Duration, uploadResult.Width, uploadResult.Height);
 
 
 				return new CloudinaryUploadResult
@@ -303,7 +303,7 @@ namespace TechHub.Service.Service
 		/// - Auto format: Cloudinary serves WebP to modern browsers, JPEG to older ones
 		/// - Benefits: Faster page loads, cheaper storage, better UX
 		/// </remarks>
-		private async Task<CloudinaryUploadResult> UploadImageAsync(Stream mediaStream,string mediaKey,string folder)
+		private async Task<CloudinaryUploadResult> UploadImageAsync(Stream mediaStream, string mediaKey, string folder)
 		{
 			try
 			{
@@ -350,7 +350,7 @@ namespace TechHub.Service.Service
 
 				_logger.Information(
 					"Image uploaded successfully - PublicId: {PublicId}, Size: {Size}, Dimensions: {Width}x{Height}",
-					uploadResult.PublicId,FormatFileSize(uploadResult.Bytes),uploadResult.Width,uploadResult.Height);
+					uploadResult.PublicId, FormatFileSize(uploadResult.Bytes), uploadResult.Width, uploadResult.Height);
 
 				return new CloudinaryUploadResult
 				{
@@ -378,7 +378,7 @@ namespace TechHub.Service.Service
 		}
 
 
-		
+
 		/// <summary>
 		/// Upload document as-is (no processing)
 		/// </summary>
@@ -390,7 +390,7 @@ namespace TechHub.Service.Service
 		/// - Converting might break formatting
 		/// - Usually smaller than videos anyway
 		/// </remarks>
-		private async Task<CloudinaryUploadResult> UploadDocumentAsync(Stream mediaStream,string mediaKey, string folder)
+		private async Task<CloudinaryUploadResult> UploadDocumentAsync(Stream mediaStream, string mediaKey, string folder)
 		{
 			try
 			{
@@ -425,7 +425,7 @@ namespace TechHub.Service.Service
 				}
 
 				_logger.Information(
-					"Document uploaded successfully - PublicId: {PublicId}, Size: {Size}",uploadResult.PublicId,FormatFileSize(uploadResult.Bytes));
+					"Document uploaded successfully - PublicId: {PublicId}, Size: {Size}", uploadResult.PublicId, FormatFileSize(uploadResult.Bytes));
 
 				return new CloudinaryUploadResult
 				{
@@ -761,11 +761,11 @@ namespace TechHub.Service.Service
 		/// Signature (SHA-1):
 		///   "a7f8b9c2d3e4f5g6h7i8j9k0l1m2n3o4p5q6r7s8"
 		/// </summary>
-		public CloudinaryUploadToken GenerateUploadToken(string publicId,string folder,long timestamp)
+		public CloudinaryUploadToken GenerateUploadToken(string publicId, string folder, long timestamp)
 		{
 			try
 			{
-				_logger.Debug("Generating upload token - PublicId: {PublicId}, Folder: {Folder}",publicId,folder);
+				_logger.Debug("Generating upload token - PublicId: {PublicId}, Folder: {Folder}", publicId, folder);
 
 				// Parameters to include in signature
 				// MUST match exactly what frontend sends to Cloudinary
@@ -792,7 +792,7 @@ namespace TechHub.Service.Service
 					Timestamp = timestamp,
 					PublicId = publicId,
 					Folder = folder,
-					ApiKey =  _settings.ApiKey,  // Safe to expose (public identifier, not secret)
+					ApiKey = _settings.ApiKey,  // Safe to expose (public identifier, not secret)
 					CloudName = _settings.CloudName
 				};
 			}
@@ -866,14 +866,14 @@ namespace TechHub.Service.Service
 			}
 		}
 
-		public async Task<CloudinaryUploadResult> UploadSchoolLogoAsync(Stream imageStream,string fileName,Guid schoolId)
+		public async Task<CloudinaryUploadResult> UploadSchoolLogoAsync(Stream imageStream, string fileName, Guid schoolId)
 		{
 			// School logos go in permanent folder directly
 			// not temp — logos are always kept
 			var folder = $"schools/{schoolId}/logo";
 			var mediaKey = $"logo_{schoolId}";
 
-			return await UploadImageAsync(imageStream,mediaKey,folder);
+			return await UploadImageAsync(imageStream, mediaKey, folder);
 		}
 
 		/// <summary>
@@ -886,7 +886,7 @@ namespace TechHub.Service.Service
 			return _cloudinary.Api.UrlImgUp.Secure(true).BuildUrl(publicId);
 		}
 
-		public CloudinarySignatureResponse GenerateUploadSignature(Guid schoolId, Guid teacherId)
+		public CloudinarySignatureResponse GenerateUploadSignature(Guid schoolId, Guid teacherId, MediaType mediaType)
 		{
 			var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 			var apiSecret = _configuration["Cloudinary:ApiSecret"];
@@ -894,14 +894,22 @@ namespace TechHub.Service.Service
 			var cloudName = _configuration["Cloudinary:CloudName"];
 			var folder = $"techhub/{schoolId}/lessons";
 
-			// Build signature string
 			var signatureString = $"folder={folder}&timestamp={timestamp}{apiSecret}";
 
-			// SHA1 hash
 			using var sha1 = System.Security.Cryptography.SHA1.Create();
 			var bytes = System.Text.Encoding.UTF8.GetBytes(signatureString);
 			var hash = sha1.ComputeHash(bytes);
 			var signature = Convert.ToHexString(hash).ToLower();
+
+			// Derive resource_type from MediaType
+			var resourceType = mediaType switch
+			{
+				MediaType.Image => "image",
+				MediaType.Video => "video",
+				MediaType.Audio => "video",  // Cloudinary treats audio as video
+				MediaType.Document => "raw",
+				_ => "raw"
+			};
 
 			return new CloudinarySignatureResponse
 			{
@@ -909,16 +917,17 @@ namespace TechHub.Service.Service
 				ApiKey = apiKey,
 				CloudName = cloudName,
 				Timestamp = timestamp,
-				Folder = folder
+				Folder = folder,
+				ResourceType = resourceType   // ← frontend uses this in the upload URL
 			};
 		}
 	}
 
-	#region Result Classes
+		#region Result Classes
 
-	/// <summary>
-	/// Custom result class for all Cloudinary upload operations
-	/// </summary>
+		/// <summary>
+		/// Custom result class for all Cloudinary upload operations
+		/// </summary>
 	public class CloudinaryUploadResult
 	{
 		/// <summary>

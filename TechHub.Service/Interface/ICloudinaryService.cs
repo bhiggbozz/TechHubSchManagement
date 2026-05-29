@@ -94,7 +94,7 @@ public interface ICloudinaryService
 	Task<CloudinaryUploadResult> UploadSchoolLogoAsync(Stream imageStream,string fileName,Guid schoolId);
 	string GetUrl(Guid schoolId, MediaType mediaType, string entityId, bool isTemporary = false);
 	string GetRawUrl(string publicId);
-	CloudinarySignatureResponse GenerateUploadSignature(Guid schoolId, Guid teacherId);
+	CloudinarySignatureResponse GenerateUploadSignature(Guid schoolId, Guid teacherId, MediaType mediaType);
 
 }
 

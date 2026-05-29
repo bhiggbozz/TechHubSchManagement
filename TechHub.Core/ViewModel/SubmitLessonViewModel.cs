@@ -77,6 +77,8 @@ public class LessonMediaViewModel
 
 public class CloudinarySignatureResponse
 {
+	public string ResourceType;
+
 	public string Signature { get; set; }
 	public string ApiKey { get; set; }
 	public string CloudName { get; set; }
