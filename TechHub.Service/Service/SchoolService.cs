@@ -2229,6 +2229,10 @@ namespace TechHub.Service.Service
 		/// <summary>
 		/// Get existing subjects for the school to prevent duplicates
 		/// </summary>
+		/// 
+
+		
+
 		private async Task<List<string>> GetExistingSubjects(List<string> subjectNames, Guid schoolId)
 		{
 			try
@@ -4232,6 +4236,127 @@ namespace TechHub.Service.Service
 					ResponseMessage = "An unexpected error occurred",
 					Status = "failed"
 				};
+			}
+		}
+
+		public async Task<BaseResponse> GetStudentsByClassroom(Guid classroomId, AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Invalid school context",
+							Status = "failed"
+						};
+
+					var sql = $@"
+						SELECT
+							u.Id,
+							u.FirstName,
+							u.LastName,
+							u.UserName,
+							u.EmailAddress,
+							u.IsActive,
+							u.CreationDate
+						FROM   StudentClassroom sc
+						JOIN   Users            u  ON u.Id = sc.StudentId
+						WHERE  sc.ClassroomId = '{classroomId}'
+						AND    sc.SchoolId    = '{schoolId}'
+						AND    sc.IsActive    = 1
+						AND    u.IsActive     = 1
+						ORDER  BY u.FirstName ASC";
+
+					var rows = await _queryrepositoryUser.QueryAsync<StudentRowDto>(sql, new Dictionary<string, object>());
+
+					var students = rows.ToList();
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = students.Any()
+							? $"{students.Count} student(s) found"
+							: "No students found in this classroom",
+						Status = "success",
+						Data = students
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Error fetching students by classroom - ClassroomId: {ClassroomId}",
+						classroomId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching students",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		public async Task<BaseResponse> GetStudentsBySubject(Guid subjectId, AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Invalid school context",
+							Status = "failed"
+						};
+
+					var sql = $@"
+						SELECT
+							u.Id,
+							u.FirstName,
+							u.LastName,
+							u.UserName,
+							u.EmailAddress,
+							u.IsActive,
+							u.CreationDate
+						FROM   StudentMinorSubject sms
+						JOIN   Users               u  ON u.Id = sms.StudentId
+						WHERE  sms.SubjectId = '{subjectId}'
+						AND    sms.SchoolId  = '{schoolId}'
+						AND    u.IsActive    = 1
+						ORDER  BY u.FirstName ASC";
+
+					var rows = await _queryrepositoryUser.QueryAsync<StudentRowDto>(sql, new Dictionary<string, object>());
+
+					var students = rows.ToList();
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = students.Any()
+							? $"{students.Count} student(s) found"
+							: "No students found for this subject",
+						Status = "success",
+						Data = students
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Error fetching students by subject - SubjectId: {SubjectId}",
+						subjectId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching students",
+						Status = "failed"
+					};
+				}
 			}
 		}
 

@@ -815,29 +815,29 @@ public class LessonService : ILessonService
 				return NotFound("Lesson not found or has not been approved yet");
 
 			// Block access if outside the scheduled window
-			if (!lesson.IsAccessOpen)
-			{
-				var message = lesson.AccessDate.HasValue && DateTime.UtcNow < lesson.AccessDate.Value
-					? $"This lesson opens on {lesson.AccessDate.Value:dd MMM yyyy}" +
-					  (lesson.AccessTime.HasValue
-						  ? $" at {lesson.AccessTime.Value:hh\\:mm}"
-						  : string.Empty)
-					: "This lesson is no longer accessible";
+			//if (!lesson.IsAccessOpen)
+			//{
+			//	var message = lesson.AccessDate.HasValue && DateTime.UtcNow < lesson.AccessDate.Value
+			//		? $"This lesson opens on {lesson.AccessDate.Value:dd MMM yyyy}" +
+			//		  (lesson.AccessTime.HasValue
+			//			  ? $" at {lesson.AccessTime.Value:hh\\:mm}"
+			//			  : string.Empty)
+			//		: "This lesson is no longer accessible";
 
-				return new BaseResponse
-				{
-					ResponseCode = ResponseCode.Forbidden,
-					ResponseMessage = message,
-					Status = "failed",
-					Data = new
-					{
-						AccessDate = lesson.AccessDate,
-						AccessTime = lesson.AccessTime,
-						DurationMinutes = lesson.DurationMinutes,
-						AccessEndsAt = lesson.AccessEndsAt
-					}
-				};
-			}
+			//	return new BaseResponse
+			//	{
+			//		ResponseCode = ResponseCode.Forbidden,
+			//		ResponseMessage = message,
+			//		Status = "failed",
+			//		Data = new
+			//		{
+			//			AccessDate = lesson.AccessDate,
+			//			AccessTime = lesson.AccessTime,
+			//			DurationMinutes = lesson.DurationMinutes,
+			//			AccessEndsAt = lesson.AccessEndsAt
+			//		}
+			//	};
+			//}
 
 			// Fetch all active media ordered for playback
 			var mediaQuery = $@"

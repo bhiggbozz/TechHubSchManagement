@@ -5,6 +5,7 @@ using TechHub.Core.DTO;
 using TechHub.Core.Entities;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.school;
 using TechHub.Core.ViewModel.Users;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
@@ -120,8 +121,7 @@ namespace TechhubMS.Controllers
 		[ProducesResponseType(typeof(BaseResponse), 400)]
 		[ProducesResponseType(typeof(BaseResponse), 403)]
 		[ProducesResponseType(typeof(BaseResponse), 404)]
-		public async Task<ActionResult<BaseResponse>> AssignPermissions(
-			[FromBody] AssignAdminPermissionsViewModel model)
+		public async Task<ActionResult<BaseResponse>> AssignPermissions([FromBody] AssignAdminPermissionsViewModel model)
 		{
 			var userClaims = User.GetAuthenticatedUserClaims();
 			var result = await _userService.AssignAdminPermissions(model, userClaims);
@@ -251,6 +251,60 @@ namespace TechhubMS.Controllers
 				_ => BadRequest(result)
 			};
 		}
+
+		/// <summary>
+		/// Assign a teacher to a classroom
+		/// </summary>
+		/// <param name="model">Teacher and classroom assignment details</param>
+		/// <returns>Assignment result</returns>
+		/// <response code="200">Teacher assigned successfully</response>
+		/// <response code="400">Invalid request or teacher already assigned to this classroom</response>
+		/// <response code="403">Not authorized to assign teachers to classrooms</response>
+		/// <response code="404">Teacher or classroom not found</response>
+		[HttpPost("AssignTeacherToClassroom")]
+		[Authorize(Roles = "SuperAdministrator,Administrator")]
+		[ProducesResponseType(typeof(BaseResponse), 200)]
+		[ProducesResponseType(typeof(BaseResponse), 400)]
+		[ProducesResponseType(typeof(BaseResponse), 403)]
+		[ProducesResponseType(typeof(BaseResponse), 404)]
+		public async Task<ActionResult<BaseResponse>> AssignTeacherToClassroom([FromBody] AssignTeacherToClassroomViewModel model)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.AssignTeacherToClassroom(model, userClaims);
+			return Ok(result);
+		}
+
+
+		[HttpPut("teacher/{teacherId}/subject")]
+		[Authorize(Roles = "Administrator,SuperAdministrator")]
+		[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+		[ProducesResponseType(StatusCodes.Status400BadRequest)]
+		[ProducesResponseType(StatusCodes.Status403Forbidden)]
+		[ProducesResponseType(StatusCodes.Status404NotFound)]
+		public async Task<IActionResult> UpdateTeacherSubject([FromRoute] Guid teacherId,[FromBody] UpdateTeacherSubjectViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			if (claims == null || string.IsNullOrEmpty(claims.UserId))
+				return Unauthorized(new BaseResponse
+				{
+					ResponseCode = ResponseCode.Unauthorized,
+					ResponseMessage = "Invalid user claims",
+					Status = "failed"
+				});
+
+			var result = await _userService.UpdateTeacherSubject(teacherId, model, claims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
+		}
+
+
 
 	}
 
