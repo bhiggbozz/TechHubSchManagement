@@ -4,17 +4,17 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace TechHub.Core.Entities
+namespace TechHub.Core.Entities;
+
+public class TeacherSubject
 {
-    public class TeacherSubject
-    {
-        public Guid Id { get; set; } = Guid.NewGuid();
-        public string CreationDate { get; set; } = DateTime.Now.ToString();
-        public string ModifiedDate { get; set; } = DateTime.Now.ToString();
-        public Guid TeacherId { get; set; }
-        public Guid SubjectId { get; set; }
-        public Guid SchoolId { get; set; }
-        public bool IsActive { get; set; }
-        public Guid CreatedBy { get; set; }
-    }
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string CreationDate { get; set; } = DateTime.Now.ToString();
+    public string ModifiedDate { get; set; } = DateTime.Now.ToString();
+    public Guid TeacherId { get; set; }
+    public Guid SubjectId { get; set; }
+    public Guid SchoolId { get; set; }
+    public bool IsActive { get; set; }
+    public Guid CreatedBy { get; set; }
 }
+

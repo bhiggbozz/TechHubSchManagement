@@ -10,6 +10,7 @@ using TechHub.Core.Enum;
 using TechHub.Core.Model;
 using TechHub.Core.Models;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.school;
 using TechHub.Core.ViewModel.Users;
 
 namespace TechHub.Service.Interface
@@ -43,5 +44,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetUsersByRole(AuthenticatedUserClaims userClaims, int? roleId, int pageNumber, int pageSize);
 		Task<BaseResponse> RespondToApproval(Guid approvalId, ApprovalRespondViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> GetPendingApprovalsForUser(AuthenticatedUserClaims claims);
+		Task<BaseResponse> AssignTeacherToClassroom(AssignTeacherToClassroomViewModel model, AuthenticatedUserClaims userClaims);      
+		Task<BaseResponse> UpdateTeacherSubject(Guid teacherId, UpdateTeacherSubjectViewModel model, AuthenticatedUserClaims claims);
 	}
 }

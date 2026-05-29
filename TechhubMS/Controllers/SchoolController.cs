@@ -10,6 +10,7 @@ using TechHub.Core.ViewModel.school;
 using TechHub.QuestionBank.Core.Helpers;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
+using TechHub.Service.Service;
 
 namespace TechhubMS.Controllers
 {
@@ -216,8 +217,7 @@ namespace TechhubMS.Controllers
 		/// POST api/subtopic/subtopics
 		/// </summary>
 		[HttpPost("subtopics")]
-		public async Task<IActionResult> CreateSubTopic(
-			[FromBody] CreateSubTopicViewModel model)
+		public async Task<IActionResult> CreateSubTopic([FromBody] CreateSubTopicViewModel model)
 		{
 			var userClaims = User.GetAuthenticatedUserClaims();
 			var result = await _schoolService.CreateSubTopic(model, userClaims);
@@ -293,6 +293,44 @@ namespace TechhubMS.Controllers
 				ResponseCode.Conflict => Conflict(result),
 				ResponseCode.Forbidden => StatusCode(403, result),
 				_ => BadRequest(result)
+			};
+		}
+
+		/// <summary>
+		/// Get all students enrolled in a specific classroom
+		/// </summary>
+		[HttpGet("students/classroom/{classroomId}")]
+		[Authorize]
+		public async Task<IActionResult> GetStudentsByClassroom(Guid classroomId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var response = await _schoolService.GetStudentsByClassroom(classroomId, claims);
+
+			return response.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(response),
+				ResponseCode.NotFound => NotFound(response),
+				ResponseCode.Unauthorized => Unauthorized(response),
+				_ => BadRequest(response)
+			};
+		}
+
+		/// <summary>
+		/// Get all students enrolled in a specific subject
+		/// </summary>
+		[HttpGet("students/subject/{subjectId}")]
+		[Authorize]
+		public async Task<IActionResult> GetStudentsBySubject(Guid subjectId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var response = await _schoolService.GetStudentsBySubject(subjectId, claims);
+
+			return response.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(response),
+				ResponseCode.NotFound => NotFound(response),
+				ResponseCode.Unauthorized => Unauthorized(response),
+				_ => BadRequest(response)
 			};
 		}
 

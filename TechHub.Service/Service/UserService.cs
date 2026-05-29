@@ -32,6 +32,7 @@ using TechHub.Core.Models;
 using TechHub.Core.ResponseModel;
 using TechHub.Core.Utilities;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.school;
 using TechHub.Core.ViewModel.Users;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
@@ -68,6 +69,10 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<AdminPermissions> _adminPermissionsQueryRespository;
 		private readonly IQueryRepository<RefreshTokens> _queryRepoRefreshToken;
 		private readonly IQueryRepository<ApprovalRequests> _queryApprovalRequests;
+		private readonly IQueryRepository<TeacherClassroom> _teacherClassroomQueryRespository;
+		private readonly IQueryRepository<TeacherSubject> _teacherSubjectQueryRespository;
+		private readonly IQueryRepository<Subjects> _subjectQueryRespository;
+
 
 
 
@@ -87,8 +92,10 @@ namespace TechHub.Service.Service
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IConfiguration configuration, ICommandRespository<StudentClassroom> commandRepositoryStudentClassroom, ICommandRespository<TeacherClassroom> commandRepositoryTeacherClassroom,
 			ICommandRespository<TeacherSubject> commandRepositoryTeacherSubject, IQueryRepository<TenantInfo> tenantQueryRespository,
 			ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, ICommandRespository<RefreshTokens> commandRepoRefreshToken, IQueryRepository<ApprovalRequests> queryApprovalRequests,
-			ICommandRespository<AdminPermissions> adminPermissionsCommandRepository, IQueryRepository<RefreshTokens> queryRepoRefreshToken,ITenantService tenantService,
-			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator)
+			ICommandRespository<AdminPermissions> adminPermissionsCommandRepository, IQueryRepository<RefreshTokens> queryRepoRefreshToken,ITenantService tenantService, 
+			IQueryRepository<TeacherClassroom> teacherClassroomQueryRespository, IQueryRepository<TeacherSubject> teacherSubjectQueryRespository,
+			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository, IQueryRepository<Subjects> subjectQueryRespository,
+			IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
@@ -111,6 +118,10 @@ namespace TechHub.Service.Service
 			_commandRepoRefreshToken = commandRepoRefreshToken;
 			_queryRepoRefreshToken = queryRepoRefreshToken;
 			_queryApprovalRequests = queryApprovalRequests;
+			_teacherClassroomQueryRespository = teacherClassroomQueryRespository;
+			_teacherSubjectQueryRespository = teacherSubjectQueryRespository;
+			_subjectQueryRespository = subjectQueryRespository;
+			
 
 			_emailService = emailService;
 			_logger = logger;
@@ -2867,6 +2878,7 @@ namespace TechHub.Service.Service
 			return dto;
 		}
 
+
 		// ── POST: HeadTeacher approves or rejects an item ───────────────────────────
 		public async Task<BaseResponse> RespondToApproval(Guid approvalId, ApprovalRespondViewModel model, AuthenticatedUserClaims claims)
 		{
@@ -3233,6 +3245,242 @@ namespace TechHub.Service.Service
 		}
 
 
+		public async Task<BaseResponse> AssignAdminPermissions(AssignAdminPermissionsViewModel model,AuthenticatedUserClaims userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			{
+				try
+				{
+					// ── Parse claims ─────────────────────────────────────────
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					{
+						_logger.Warning(
+							"Invalid SchoolId format - SchoolId: {SchoolId}",
+							userClaims.SchoolId);
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format",
+							Status = "failed"
+						};
+					}
+
+					if (!Guid.TryParse(userClaims.UserId, out var requestingUserId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid UserId format",
+							Status = "failed"
+						};
+
+					// ── Verify requesting user is SuperAdministrator ──────────
+					var requestingUser = await _queryrepositoryUser.Get(requestingUserId);
+					if (requestingUser == null)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "User not found",
+							Status = "failed"
+						};
+
+					if (requestingUser.RoleId != (int)UserRole.SuperAdministrator)
+					{
+						_logger.Warning(
+							"Unauthorized permission assignment attempt - " +
+							"UserId: {UserId}, Role: {Role}",
+							requestingUserId,
+							((UserRole)requestingUser.RoleId).ToString());
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Only SuperAdministrators can assign admin permissions",
+							Status = "failed"
+						};
+					}
+
+					// ── Validate permission values ────────────────────────────
+					var invalidPermissions = model.Permissions.GetInvalidPermissions();
+					if (invalidPermissions.Any())
+					{
+						_logger.Warning(
+							"Invalid permission values - InvalidValues: {InvalidValues}",
+							string.Join(", ", invalidPermissions));
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = $"Invalid permission values: {string.Join(", ", invalidPermissions)}. " +
+											  "Valid values are: 1, 2, 4, 8, 16, 32, 64, 128",
+							Status = "failed"
+						};
+					}
+
+					_logger.Information(
+						"Assigning admin permissions - TargetUserId: {TargetUserId}, " +
+						"Permissions: [{Permissions}]",
+						model.AdminUserId,
+						string.Join(", ", model.Permissions));
+
+					// ── Verify target admin exists ────────────────────────────
+					var targetAdmin = await _queryrepositoryUser.Get(model.AdminUserId);
+					if (targetAdmin == null)
+					{
+						_logger.Warning(
+							"Target admin not found - UserId: {UserId}", model.AdminUserId);
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Admin user not found",
+							Status = "failed"
+						};
+					}
+
+					// ── Multi-tenancy check ───────────────────────────────────
+					if (targetAdmin.SchoolId != schoolId)
+					{
+						_logger.Warning(
+							"Admin belongs to different school - AdminId: {AdminId}, " +
+							"AdminSchoolId: {AdminSchoolId}, RequestSchoolId: {RequestSchoolId}",
+							model.AdminUserId, targetAdmin.SchoolId, schoolId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Admin belongs to a different school",
+							Status = "failed"
+						};
+					}
+
+					// ── Verify target user is Administrator or SuperAdministrator
+					if (targetAdmin.RoleId != (int)UserRole.Administrator && targetAdmin.RoleId != (int)UserRole.SuperAdministrator)
+					{
+						_logger.Warning(
+							"User is not an admin - UserId: {UserId}, Role: {Role}",
+							model.AdminUserId,
+							((UserRole)targetAdmin.RoleId).ToString());
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = $"User {targetAdmin.FirstName} {targetAdmin.LastName} is not an Administrator",
+							Status = "failed"
+						};
+					}
+
+					// ── Verify target admin is active ─────────────────────────
+					if (!targetAdmin.IsActive)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = $"Admin {targetAdmin.FirstName} {targetAdmin.LastName} is not active",
+							Status = "failed"
+						};
+
+					// ── Convert permissions list to enum ──────────────────────
+					var permissionsEnum = model.Permissions.ToAdminPermission();
+					var permissionsValue = (int)permissionsEnum;
+
+					// ── Check if permissions record already exists ────────────
+					var existingPermissions = await GetExistingPermissions(
+						model.AdminUserId, schoolId);
+
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+					if (existingPermissions != null)
+					{
+						// Update existing permissions
+						var updateDict = new Dictionary<string, object>
+						{
+							{ "Permissions",  permissionsValue },
+							{ "ModifiedDate", now              }
+						};
+
+						var whereClause = new KeyValuePair<string, object>("Id", existingPermissions.Id);
+
+						await _adminPermissionsCommandRepository.UpdateTableColumnById(updateDict, whereClause);
+
+						_logger.Information(
+							"Admin permissions updated - AdminId: {AdminId}, " +
+							"PermissionsValue: {PermissionsValue}, " +
+							"Permissions: [{Permissions}]",
+							model.AdminUserId, permissionsValue,
+							string.Join(", ", model.Permissions));
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.successful,
+							ResponseMessage = $"Permissions updated successfully for " +
+											  $"{targetAdmin.FirstName} {targetAdmin.LastName}",
+							Status = "successful",
+							Data = new
+							{
+								AdminId = model.AdminUserId,
+								AdminName = $"{targetAdmin.FirstName} {targetAdmin.LastName}",
+								PermissionsValue = permissionsValue,
+								Permissions = model.Permissions,
+								PermissionNames = model.Permissions.ToPermissionNames()
+							}
+						};
+					}
+					else
+					{
+						// Create new permissions record
+						var permissionsDict = new Dictionary<string, object>
+						{
+							{ "Id",           Guid.NewGuid()      },
+							{ "UserId",       model.AdminUserId   },
+							{ "SchoolId",     schoolId             },
+							{ "Permissions",  permissionsValue     },
+							{ "CreationDate", now                  },
+							{ "ModifiedDate", now                  },
+							{ "CreatedBy",    requestingUserId     },
+							{ "IsActive",     true                 }
+						};
+
+						await _adminPermissionsCommandRepository.Create(permissionsDict);
+
+						_logger.Information(
+							"Admin permissions created - AdminId: {AdminId}, " +
+							"PermissionsValue: {PermissionsValue}, " +
+							"Permissions: [{Permissions}]",
+							model.AdminUserId, permissionsValue,
+							string.Join(", ", model.Permissions));
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.successful,
+							ResponseMessage = $"Permissions assigned successfully to " +
+											  $"{targetAdmin.FirstName} {targetAdmin.LastName}",
+							Status = "successful",
+							Data = new
+							{
+								AdminId = model.AdminUserId,
+								AdminName = $"{targetAdmin.FirstName} {targetAdmin.LastName}",
+								PermissionsValue = permissionsValue,
+								Permissions = model.Permissions,
+								PermissionNames = model.Permissions.ToPermissionNames()
+							}
+						};
+					}
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Error assigning admin permissions - AdminId: {AdminId}",
+						model.AdminUserId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while assigning permissions",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+
 		/// <summary>
 		/// Validate student exists, belongs to school, and is active
 		/// </summary>
@@ -3311,11 +3559,11 @@ namespace TechHub.Service.Service
 			{
 				var query = "SELECT COUNT(*) FROM StudentCourses WHERE StudentId = @StudentId AND ClassroomId = @ClassroomId AND Status = @Status";
 				var parameters = new Dictionary<string, object>
-		{
-			{ "StudentId", studentId },
-			{ "ClassroomId", classroomId },
-			{ "Status", (int)StudentClassroomStatus.Active }
-		};
+				{
+					{ "StudentId", studentId },
+					{ "ClassroomId", classroomId },
+					{ "Status", (int)StudentClassroomStatus.Active }
+				};
 
 				var count = await _studentCoursesQueryRespository.CountAsync(query, parameters);
 				return count > 0;
@@ -3605,247 +3853,857 @@ namespace TechHub.Service.Service
 		/// 4. Convert List<int> to single int using bitwise OR
 		/// 5. Store in database
 		/// </summary>
-		public async Task<BaseResponse> AssignAdminPermissions(AssignAdminPermissionsViewModel model,AuthenticatedUserClaims userClaims)
+		//public async Task<BaseResponse> AssignTeacherToClassroom(AssignTeacherToClassroomViewModel model,AuthenticatedUserClaims userClaims)
+		//{
+		//	using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+		//	{
+		//		try
+		//		{
+		//			// ===== PARSE CLAIMS =====
+
+		//			if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = "Invalid SchoolId format in token",
+		//					Status = "failed"
+		//				};
+
+		//			if (!Guid.TryParse(userClaims.UserId, out var requestingUserId))
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = "Invalid UserId format in token",
+		//					Status = "failed"
+		//				};
+
+		//			if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true,
+		//				out UserRole userRole))
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = "Invalid role format in token",
+		//					Status = "failed"
+		//				};
+
+		//			// ===== AUTHORIZATION =====
+
+		//			if (userRole == UserRole.Administrator)
+		//			{
+		//				var hasPermission = await this.HasPermission(
+		//					requestingUserId,
+		//					schoolId,
+		//					AdminPermission.ManageClassrooms);
+
+		//				if (!hasPermission)
+		//				{
+		//					_logger.Warning(
+		//						"Admin lacks ManageClassrooms permission - AdminId: {AdminId}",
+		//						requestingUserId);
+		//					return new BaseResponse
+		//					{
+		//						ResponseCode = ResponseCode.Forbidden,
+		//						ResponseMessage = "You don't have permission to assign teachers to classrooms.",
+		//						Status = "failed"
+		//					};
+		//				}
+		//			}
+		//			else if (userRole != UserRole.SuperAdministrator)
+		//			{
+		//				_logger.Warning(
+		//					"Unauthorized classroom assignment attempt - UserId: {UserId}, Role: {Role}",
+		//					requestingUserId, userRole.ToString());
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.Forbidden,
+		//					ResponseMessage = "You are not authorized to assign teachers to classrooms",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			// ===== VALIDATE TEACHER =====
+
+		//			var teacher = await _queryrepositoryUser.Get(model.TeacherId);
+		//			if (teacher is null)
+		//			{
+		//				_logger.Warning(
+		//					"Teacher not found - TeacherId: {TeacherId}", model.TeacherId);
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.NotFound,
+		//					ResponseMessage = "Teacher not found",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			if (teacher.SchoolId != schoolId)
+		//			{
+		//				_logger.Warning(
+		//					"Cross-school assignment attempt - TeacherId: {TeacherId}, " +
+		//					"TeacherSchool: {TeacherSchool}, RequestSchool: {RequestSchool}",
+		//					model.TeacherId, teacher.SchoolId, schoolId);
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.Forbidden,
+		//					ResponseMessage = "Teacher belongs to a different school",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			if (!teacher.IsActive)
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = "Cannot assign an inactive teacher to a classroom",
+		//					Status = "failed"
+		//				};
+
+		//			// ── Role check ───────────────────────────────────────────
+		//			// ClassTeacher  → only one classroom at a time
+		//			// HeadTeacher   → can have multiple classrooms
+		//			// Administrator → cannot be assigned to a classroom
+		//			var teacherRole = (UserRole)teacher.RoleId;
+
+		//			if (teacherRole != UserRole.ClassTeacher && teacherRole != UserRole.HeadTeacher)
+		//			{
+		//				_logger.Warning(
+		//					"User is not a ClassTeacher or HeadTeacher - " +
+		//					"UserId: {UserId}, Role: {Role}",
+		//					model.TeacherId, teacherRole.ToString());
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.BadRequest,
+		//					ResponseMessage = "User is not a Class Teacher or Head Teacher",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			// ===== VALIDATE CLASSROOM =====
+
+		//			var classroom = await _teacherClassroomQueryRespository.Get(model.ClassroomId);
+
+		//			if (classroom is null)
+		//			{
+		//				_logger.Warning(
+		//					"Classroom not found - ClassroomId: {ClassroomId}",
+		//					model.ClassroomId);
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.NotFound,
+		//					ResponseMessage = "Classroom not found",
+		//					Status = "failed"
+		//				};
+		//			}
+
+		//			if (classroom.SchoolId != schoolId)
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.Forbidden,
+		//					ResponseMessage = "Classroom belongs to a different school",
+		//					Status = "failed"
+		//				};
+
+		//			// ===== CLASS TEACHER — ONE CLASSROOM ONLY =====
+
+		//			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+		//			Guid? previousClassroomId = null;
+
+		//			if (teacherRole == UserRole.ClassTeacher)
+		//			{
+		//				// ClassTeacher can only have one active classroom
+		//				// Soft delete existing assignment before creating new one
+		//				var existingAssignment = await _teacherClassroomQueryRespository.GetBy(new Dictionary<string, object>
+		//					{
+		//						{ "TeacherId", model.TeacherId },
+		//						{ "SchoolId",  schoolId        },
+		//						{ "IsActive",  true            }
+		//					});
+
+		//				if (existingAssignment is not null)
+		//				{
+		//					if (existingAssignment.ClassroomId == model.ClassroomId)
+		//						return new BaseResponse
+		//						{
+		//							ResponseCode = ResponseCode.BadRequest,
+		//							ResponseMessage = "Teacher is already assigned to this classroom",
+		//							Status = "failed"
+		//						};
+
+		//					// Soft delete existing assignment — preserves history
+		//					var deactivateDict = new Dictionary<string, object>
+		//					{
+		//						{ "IsActive",    false },
+		//						{ "ModifiedDate", now  }
+		//					};
+
+		//					var whereClause = new KeyValuePair<string, object>(
+		//						"Id", existingAssignment.Id);
+
+		//					await _commandRepositoryTeacherClassroom.UpdateTableColumnById(deactivateDict, whereClause);
+
+		//					previousClassroomId = existingAssignment.ClassroomId;
+
+		//					_logger.Information(
+		//						"Deactivated previous classroom assignment - " +
+		//						"TeacherId: {TeacherId}, OldClassroomId: {OldClassroomId}",
+		//						model.TeacherId, existingAssignment.ClassroomId);
+		//				}
+		//			}
+		//			else if (teacherRole == UserRole.HeadTeacher)
+		//			{
+		//				// HeadTeacher — assign multiple classrooms at once
+		//				// Use ClassroomIds list if provided, fall back to single ClassroomId
+		//				var classroomIds = model.ClassroomIds?.Any() == true ? model.ClassroomIds : new List<Guid> { model.ClassroomId };
+
+		//				if (!classroomIds.Any())
+		//					return new BaseResponse
+		//					{
+		//						ResponseCode = ResponseCode.BadRequest,
+		//						ResponseMessage = "At least one classroom is required",
+		//						Status = "failed"
+		//					};
+
+		//				foreach (var cId in classroomIds)
+		//				{
+		//					// Verify each classroom exists and belongs to school
+		//					var cls = await _teacherClassroomQueryRespository.Get(cId);
+		//					if (cls == null || cls.SchoolId != schoolId)
+		//						return new BaseResponse
+		//						{
+		//							ResponseCode = ResponseCode.NotFound,
+		//							ResponseMessage = $"Classroom {cId} not found",
+		//							Status = "failed"
+		//						};
+
+		//					// Check for duplicate — skip if already assigned
+		//					var existing = await _teacherClassroomQueryRespository
+		//						.GetBy(new Dictionary<string, object>
+		//						{
+		//							{ "TeacherId",   model.TeacherId },
+		//							{ "ClassroomId", cId             },
+		//							{ "SchoolId",    schoolId         },
+		//							{ "IsActive",    true             }
+		//						});
+
+		//					if (existing is not null)
+		//					{
+		//						_logger.Information(
+		//							"HeadTeacher already assigned to classroom - skipping. " +
+		//							"TeacherId: {TeacherId}, ClassroomId: {ClassroomId}",
+		//							model.TeacherId, cId);
+		//						continue;  // skip duplicate, do not error
+		//					}
+
+		//					var newAssignment2 = new Dictionary<string, object>
+		//					{
+		//						{ "Id",           Guid.NewGuid()  },
+		//						{ "TeacherId",    model.TeacherId  },
+		//						{ "ClassroomId",  cId              },
+		//						{ "SchoolId",     schoolId         },
+		//						{ "IsPrimary",    model.IsPrimary  },
+		//						{ "IsActive",     true             },
+		//						{ "CreatedBy",    requestingUserId },
+		//						{ "CreationDate", now              },
+		//						{ "ModifiedDate", now              }
+		//					};
+
+		//					await _commandRepositoryTeacherClassroom.Create(newAssignment2);
+
+		//					_logger.Information(
+		//						"HeadTeacher assigned to classroom - " +
+		//						"TeacherId: {TeacherId}, ClassroomId: {ClassroomId}",
+		//						model.TeacherId, cId);
+		//				}
+
+		//				// Return early for HeadTeacher
+		//				return new BaseResponse
+		//				{
+		//					ResponseCode = ResponseCode.successful,
+		//					ResponseMessage = $"{teacher.FirstName} {teacher.LastName} has been assigned to classrooms successfully",
+		//					Status = "successful",
+		//					Data = new
+		//					{
+		//						TeacherId = model.TeacherId,
+		//						TeacherName = $"{teacher.FirstName} {teacher.LastName}",
+		//						TeacherRole = teacherRole.ToString(),
+		//						ClassroomIds = classroomIds,
+		//						AssignedBy = requestingUserId,
+		//						AssignedAt = now
+		//					}
+		//				};
+		//			}
+
+		//			// ===== INSERT NEW ASSIGNMENT =====
+
+		//			var newAssignment = new Dictionary<string, object>
+		//			{
+		//				{ "Id",           Guid.NewGuid()      },
+		//				{ "TeacherId",    model.TeacherId      },
+		//				{ "ClassroomId",  model.ClassroomId   },
+		//				{ "SchoolId",     schoolId             },
+		//				{ "IsPrimary",    model.IsPrimary      },
+		//				{ "IsActive",     true                 },
+		//				{ "CreatedBy",    requestingUserId     },
+		//				{ "CreationDate", now                  },
+		//				{ "ModifiedDate", now                  }
+		//			};
+
+		//			await _commandRepositoryTeacherClassroom.Create(newAssignment);
+
+		//			_logger.Information(
+		//				"Teacher assigned to classroom - TeacherId: {TeacherId}, " +
+		//				"ClassroomId: {ClassroomId}, Role: {Role}, " +
+		//				"IsPrimary: {IsPrimary}, AssignedBy: {AssignedBy}",
+		//				model.TeacherId, model.ClassroomId,
+		//				teacherRole.ToString(), model.IsPrimary, requestingUserId);
+
+		//			return new BaseResponse
+		//			{
+		//				ResponseCode = ResponseCode.successful,
+		//				ResponseMessage = $"{teacher.FirstName} {teacher.LastName} has been assigned to the classroom successfully",
+		//				Status = "successful",
+		//				Data = new
+		//				{
+		//					TeacherId = model.TeacherId,
+		//					TeacherName = $"{teacher.FirstName} {teacher.LastName}",
+		//					TeacherRole = teacherRole.ToString(),
+		//					ClassroomId = model.ClassroomId,
+		//					IsPrimary = model.IsPrimary,
+		//					PreviousClassroomId = previousClassroomId,
+		//					AssignedBy = requestingUserId,
+		//					AssignedAt = now
+		//				}
+		//			};
+		//		}
+		//		catch (Exception ex)
+		//		{
+		//			_logger.Error(ex,
+		//				"Error assigning teacher to classroom - " +
+		//				"TeacherId: {TeacherId}, ClassroomId: {ClassroomId}",
+		//				model.TeacherId, model.ClassroomId);
+		//			return new BaseResponse
+		//			{
+		//				ResponseCode = ResponseCode.ErrorOccured,
+		//				ResponseMessage = "An unexpected error occurred while assigning teacher to classroom",
+		//				Status = "failed"
+		//			};
+		//		}
+		//	}
+		//}
+
+
+		public async Task<BaseResponse> AssignTeacherToClassroom(AssignTeacherToClassroomViewModel model,AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
-			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
 			{
 				try
 				{
-					// Validation 1: Parse GUIDs
-					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
-					{
-						_logger.Warning("Invalid SchoolId format - SchoolId: {SchoolId}", userClaims.SchoolId);
+					// ===== PARSE CLAIMS =====
 
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = "Invalid SchoolId format",
+							ResponseMessage = "Invalid SchoolId format in token",
 							Status = "failed"
 						};
-					}
 
 					if (!Guid.TryParse(userClaims.UserId, out var requestingUserId))
-					{
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = "Invalid UserId format",
+							ResponseMessage = "Invalid UserId format in token",
 							Status = "failed"
 						};
-					}
 
-					// Validation 2: Check requesting user is SuperAdministrator
-					var requestingUser = await _queryrepositoryUser.Get(requestingUserId);
-					if (requestingUser == null)
-					{
+					if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true,
+						out UserRole userRole))
 						return new BaseResponse
 						{
-							ResponseCode = ResponseCode.Unauthorized,
-							ResponseMessage = "User not found",
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid role format in token",
 							Status = "failed"
 						};
-					}
 
-					if (requestingUser.RoleId != (int)UserRole.SuperAdministrator)
+					// ===== AUTHORIZATION =====
+
+					if (userRole == UserRole.Administrator)
+					{
+						var hasPermission = await this.HasPermission(
+							requestingUserId,
+							schoolId,
+							AdminPermission.ManageClassrooms);
+
+						if (!hasPermission)
+						{
+							_logger.Warning(
+								"Admin lacks ManageClassrooms permission - AdminId: {AdminId}",
+								requestingUserId);
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Forbidden,
+								ResponseMessage = "You don't have permission to assign teachers to classrooms.",
+								Status = "failed"
+							};
+						}
+					}
+					else if (userRole != UserRole.SuperAdministrator)
 					{
 						_logger.Warning(
-							"Unauthorized permission assignment attempt - UserId: {UserId}, Role: {Role}",
-							requestingUserId,
-							((UserRole)requestingUser.RoleId).ToString());
-
+							"Unauthorized classroom assignment attempt - UserId: {UserId}, Role: {Role}",
+							requestingUserId, userRole.ToString());
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Forbidden,
-							ResponseMessage = "Only SuperAdministrators can assign admin permissions",
+							ResponseMessage = "You are not authorized to assign teachers to classrooms",
 							Status = "failed"
 						};
 					}
 
-					// Validation 3: Check for invalid permission values
-					// Uses extension method to find values not in {0, 1, 2, 4, 8, 16, 32, 64}
-					var invalidPermissions = model.Permissions.GetInvalidPermissions();
+					// ===== VALIDATE TEACHER =====
 
-					if (invalidPermissions.Any())
+					var teacher = await _queryrepositoryUser.Get(model.TeacherId);
+					if (teacher is null)
 					{
 						_logger.Warning(
-							"Invalid permission values provided - InvalidValues: {InvalidValues}",
-							string.Join(", ", invalidPermissions));
-
-						return new BaseResponse
-						{
-							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = $"Invalid permission values: {string.Join(", ", invalidPermissions)}. Valid values are: 1, 2, 4, 8, 16, 32, 64",
-							Status = "failed"
-						};
-					}
-
-					_logger.Information(
-						"Assigning admin permissions - TargetUserId: {TargetUserId}, Permissions: [{Permissions}]",
-						model.AdminUserId,
-						string.Join(", ", model.Permissions));
-
-					// Validation 4: Check target admin user exists
-					var targetAdmin = await _queryrepositoryUser.Get(model.AdminUserId);
-					if (targetAdmin == null)
-					{
-						_logger.Warning("Target admin not found - UserId: {UserId}", model.AdminUserId);
-
+							"Teacher not found - TeacherId: {TeacherId}", model.TeacherId);
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.NotFound,
-							ResponseMessage = "Admin user not found",
+							ResponseMessage = "Teacher not found",
 							Status = "failed"
 						};
 					}
 
-					// Validation 5: Multi-tenancy check
-					if (targetAdmin.SchoolId != schoolId)
+					if (teacher.SchoolId != schoolId)
 					{
 						_logger.Warning(
-							"Admin belongs to different school - AdminId: {AdminId}, AdminSchoolId: {AdminSchoolId}, RequestSchoolId: {RequestSchoolId}",
-							model.AdminUserId,
-							targetAdmin.SchoolId,
-							schoolId);
-
+							"Cross-school assignment attempt - TeacherId: {TeacherId}, " +
+							"TeacherSchool: {TeacherSchool}, RequestSchool: {RequestSchool}",
+							model.TeacherId, teacher.SchoolId, schoolId);
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.Forbidden,
-							ResponseMessage = "Admin belongs to a different school",
+							ResponseMessage = "Teacher belongs to a different school",
 							Status = "failed"
 						};
 					}
 
-					// Validation 6: Check target user role
-					if (targetAdmin.RoleId != (int)UserRole.Administrator &&
-						targetAdmin.RoleId != (int)UserRole.SuperAdministrator)
+					if (!teacher.IsActive)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Cannot assign an inactive teacher to a classroom",
+							Status = "failed"
+						};
+
+					// ── Role check ───────────────────────────────────────────
+					// ClassTeacher  → only one classroom at a time
+					// HeadTeacher   → can have multiple classrooms
+					// Administrator → cannot be assigned to a classroom
+					var teacherRole = (UserRole)teacher.RoleId;
+
+					if (teacherRole != UserRole.ClassTeacher && teacherRole != UserRole.HeadTeacher)
 					{
 						_logger.Warning(
-							"User is not an admin - UserId: {UserId}, Role: {Role}",
-							model.AdminUserId,
-							((UserRole)targetAdmin.RoleId).ToString());
-
+							"User is not a ClassTeacher or HeadTeacher - " +
+							"UserId: {UserId}, Role: {Role}",
+							model.TeacherId, teacherRole.ToString());
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = $"User {targetAdmin.FirstName} {targetAdmin.LastName} is not an Administrator",
+							ResponseMessage = "User is not a Class Teacher or Head Teacher",
 							Status = "failed"
 						};
 					}
 
-					// Validation 7: Check target user is active
-					if (!targetAdmin.IsActive)
+					// ===== VALIDATE CLASSROOM =====
+
+					var classroom = await _teacherClassroomQueryRespository.Get(model.ClassroomId);
+
+					if (classroom is null)
 					{
+						_logger.Warning(
+							"Classroom not found - ClassroomId: {ClassroomId}",
+							model.ClassroomId);
 						return new BaseResponse
 						{
-							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = $"Admin {targetAdmin.FirstName} {targetAdmin.LastName} is not active",
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Classroom not found",
 							Status = "failed"
 						};
 					}
 
-					// Convert List<int> to AdminPermission enum using extension method
-					// Example: [1, 2, 16] → (AdminPermission)19
-					var permissionsEnum = model.Permissions.ToAdminPermission();
-					var permissionsValue = (int)permissionsEnum;
+					if (classroom.SchoolId != schoolId)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Classroom belongs to a different school",
+							Status = "failed"
+						};
 
-					// Check if permissions record already exists
-					var existingPermissions = await GetExistingPermissions(model.AdminUserId, schoolId);
+					// ===== CLASS TEACHER — ONE CLASSROOM ONLY =====
 
 					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+					Guid? previousClassroomId = null;
 
-					if (existingPermissions != null)
+					if (teacherRole == UserRole.ClassTeacher)
 					{
-						// Update existing permissions
-						var updateDict = new Dictionary<string, object>
-						{
-							{ "Permissions", permissionsValue },
-							{ "ModifiedDate", now }
-						};
-
-						var whereClause = new KeyValuePair<string, object>("Id", existingPermissions.Id);
-						await _adminPermissionsCommandRepository.UpdateTableColumnById(updateDict, whereClause);
-
-						_logger.Information(
-							"Admin permissions updated - AdminId: {AdminId}, PermissionsValue: {PermissionsValue}, Permissions: [{Permissions}]",
-							model.AdminUserId,
-							permissionsValue,
-							string.Join(", ", model.Permissions));
-
-						return new BaseResponse
-						{
-							ResponseCode = ResponseCode.successful,
-							ResponseMessage = $"Permissions updated successfully for {targetAdmin.FirstName} {targetAdmin.LastName}",
-							Status = "successful",
-							Data = new
+						// ClassTeacher can only have one active classroom
+						// Soft delete existing assignment before creating new one
+						var existingAssignment = await _teacherClassroomQueryRespository.GetBy(new Dictionary<string, object>
 							{
-								AdminId = model.AdminUserId,
-								AdminName = $"{targetAdmin.FirstName} {targetAdmin.LastName}",
-								PermissionsValue = permissionsValue,
-								Permissions = model.Permissions,
-								PermissionNames = model.Permissions.ToPermissionNames()
-							}
-						};
+								{ "TeacherId", model.TeacherId },
+								{ "SchoolId",  schoolId        },
+								{ "IsActive",  true            }
+							});
+
+						if (existingAssignment is not null)
+						{
+							if (existingAssignment.ClassroomId == model.ClassroomId)
+								return new BaseResponse
+								{
+									ResponseCode = ResponseCode.BadRequest,
+									ResponseMessage = "Teacher is already assigned to this classroom",
+									Status = "failed"
+								};
+
+							// Soft delete existing assignment — preserves history
+							var deactivateDict = new Dictionary<string, object>
+							{
+								{ "IsActive",    false },
+								{ "ModifiedDate", now  }
+							};
+
+							var whereClause = new KeyValuePair<string, object>(
+								"Id", existingAssignment.Id);
+
+							await _commandRepositoryTeacherClassroom
+								.UpdateTableColumnById(deactivateDict, whereClause);
+
+							previousClassroomId = existingAssignment.ClassroomId;
+
+							_logger.Information(
+								"Deactivated previous classroom assignment - " +
+								"TeacherId: {TeacherId}, OldClassroomId: {OldClassroomId}",
+								model.TeacherId, existingAssignment.ClassroomId);
+						}
 					}
-					else
+					else if (teacherRole == UserRole.HeadTeacher)
 					{
-						// Create new permissions record
-						var permissionsDict = new Dictionary<string, object>
-						{
-							{ "Id", Guid.NewGuid() },
-							{ "UserId", model.AdminUserId },
-							{ "SchoolId", schoolId },
-							{ "Permissions", permissionsValue },
-							{ "CreationDate", now },
-							{ "ModifiedDate", now },
-							{ "CreatedBy", requestingUserId },
-							{ "IsActive", true }
-						};
-
-						await _adminPermissionsCommandRepository.Create(permissionsDict);
-
-						_logger.Information(
-							"Admin permissions created - AdminId: {AdminId}, PermissionsValue: {PermissionsValue}, Permissions: [{Permissions}]",
-							model.AdminUserId,
-							permissionsValue,
-							string.Join(", ", model.Permissions));
-
-						return new BaseResponse
-						{
-							ResponseCode = ResponseCode.successful,
-							ResponseMessage = $"Permissions assigned successfully to {targetAdmin.FirstName} {targetAdmin.LastName}",
-							Status = "successful",
-							Data = new
+						// HeadTeacher can have multiple classrooms
+						// Only check for duplicate — do not deactivate existing
+						var existingAssignment = await _teacherClassroomQueryRespository.GetBy(new Dictionary<string, object>
 							{
-								AdminId = model.AdminUserId,
-								AdminName = $"{targetAdmin.FirstName} {targetAdmin.LastName}",
-								PermissionsValue = permissionsValue,
-								Permissions = model.Permissions,
-								PermissionNames = model.Permissions.ToPermissionNames()
-							}
-						};
+								{ "TeacherId",  model.TeacherId   },
+								{ "ClassroomId", model.ClassroomId },
+								{ "SchoolId",   schoolId           },
+								{ "IsActive",   true               }
+							});
+
+						if (existingAssignment is not null)
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.BadRequest,
+								ResponseMessage = "Head Teacher is already assigned to this classroom",
+								Status = "failed"
+							};
 					}
-				}
-				catch (Exception ex)
-				{
-					_logger.Error(
-						ex,
-						"Error assigning admin permissions - AdminId: {AdminId}",
-						model.AdminUserId);
+
+					// ===== INSERT NEW ASSIGNMENT =====
+
+					var newAssignment = new Dictionary<string, object>
+					{
+						{ "Id",           Guid.NewGuid()      },
+						{ "TeacherId",    model.TeacherId      },
+						{ "ClassroomId",  model.ClassroomId   },
+						{ "SchoolId",     schoolId             },
+						{ "IsPrimary",    model.IsPrimary      },
+						{ "IsActive",     true                 },
+						{ "CreatedBy",    requestingUserId     },
+						{ "CreationDate", now                  },
+						{ "ModifiedDate", now                  }
+					};
+
+					await _commandRepositoryTeacherClassroom.Create(newAssignment);
+
+					_logger.Information(
+						"Teacher assigned to classroom - TeacherId: {TeacherId}, " +
+						"ClassroomId: {ClassroomId}, Role: {Role}, " +
+						"IsPrimary: {IsPrimary}, AssignedBy: {AssignedBy}",
+						model.TeacherId, model.ClassroomId,
+						teacherRole.ToString(), model.IsPrimary, requestingUserId);
 
 					return new BaseResponse
 					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = $"{teacher.FirstName} {teacher.LastName} has been assigned to the classroom successfully",
+						Status = "successful",
+						Data = new
+						{
+							TeacherId = model.TeacherId,
+							TeacherName = $"{teacher.FirstName} {teacher.LastName}",
+							TeacherRole = teacherRole.ToString(),
+							ClassroomId = model.ClassroomId,
+							IsPrimary = model.IsPrimary,
+							PreviousClassroomId = previousClassroomId,
+							AssignedBy = requestingUserId,
+							AssignedAt = now
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Error assigning teacher to classroom - " +"TeacherId: {TeacherId}, ClassroomId: {ClassroomId}",
+						model.TeacherId, model.ClassroomId);
+					return new BaseResponse
+					{
 						ResponseCode = ResponseCode.ErrorOccured,
-						ResponseMessage = "An error occurred while assigning permissions",
+						ResponseMessage = "An unexpected error occurred while assigning teacher to classroom",
 						Status = "failed"
 					};
 				}
 			}
 		}
 
-		
-
 		#endregion
+
+		public async Task<BaseResponse> UpdateTeacherSubject(Guid teacherId,UpdateTeacherSubjectViewModel model,AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.UserId, out var requesterId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "unauthorised access",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "unauthorised school access",
+						Status = "failed"
+					};
+
+				if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true,
+					out var requesterRole))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid role in token",
+						Status = "failed"
+					};
+
+				// ── Authorization — mirrors AssignTeacherToClassroom pattern ─
+				if (requesterRole == UserRole.Administrator)
+				{
+					var hasPermission = await this.HasPermission(
+						requesterId,
+						schoolId,
+						AdminPermission.ManageTeachers);
+
+					if (!hasPermission)
+					{
+						_logger.Warning(
+							"Admin lacks ManageTeachers permission - AdminId: {AdminId}",
+							requesterId);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You do not have permission to update teacher subjects",
+							Status = "failed"
+						};
+					}
+				}
+				else if (requesterRole != UserRole.SuperAdministrator
+					  && requesterRole != UserRole.HeadTeacher)
+				{
+					_logger.Warning(
+						"Unauthorized teacher subject update attempt - " +
+						"UserId: {UserId}, Role: {Role}",
+						requesterId, requesterRole.ToString());
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You are not authorized to update teacher subjects",
+						Status = "failed"
+					};
+				}
+
+				if (!model.SubjectIds.Any())
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "At least one subject is required",
+						Status = "failed"
+					};
+
+				if (model.ClassroomId == Guid.Empty)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Classroom is required",
+						Status = "failed"
+					};
+
+				// ── Verify teacher exists and belongs to this school ─────────
+				var teacher = await _queryrepositoryUser.Get(teacherId);
+				if (teacher == null || teacher.SchoolId != schoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Teacher not found",
+						Status = "failed"
+					};
+
+				// ── Verify teacher is a SubjectTeacher ───────────────────────
+				if (teacher.RoleId != (int)UserRole.SubjectTeacher)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "User is not a subject teacher",
+						Status = "failed"
+					};
+
+				if (!teacher.IsActive)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = $"Teacher {teacher.FirstName} {teacher.LastName} is not active",
+						Status = "failed"
+					};
+
+				// ── Verify classroom belongs to school ───────────────────────
+				var classroom = await _classroomQueryRespository.Get(model.ClassroomId);
+				if (classroom == null || classroom.SchoolId != schoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Classroom not found",
+						Status = "failed"
+					};
+
+				// ── Verify all subjects exist and belong to school ───────────
+				foreach (var subjectId in model.SubjectIds)
+				{
+					var subject = await _subjectQueryRespository.Get(subjectId);
+					if (subject == null || subject.SchoolId != schoolId)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = $"Subject {subjectId} not found",
+							Status = "failed"
+						};
+				}
+
+				var now = DateTime.UtcNow;
+				var nowStr = now.ToString("yyyy-MM-dd HH:mm:ss");
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					// ── Soft delete existing assignments ─────────────────────
+					var softDeleteQuery = $@"
+						UPDATE TeacherSubject
+						SET    IsActive     = 0,
+							   ModifiedDate = '{nowStr}'
+						WHERE  TeacherId    = '{teacherId}'
+						AND    ClassroomId  = '{model.ClassroomId}'
+						AND    SchoolId     = '{schoolId}'
+						AND    IsActive     = 1";
+
+					await scope.Connection.ExecuteAsync(
+						softDeleteQuery, transaction: scope.Transaction);
+
+					// ── Insert new subject assignments ───────────────────────
+					foreach (var subjectId in model.SubjectIds)
+					{
+						var insertDict = new Dictionary<string, object>
+						{
+							{ "Id",           Guid.NewGuid()    },
+							{ "TeacherId",    teacherId          },
+							{ "SubjectId",    subjectId          },
+							{ "ClassroomId",  model.ClassroomId },
+							{ "SchoolId",     schoolId           },
+							{ "CreatedBy",    requesterId        },
+							{ "CreationDate", nowStr             },
+							{ "ModifiedDate", nowStr             },
+							{ "IsActive",     true               }
+						};
+
+						await _commandRepositoryTeacherSubject.Create(
+							scope.Transaction, scope.Connection, insertDict);
+					}
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Rolling back teacher subject update - TeacherId: {TeacherId}",
+						teacherId);
+					try { await scope.RollbackAsync(); } catch { }
+					throw;
+				}
+
+				_logger.Information(
+					"Teacher subjects updated - TeacherId: {TeacherId}, " +
+					"ClassroomId: {ClassroomId}, SubjectCount: {Count}, " +
+					"UpdatedBy: {RequesterId}",
+					teacherId, model.ClassroomId,
+					model.SubjectIds.Count, requesterId);
+
+				// ── Fetch updated assignments to return ──────────────────────
+				var updatedQuery = $@"
+					SELECT
+						ts.SubjectId,
+						s.Subject  AS SubjectName,
+						ts.ClassroomId,
+						c.Name
+					FROM   TeacherSubject ts
+					JOIN   Subjects        s ON s.Id = ts.SubjectId
+					JOIN   Classroom       c ON c.Id = ts.ClassroomId
+					WHERE  ts.TeacherId   = '{teacherId}'
+					AND    ts.ClassroomId = '{model.ClassroomId}'
+					AND    ts.SchoolId    = '{schoolId}'
+					AND    ts.IsActive    = 1";
+
+				var updated = await _teacherSubjectQueryRespository.QueryAsync<TeacherSubjectRow>(updatedQuery, new Dictionary<string, object>());
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Teacher subjects updated successfully",
+					Status = "successful",
+					Data = new
+					{
+						TeacherId = teacherId,
+						TeacherName = $"{teacher.FirstName} {teacher.LastName}",
+						ClassroomId = model.ClassroomId,
+						ClassName = classroom.Name,
+						Subjects = updated.ToList()
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error updating teacher subjects - TeacherId: {TeacherId}",
+					teacherId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while updating teacher subjects",
+					Status = "failed"
+				};
+			}
+		}
 
 		#region GetAdminPermissions
 
