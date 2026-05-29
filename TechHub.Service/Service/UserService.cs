@@ -2675,7 +2675,7 @@ namespace TechHub.Service.Service
 							var studentQuery = $@"
 								SELECT
 									c.Id       AS ClassroomId,
-									c.Name,
+									c.Name     as CLassName,
 									c.IsActive AS ClassroomIsActive
 								FROM   StudentClassroom sc
 								JOIN   Classroom        c ON c.Id = sc.ClassroomId
