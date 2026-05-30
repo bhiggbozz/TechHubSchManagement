@@ -304,6 +304,16 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		[HttpGet("student/subject/{subjectId}")]
+		[Authorize]
+		public async Task<IActionResult> GetLessonsBySubjectForStudent(Guid subjectId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var response = await _userService.GetLessonsBySubjectForStudent(subjectId, claims);
+			return Ok(response);
+
+		}
+
 
 
 	}

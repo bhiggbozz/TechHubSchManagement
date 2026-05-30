@@ -72,6 +72,10 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<TeacherClassroom> _teacherClassroomQueryRespository;
 		private readonly IQueryRepository<TeacherSubject> _teacherSubjectQueryRespository;
 		private readonly IQueryRepository<Subjects> _subjectQueryRespository;
+		private readonly IQueryRepository<StudentMinorSubject> _studentMinorSubjectQueryRespository;
+		private readonly IQueryRepository<ClassroomSubject> _classroomSubjectQueryRespository;
+
+
 
 
 
@@ -94,7 +98,8 @@ namespace TechHub.Service.Service
 			ICommandRespository<StudentMinorSubject> commandRepositoryMinorSubject, ICommandRespository<RefreshTokens> commandRepoRefreshToken, IQueryRepository<ApprovalRequests> queryApprovalRequests,
 			ICommandRespository<AdminPermissions> adminPermissionsCommandRepository, IQueryRepository<RefreshTokens> queryRepoRefreshToken,ITenantService tenantService, 
 			IQueryRepository<TeacherClassroom> teacherClassroomQueryRespository, IQueryRepository<TeacherSubject> teacherSubjectQueryRespository,
-			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository, IQueryRepository<Subjects> subjectQueryRespository,
+			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository, IQueryRepository<Subjects> subjectQueryRespository, IQueryRepository<ClassroomSubject> classroomSubjectQueryRespository,
+			IQueryRepository<StudentMinorSubject> studentMinorSubjectQueryRespository,
 			IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
@@ -121,6 +126,8 @@ namespace TechHub.Service.Service
 			_teacherClassroomQueryRespository = teacherClassroomQueryRespository;
 			_teacherSubjectQueryRespository = teacherSubjectQueryRespository;
 			_subjectQueryRespository = subjectQueryRespository;
+			_studentMinorSubjectQueryRespository = studentMinorSubjectQueryRespository;
+			_classroomSubjectQueryRespository = classroomSubjectQueryRespository;
 			
 
 			_emailService = emailService;
@@ -4821,6 +4828,108 @@ namespace TechHub.Service.Service
 
 		#region GetAllAdminPermissions
 
+		public async Task<BaseResponse> GetLessonsBySubjectForStudent(Guid subjectId, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.UserId, out var studentId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				// Verify student is enrolled in this subject
+				var minorEnrollmentQuery = $@"
+					SELECT TOP 1 Id FROM StudentMinorSubject
+					WHERE  StudentId = '{studentId}'
+					AND    SubjectId = '{subjectId}'
+					AND    SchoolId  = '{schoolId}'";
+
+				var minorEnrolled = await _studentMinorSubjectQueryRespository.Get(minorEnrollmentQuery);
+				if (minorEnrolled is null)
+				{
+					var coreEnrollmentQuery = $@"
+						SELECT TOP 1 cs.Id 
+						FROM   ClassroomSubject cs
+						JOIN   StudentClassroom sc ON sc.ClassroomId = cs.ClassroomId
+						WHERE  sc.StudentId = '{studentId}'
+						AND    cs.SubjectId = '{subjectId}'
+						AND    cs.SchoolId  = '{schoolId}'
+						AND    sc.IsActive  = 1";
+
+					var coreEnrolled = await _classroomSubjectQueryRespository.Get(coreEnrollmentQuery);
+
+					if (coreEnrolled is null)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "You are not enrolled in this subject",
+							Status = "failed"
+						};
+				}
+
+				var sql = $@"
+					SELECT
+						lc.Id,
+						lc.Aim,
+						lc.Description,
+						lc.SubTopic,
+						lc.ApprovedAt,
+						u.FirstName + ' ' + u.LastName AS TeacherName,
+						s.Id   AS SubjectId,
+						s.Subject AS SubjectName,
+						t.Id   AS TopicId,
+						t.Name AS TopicName,
+						(SELECT COUNT(*) FROM LessonMedia lm
+						 WHERE  lm.LessonContentId = lc.Id
+						 AND    lm.IsActive = 1) AS MediaCount
+					FROM   LessonContent lc
+					JOIN   Subjects      s  ON s.Id = lc.SubjectId
+					JOIN   Topic         t  ON t.Id = lc.TopicId
+					JOIN   Users         u  ON u.Id = lc.CreatedBy
+					WHERE  lc.SubjectId = '{subjectId}'
+					AND    lc.SchoolId  = '{schoolId}'
+					AND    lc.Status    = '{LessonStatus.Published}'
+					ORDER  BY lc.ApprovedAt DESC";
+
+				var rows = await _studentMinorSubjectQueryRespository.QueryAsync<StudentSubjectLessonDto>(sql, new Dictionary<string, object>());
+
+				var lessons = rows.ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,ResponseMessage = lessons.Any()
+						? $"{lessons.Count} lesson(s) found"
+						: "No lessons found for this subject",
+					Status = "success",
+					Data = lessons
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error fetching lessons by subject for student - SubjectId: {SubjectId}",
+					subjectId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching lessons",
+					Status = "failed"
+				};
+			}
+		}
+
 		/// <summary>
 		/// Get all admin permissions for the school (paginated)
 		/// </summary>
@@ -4936,9 +5045,7 @@ namespace TechHub.Service.Service
 		/// <summary>
 		/// Revoke all permissions from an admin (soft delete)
 		/// </summary>
-		public async Task<BaseResponse> RevokeAdminPermissions(
-			Guid adminUserId,
-			AuthenticatedUserClaims userClaims)
+		public async Task<BaseResponse> RevokeAdminPermissions(Guid adminUserId,AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			//using (LogContext.PushProperty("TenantId", userClaims.TenantIdentifier))
@@ -5035,10 +5142,7 @@ namespace TechHub.Service.Service
 		/// <example>
 		/// var canApprove = await HasPermission(adminId, schoolId, AdminPermission.ApproveClasses);
 		/// </example>
-		public async Task<bool> HasPermission(
-			Guid adminUserId,
-			Guid schoolId,
-			AdminPermission permission)
+		public async Task<bool> HasPermission(Guid adminUserId,Guid schoolId,AdminPermission permission)
 		{
 			try
 			{
