@@ -30,22 +30,25 @@ namespace TechHub.Service.Interface
 
 
 		Task<BaseResponse> GetUserById(Guid userId, AuthenticatedUserClaims? claims);
-		Task<BaseResponse> AssignAdminPermissions( AssignAdminPermissionsViewModel model,AuthenticatedUserClaims userClaims);
-		Task<BaseResponse> GetAdminPermissions(Guid adminUserId,AuthenticatedUserClaims userClaims);
-		Task<BaseResponse> GetAllAdminPermissions(AuthenticatedUserClaims userClaims,int pageNumber = 1,int pageSize = 50);
+		Task<BaseResponse> AssignAdminPermissions(AssignAdminPermissionsViewModel model, AuthenticatedUserClaims userClaims);
+		Task<BaseResponse> GetAdminPermissions(Guid adminUserId, AuthenticatedUserClaims userClaims);
+		Task<BaseResponse> GetAllAdminPermissions(AuthenticatedUserClaims userClaims, int pageNumber = 1, int pageSize = 50);
 
-		
-		Task<BaseResponse> RevokeAdminPermissions(Guid adminUserId,AuthenticatedUserClaims userClaims);
 
-		
-		Task<bool> HasPermission(Guid adminUserId,Guid schoolId,AdminPermission permission);
+		Task<BaseResponse> RevokeAdminPermissions(Guid adminUserId, AuthenticatedUserClaims userClaims);
+
+
+		Task<bool> HasPermission(Guid adminUserId, Guid schoolId, AdminPermission permission);
 		Task<BaseResponse> GetTeachersBySchool(AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> RefreshToken(string incomingToken);
 		Task<BaseResponse> GetUsersByRole(AuthenticatedUserClaims userClaims, int? roleId, int pageNumber, int pageSize);
 		Task<BaseResponse> RespondToApproval(Guid approvalId, ApprovalRespondViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> GetPendingApprovalsForUser(AuthenticatedUserClaims claims);
-		Task<BaseResponse> AssignTeacherToClassroom(AssignTeacherToClassroomViewModel model, AuthenticatedUserClaims userClaims);      
+		Task<BaseResponse> AssignTeacherToClassroom(AssignTeacherToClassroomViewModel model, AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> UpdateTeacherSubject(Guid teacherId, UpdateTeacherSubjectViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> GetLessonsBySubjectForStudent(Guid subjectId, AuthenticatedUserClaims claims);
+		Task<BaseResponse> GetAdminPermissionsById(Guid adminUserId, AuthenticatedUserClaims userClaims);
 	}
+		
 }
+

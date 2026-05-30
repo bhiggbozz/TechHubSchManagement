@@ -304,7 +304,7 @@ namespace TechhubMS.Controllers
 			};
 		}
 
-		[HttpGet("student/subject/{subjectId}")]
+		[HttpGet("student/lesson/{subjectId}")]
 		[Authorize]
 		public async Task<IActionResult> GetLessonsBySubjectForStudent(Guid subjectId)
 		{
@@ -312,6 +312,24 @@ namespace TechhubMS.Controllers
 			var response = await _userService.GetLessonsBySubjectForStudent(subjectId, claims);
 			return Ok(response);
 
+		}
+
+
+		[HttpGet("admin-permissions/{adminUserId}")]
+		[Authorize]
+		public async Task<IActionResult> GetAdminPermissionsById(Guid adminUserId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.GetAdminPermissionsById(adminUserId, claims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
 		}
 
 

@@ -3317,8 +3317,8 @@ namespace TechHub.Service.Service
 						return new BaseResponse
 						{
 							ResponseCode = ResponseCode.BadRequest,
-							ResponseMessage = $"Invalid permission values: {string.Join(", ", invalidPermissions)}. " +
-											  "Valid values are: 1, 2, 4, 8, 16, 32, 64, 128",
+							ResponseMessage = $"Invalid permission values: {string.Join(", ", invalidPermissions)}",
+											 
 							Status = "failed"
 						};
 					}
@@ -5125,6 +5125,93 @@ namespace TechHub.Service.Service
 					{
 						ResponseCode = ResponseCode.ErrorOccured,
 						ResponseMessage = "An error occurred while revoking permissions",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+
+		public async Task<BaseResponse> GetAdminPermissionsById(Guid adminUserId, AuthenticatedUserClaims userClaims)
+		{
+			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid SchoolId format",
+							Status = "failed"
+						};
+
+					// Fetch admin user
+					var admin = await _queryrepositoryUser.Get(adminUserId);
+					if (admin == null)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Admin user not found",
+							Status = "failed"
+						};
+
+					if (admin.SchoolId != schoolId)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Admin belongs to a different school",
+							Status = "failed"
+						};
+
+					var existing = await GetExistingPermissions(adminUserId, schoolId);
+					if (existing == null)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = $"{admin.FirstName} {admin.LastName} has no permissions assigned",
+							Status = "failed"
+						};
+
+					var permissionEnum = (AdminPermission)existing.Permissions;
+					var permissionNames = Enum.GetValues<AdminPermission>()
+						.Where(p => p != AdminPermission.None
+								 && p != AdminPermission.BasicAdmin
+								 && p != AdminPermission.FullAdmin
+								 && permissionEnum.HasFlag(p))
+						.Select(p => new
+						{
+							Value = (int)p,
+							Name = p.ToString()
+						})
+						.ToList();
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Permissions retrieved successfully",
+						Status = "successful",
+						Data = new
+						{
+							AdminId = adminUserId,
+							AdminName = $"{admin.FirstName} {admin.LastName}",
+							PermissionsValue = existing.Permissions,
+							Permissions = permissionNames,
+							AssignedDate = existing.CreationDate,
+							ModifiedDate = existing.ModifiedDate
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Error fetching admin permissions - AdminId: {AdminId}",
+						adminUserId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching permissions",
 						Status = "failed"
 					};
 				}
