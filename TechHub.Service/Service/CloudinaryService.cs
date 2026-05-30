@@ -907,7 +907,7 @@ namespace TechHub.Service.Service
 				MediaType.Image => "image",
 				MediaType.Video => "video",
 				MediaType.Audio => "video",
-				MediaType.Document => "image", 
+				MediaType.Document => "image",  // ← was "raw", now "image"
 				_ => "image"
 			};
 

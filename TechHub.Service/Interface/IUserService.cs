@@ -46,5 +46,6 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetPendingApprovalsForUser(AuthenticatedUserClaims claims);
 		Task<BaseResponse> AssignTeacherToClassroom(AssignTeacherToClassroomViewModel model, AuthenticatedUserClaims userClaims);      
 		Task<BaseResponse> UpdateTeacherSubject(Guid teacherId, UpdateTeacherSubjectViewModel model, AuthenticatedUserClaims claims);
+		Task<BaseResponse> GetLessonsBySubjectForStudent(Guid subjectId, AuthenticatedUserClaims claims);
 	}
 }
