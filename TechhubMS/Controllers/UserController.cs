@@ -333,6 +333,24 @@ namespace TechhubMS.Controllers
 		}
 
 
+		[HttpGet("{studentId}/subjects")]
+		[Authorize]
+		public async Task<IActionResult> GetAllStudentSubjects(Guid studentId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.GetAllStudentSubjects(studentId, claims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
+		}
+
+
 
 	}
 

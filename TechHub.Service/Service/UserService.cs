@@ -4476,7 +4476,7 @@ namespace TechHub.Service.Service
 
 		#endregion
 
-		public async Task<BaseResponse> UpdateTeacherSubject(Guid teacherId,UpdateTeacherSubjectViewModel model,AuthenticatedUserClaims claims)
+		public async Task<BaseResponse> UpdateTeacherSubject(Guid teacherId, UpdateTeacherSubjectViewModel model, AuthenticatedUserClaims claims)
 		{
 			try
 			{
@@ -4484,7 +4484,7 @@ namespace TechHub.Service.Service
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Unauthorized,
-						ResponseMessage = "unauthorised access",
+						ResponseMessage = "Unauthorised access",
 						Status = "failed"
 					};
 
@@ -4492,12 +4492,11 @@ namespace TechHub.Service.Service
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Unauthorized,
-						ResponseMessage = "unauthorised school access",
+						ResponseMessage = "Unauthorised school access",
 						Status = "failed"
 					};
 
-				if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true,
-					out var requesterRole))
+				if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var requesterRole))
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.BadRequest,
@@ -4505,13 +4504,11 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Authorization — mirrors AssignTeacherToClassroom pattern ─
+				// ── Authorization ─────────────────────────────────────────────
 				if (requesterRole == UserRole.Administrator)
 				{
 					var hasPermission = await this.HasPermission(
-						requesterId,
-						schoolId,
-						AdminPermission.ManageTeachers);
+						requesterId, schoolId, AdminPermission.ManageTeachers);
 
 					if (!hasPermission)
 					{
@@ -4527,12 +4524,10 @@ namespace TechHub.Service.Service
 						};
 					}
 				}
-				else if (requesterRole != UserRole.SuperAdministrator
-					  && requesterRole != UserRole.HeadTeacher)
+				else if (requesterRole != UserRole.SuperAdministrator && requesterRole != UserRole.HeadTeacher)
 				{
 					_logger.Warning(
-						"Unauthorized teacher subject update attempt - " +
-						"UserId: {UserId}, Role: {Role}",
+						"Unauthorized teacher subject update attempt - UserId: {UserId}, Role: {Role}",
 						requesterId, requesterRole.ToString());
 
 					return new BaseResponse
@@ -4543,14 +4538,7 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				if (!model.SubjectIds.Any())
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "At least one subject is required",
-						Status = "failed"
-					};
-
+				// ── Validate model ────────────────────────────────────────────
 				if (model.ClassroomId == Guid.Empty)
 					return new BaseResponse
 					{
@@ -4559,7 +4547,7 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Verify teacher exists and belongs to this school ─────────
+				// ── Verify teacher exists and belongs to this school ──────────
 				var teacher = await _queryrepositoryUser.Get(teacherId);
 				if (teacher == null || teacher.SchoolId != schoolId)
 					return new BaseResponse
@@ -4569,7 +4557,6 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Verify teacher is a SubjectTeacher ───────────────────────
 				if (teacher.RoleId != (int)UserRole.SubjectTeacher)
 					return new BaseResponse
 					{
@@ -4586,7 +4573,7 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Verify classroom belongs to school ───────────────────────
+				// ── Verify classroom belongs to school ────────────────────────
 				var classroom = await _classroomQueryRespository.Get(model.ClassroomId);
 				if (classroom == null || classroom.SchoolId != schoolId)
 					return new BaseResponse
@@ -4596,7 +4583,7 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Verify all subjects exist and belong to school ───────────
+				// ── Verify all incoming subjects exist and belong to school ───
 				foreach (var subjectId in model.SubjectIds)
 				{
 					var subject = await _subjectQueryRespository.Get(subjectId);
@@ -4609,27 +4596,55 @@ namespace TechHub.Service.Service
 						};
 				}
 
-				var now = DateTime.UtcNow;
-				var nowStr = now.ToString("yyyy-MM-dd HH:mm:ss");
+				// ── Fetch current active assignments ──────────────────────────
+				var currentQuery = $@"
+					SELECT SubjectId FROM TeacherSubject
+					WHERE  TeacherId   = '{teacherId}'
+					AND    ClassroomId = '{model.ClassroomId}'
+					AND    SchoolId    = '{schoolId}'
+					AND    IsActive    = 1";
+
+				var currentRows = await _teacherSubjectQueryRespository
+					.QueryAsync<TeacherSubjectIdRow>(currentQuery, new Dictionary<string, object>());
+
+				var currentSubjectIds = currentRows.Select(r => r.SubjectId).ToHashSet();
+				var incomingSubjectIds = model.SubjectIds.ToHashSet();
+
+				// ── Diff ──────────────────────────────────────────────────────
+				var toAdd = incomingSubjectIds.Except(currentSubjectIds).ToList();
+				var toRemove = currentSubjectIds.Except(incomingSubjectIds).ToList();
+
+				if (!toAdd.Any() && !toRemove.Any())
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "No changes detected — subjects are already up to date",
+						Status = "successful"
+					};
+
+				var nowStr = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
 				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
 				try
 				{
-					// ── Soft delete existing assignments ─────────────────────
-					var softDeleteQuery = $@"
-						UPDATE TeacherSubject
-						SET    IsActive     = 0,
-							   ModifiedDate = '{nowStr}'
-						WHERE  TeacherId    = '{teacherId}'
-						AND    ClassroomId  = '{model.ClassroomId}'
-						AND    SchoolId     = '{schoolId}'
-						AND    IsActive     = 1";
+					// ── Soft delete removed subjects ──────────────────────────
+					foreach (var subjectId in toRemove)
+					{
+						var softDelete = $@"
+							UPDATE TeacherSubject
+							SET    IsActive     = 0,
+								   ModifiedDate = '{nowStr}'
+							WHERE  TeacherId   = '{teacherId}'
+							AND    SubjectId   = '{subjectId}'
+							AND    ClassroomId = '{model.ClassroomId}'
+							AND    SchoolId    = '{schoolId}'
+							AND    IsActive    = 1";
 
-					await scope.Connection.ExecuteAsync(
-						softDeleteQuery, transaction: scope.Transaction);
+						await scope.Connection.ExecuteAsync(softDelete, transaction: scope.Transaction);
+					}
 
-					// ── Insert new subject assignments ───────────────────────
-					foreach (var subjectId in model.SubjectIds)
+					// ── Insert new subjects ───────────────────────────────────
+					foreach (var subjectId in toAdd)
 					{
 						var insertDict = new Dictionary<string, object>
 						{
@@ -4644,8 +4659,7 @@ namespace TechHub.Service.Service
 							{ "IsActive",     true               }
 						};
 
-						await _commandRepositoryTeacherSubject.Create(
-							scope.Transaction, scope.Connection, insertDict);
+						await _commandRepositoryTeacherSubject.Create(scope.Transaction, scope.Connection, insertDict);
 					}
 
 					await scope.CommitAsync();
@@ -4660,19 +4674,17 @@ namespace TechHub.Service.Service
 				}
 
 				_logger.Information(
-					"Teacher subjects updated - TeacherId: {TeacherId}, " +
-					"ClassroomId: {ClassroomId}, SubjectCount: {Count}, " +
-					"UpdatedBy: {RequesterId}",
-					teacherId, model.ClassroomId,
-					model.SubjectIds.Count, requesterId);
+					"Teacher subjects updated - TeacherId: {TeacherId}, ClassroomId: {ClassroomId}, " +
+					"Added: {Added}, Removed: {Removed}, UpdatedBy: {RequesterId}",
+					teacherId, model.ClassroomId, toAdd.Count, toRemove.Count, requesterId);
 
-				// ── Fetch updated assignments to return ──────────────────────
+				// ── Fetch updated assignments to return ───────────────────────
 				var updatedQuery = $@"
 					SELECT
 						ts.SubjectId,
 						s.Subject  AS SubjectName,
 						ts.ClassroomId,
-						c.Name
+						c.Name     AS ClassName
 					FROM   TeacherSubject ts
 					JOIN   Subjects        s ON s.Id = ts.SubjectId
 					JOIN   Classroom       c ON c.Id = ts.ClassroomId
@@ -4694,6 +4706,8 @@ namespace TechHub.Service.Service
 						TeacherName = $"{teacher.FirstName} {teacher.LastName}",
 						ClassroomId = model.ClassroomId,
 						ClassName = classroom.Name,
+						Added = toAdd.Count,
+						Removed = toRemove.Count,
 						Subjects = updated.ToList()
 					}
 				};
@@ -4703,6 +4717,7 @@ namespace TechHub.Service.Service
 				_logger.Error(ex,
 					"Error updating teacher subjects - TeacherId: {TeacherId}",
 					teacherId);
+
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
@@ -5212,6 +5227,86 @@ namespace TechHub.Service.Service
 					{
 						ResponseCode = ResponseCode.ErrorOccured,
 						ResponseMessage = "An error occurred while fetching permissions",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+
+
+		public async Task<BaseResponse> GetAllStudentSubjects(Guid studentId, AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Invalid school identification",
+							Status = "failed"
+						};
+
+						var sql = $@"
+							SELECT
+								s.Id       AS SubjectId,
+								s.Subject  AS SubjectName,
+								s.Category,
+								'Major'    AS SubjectType
+							FROM   StudentClassroom sc
+							JOIN   ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+							JOIN   Subjects         s  ON s.Id = cs.SubjectId
+							WHERE  sc.StudentId = '{studentId}'
+							AND    sc.SchoolId  = '{schoolId}'
+							AND    sc.IsActive  = 1
+							AND    cs.IsActive  = 1
+
+							UNION ALL
+
+							SELECT
+								s.Id       AS SubjectId,
+								s.Subject  AS SubjectName,
+								s.Category,
+								'Minor'    AS SubjectType
+							FROM   StudentMinorSubject sms
+							JOIN   Subjects            s  ON s.Id = sms.SubjectId
+							WHERE  sms.StudentId = '{studentId}'
+							AND    sms.SchoolId  = '{schoolId}'
+
+							ORDER  BY SubjectType, SubjectName";
+
+					var rows = await _queryrepositoryUser.QueryAsync<StudentSubjectDto>(sql, new Dictionary<string, object>());
+
+					var subjects = rows.ToList();
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = subjects.Any()
+							? $"{subjects.Count} subject(s) found"
+							: "No subjects found for this student",
+						Status = "success",
+						Data = new
+						{
+							StudentId = studentId,
+							TotalSubjects = subjects.Count,
+							Major = subjects.Where(s => s.SubjectType == "Major").ToList(),
+							Minor = subjects.Where(s => s.SubjectType == "Minor").ToList()
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Error fetching student subjects - StudentId: {StudentId}",
+						studentId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching subjects",
 						Status = "failed"
 					};
 				}
