@@ -1376,9 +1376,9 @@ namespace TechHub.Service.Service
 
 		private async Task<IEnumerable<LoginHistory?>> LastLoginHistorys(Guid userId)
 		{
-			//string tableName
-			string query = $"select top 3 * from LoginHistory where UserId = '{userId}'";
-			var lastLoginHistory = await _queryrepositoryLoginHistory.GetByQuery(query);
+			const string query = "SELECT TOP 3 * FROM LoginHistory WHERE UserId = @UserId";
+			var parameter = new KeyValuePair<string, object>("UserId", userId);
+			var lastLoginHistory = await _queryrepositoryLoginHistory.SelectByColumn(query, parameter);
 			return lastLoginHistory;
 		}
 		public async Task<BaseResponse> RegisterToClass(RegisterStudentClassViewModel registerStudentClassViewModel,AuthenticatedUserClaims userInfo)

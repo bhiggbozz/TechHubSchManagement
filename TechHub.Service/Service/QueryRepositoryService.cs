@@ -30,7 +30,8 @@ namespace TechHub.Service.Service
 			_utilities = utilities;
 			_resolver = resolver;
 			_config = _configuration.GetConnectionString("DbConnectionString") ?? null;
-			ArgumentNullException.ThrowIfNullOrEmpty(nameof(_config));
+			if (string.IsNullOrEmpty(_config))
+				throw new InvalidOperationException("Connection string 'DbConnectionString' is not configured.");
 		}
 		 
 		public async Task<TEntity?> Get(Guid id)

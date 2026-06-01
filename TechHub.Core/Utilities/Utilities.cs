@@ -34,7 +34,7 @@ namespace TechHub.Core.Utilities
 		}
 		public string SelectAllBySingleColumn(KeyValuePair<string, object> obj, string tableName) 
 		{
-			var query = $"select * from {tableName} where @{obj.Key} = {obj.Key}";
+			var query = $"SELECT * FROM {tableName} WHERE {obj.Key} = @{obj.Key}";
 			return query;
 		}
 	}

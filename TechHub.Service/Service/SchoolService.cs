@@ -179,8 +179,9 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				string query = $"select * from State where CountryId = {countryId}";
-				var countryStates = await _queryrepositoryState.GetByQuery(query);
+				const string query = "SELECT * FROM State WHERE CountryId = @CountryId";
+				var parameters = new Dictionary<string, object> { { "CountryId", countryId } };
+				var countryStates = await _queryrepositoryState.QueryAsync<State>(query, parameters);
 				if (!countryStates.Any())
 				{
 					return new StatesResponseModel {  ResponseCode = ResponseCode.successful, ResponseMessage = "No State for this country", Status = "failed" };
@@ -501,13 +502,13 @@ namespace TechHub.Service.Service
 						pageSize);
 
 					// Get all classrooms for the school
-					var query = $@"
+					const string query = @"
 						SELECT * FROM Classroom 
-						WHERE SchoolId = '{schoolId}' 
+						WHERE SchoolId = @SchoolId 
 						ORDER BY Name";
-
-					var allClassrooms = await _studentClassQueryRespository.GetByQuery(query);
-					var classroomsList = allClassrooms.Where(c => c != null).ToList();
+					var parameters = new Dictionary<string, object> { { "SchoolId", schoolId } };
+					var allClassrooms = await _studentClassQueryRespository.QueryAsync<Classroom>(query, parameters);
+					var classroomsList = allClassrooms.ToList();
 
 					// Pagination
 					var totalCount = classroomsList.Count;

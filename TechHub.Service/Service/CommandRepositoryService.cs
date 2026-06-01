@@ -31,72 +31,64 @@ namespace TechHub.Service.Service
 		}
 		public async Task Create(TEntity entity)
 		{
-			ArgumentNullException.ThrowIfNull(nameof(_config));
-			try
-			{
-				using var conn = new SqlConnection(_config);
-				conn.Open();
-				var tableName = typeof(TEntity).Name;
-				var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
-				var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-				await conn.ExecuteAsync(query, sqlParameter);
-			}
-			catch(Exception ex)
-			{
-				throw;
-			}
-			
-			//var sqlQuery =  
+			if (string.IsNullOrEmpty(_config))
+				throw new InvalidOperationException("Connection string 'DbConnectionString' is not configured.");
 
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
+			var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+			await conn.ExecuteAsync(query, sqlParameter);
 		}
 
 		
 
 		public async Task Create(Dictionary<string, object> obj)
 		{
-			ArgumentNullException.ThrowIfNull(nameof(_config));
-			try
-			{
-				using var conn = new SqlConnection(_config);
-				conn.Open();
-				var tableName = typeof(TEntity).Name;
-				var query = QueryBuilder<TEntity>.InsertQueryV2(obj, tableName);
-			    var parameter = new DynamicParameters();
-				foreach (var key in obj.Keys)
-				{
-					parameter.Add($"@{key}", obj[key]);
-				};
-				await conn.ExecuteAsync(query, parameter);
-			}
-			catch (Exception ex)
-			{
-				throw;
-			}
+			if (string.IsNullOrEmpty(_config))
+				throw new InvalidOperationException("Connection string 'DbConnectionString' is not configured.");
 
-			//var sqlQuery =  
-
+			using var conn = new SqlConnection(_config);
+			conn.Open();
+			var tableName = typeof(TEntity).Name;
+			var query = QueryBuilder<TEntity>.InsertQueryV2(obj, tableName);
+			var parameter = new DynamicParameters();
+			foreach (var key in obj.Keys)
+			{
+				parameter.Add($"@{key}", obj[key]);
+			}
+			await conn.ExecuteAsync(query, parameter);
 		}
 		public async Task<Guid> CreateWithReturnedID(SqlTransaction transaction, SqlConnection connection, Dictionary<string, object> obj)
 		{
-			ArgumentNullException.ThrowIfNull(nameof(_config));
 			try
 			{
-				//using var conn = new SqlConnection(_config);
-				//conn.Open();
 				var tableName = typeof(TEntity).Name;
 				var query = QueryBuilder<TEntity>.InsertQueryWithReturnedID(obj, tableName);
-				//using var command = new SqlCommand(query, connection, transaction)
-				//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-				return await connection.QuerySingleAsync<Guid>(query, null, transaction);
-				// await command.ExecuteScalarAsync();
+
+				var parameter = new DynamicParameters();
+				foreach (var key in obj.Keys)
+				{
+					var value = obj[key];
+					if (value is DBNull || value == null)
+						parameter.Add($"@{key}", null);
+					else if (value is bool boolValue)
+						parameter.Add($"@{key}", boolValue, DbType.Boolean);
+					else if (value is Guid guidValue)
+						parameter.Add($"@{key}", guidValue, DbType.Guid);
+					else if (value is DateTime dateValue)
+						parameter.Add($"@{key}", dateValue, DbType.DateTime2);
+					else
+						parameter.Add($"@{key}", value);
+				}
+
+				return await connection.QuerySingleAsync<Guid>(query, parameter, transaction);
 			}
-			catch (Exception ex)
+			catch (Exception)
 			{
 				throw;
 			}
-
-			//var sqlQuery =  
-
 		}
 
 		public async Task Create(SqlTransaction transaction, SqlConnection connection, Dictionary<string, object> obj)
@@ -134,71 +126,19 @@ namespace TechHub.Service.Service
 
 
 		public async Task Create(SqlTransaction transaction, SqlConnection connection, TEntity entity)
-        {
-
-            ArgumentNullException.ThrowIfNull(nameof(_config));
-            try
-            {
-				
-					var tableName = typeof(TEntity).Name;
-					var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
-					var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-					await connection.ExecuteAsync(query, sqlParameter, transaction);
-				
-
-				//using var conn = new SqlConnection(_config);
-				//conn.Open();
-				//var tableName = typeof(TEntity).Name;
-				//var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
-				//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-				//await conn.ExecuteAsync(query, sqlParameter, transaction);
-				//using var conn = new SqlConnection(_config);
-				//conn.Open();
-				//var tableName = typeof(TEntity).Name;
-				//var query = QueryBuilder<TEntity>.InsertQuery(obj, tableName);
-				//using var command = new SqlCommand(query, connection, transaction)
-				//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-				// await connection.ExecuteAsync(query, null, transaction);
-				// await command.ExecuteScalarAsync();
-			}
-            catch (Exception ex)
-            {
-                throw;
-            }
-
-            //var sqlQuery =  
-
-        }
+		{
+			var tableName = typeof(TEntity).Name;
+			var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
+			var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+			await connection.ExecuteAsync(query, sqlParameter, transaction);
+		}
 
 		public async Task Create(SqlTransaction transaction, SqlConnection connection, TEntity entity, DatabaseTarget target)
 		{
-			var connectionString = _resolver.Resolve(target);
-			ArgumentNullException.ThrowIfNull(nameof(connectionString));
-			try
-			{
-
-				//using var conn = new SqlConnection(connectionString);
-				//conn.Open();
-				var tableName = typeof(TEntity).Name;
-				var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
-				var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-				await connection.ExecuteAsync(query, sqlParameter, transaction);
-				//using var conn = new SqlConnection(_config);
-				//conn.Open();
-				//var tableName = typeof(TEntity).Name;
-				//var query = QueryBuilder<TEntity>.InsertQuery(obj, tableName);
-				//using var command = new SqlCommand(query, connection, transaction)
-				//var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
-				// await connection.ExecuteAsync(query, null, transaction);
-				// await command.ExecuteScalarAsync();
-			}
-			catch (Exception ex)
-			{
-				throw;
-			}
-
-			//var sqlQuery =  
-
+			var tableName = typeof(TEntity).Name;
+			var query = QueryBuilder<TEntity>.GenerateInsertQuery(tableName, entity);
+			var sqlParameter = QueryBuilder<TEntity>.CreateDynamicParameters(entity);
+			await connection.ExecuteAsync(query, sqlParameter, transaction);
 		}
 
 		public async Task UpdateTableColumnById( string columnToUpdateName, string keyColumnName, object columnToUpdateValue, object KeyColumnValue)
@@ -246,18 +186,15 @@ namespace TechHub.Service.Service
 		}
 		public async Task UpdateAsync(SqlTransaction transaction, SqlConnection connection, string query, Dictionary<string, object> values, KeyValuePair<string, object> keyValuePair)
 		{
-			using var conn = new SqlConnection(_config);
-			conn.Open();
 			var tableName = typeof(TEntity).Name;
-			var query2 = QueryBuilder<TEntity>.UpdateQueryWithSingleColumnName(values, keyValuePair.Key,tableName);
+			var query2 = QueryBuilder<TEntity>.UpdateQueryWithSingleColumnName(values, keyValuePair.Key, tableName);
 			var parameter = new DynamicParameters();
 			foreach (var key in values.Keys)
 			{
 				parameter.Add($"@{key}", values[key]);
 			}
 			parameter.Add($"@{keyValuePair.Key}", keyValuePair.Value);
-			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
-			await conn.ExecuteAsync(query2, parameter);
+			await connection.ExecuteAsync(query2, parameter, transaction);
 		}
 
 		public async Task CreateBatchAsync(SqlTransaction transaction,SqlConnection connection,List<Dictionary<string, object>> batchValues)
@@ -282,8 +219,6 @@ namespace TechHub.Service.Service
 		}
 		public async Task UpdateBatchByIdAsync(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues)
 		{
-			using var conn = new SqlConnection(_config);
-			conn.Open();
 			var tableName = typeof(TEntity).Name;
 			var query = QueryBuilder<TEntity>.UpdateBatchWithId(batchValues, tableName);
 			var parameter = new DynamicParameters();
@@ -298,19 +233,11 @@ namespace TechHub.Service.Service
 				}
 				batchCount -= 1;
 			}
-			//	foreach (var key in values.Keys)
-			//{
-			//	parameter.Add($"@{key}", values[key]);
-			//}
-
-			//parameter.Add($"@{keyValue.Key}", keyValue.Value);
-			await conn.ExecuteAsync(query, parameter);
+			await connection.ExecuteAsync(query, parameter, transaction);
 		}
 
 		public async Task UpdateBatchByIdAsyncV2(SqlTransaction transaction, SqlConnection connection, List<Dictionary<string, object>> batchValues)
 		{
-			using var conn = new SqlConnection(_config);
-			conn.Open();
 			var tableName = typeof(TEntity).Name;
 			var parameter = new DynamicParameters();
 			var queryBuilder = new StringBuilder();
@@ -339,7 +266,7 @@ namespace TechHub.Service.Service
 				}
 			}
 
-			await conn.ExecuteAsync(queryBuilder.ToString(), parameter);
+			await connection.ExecuteAsync(queryBuilder.ToString(), parameter, transaction);
 		}
 
 		public async Task Create(TEntity entity,DatabaseTarget target)

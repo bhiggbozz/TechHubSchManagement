@@ -37,9 +37,9 @@ namespace TechHub.Core.Helper
 		public static string GenerateUpdateQuery<TEntity>(string tableName, TEntity obj, string keyColumn)
 		{
 			var properties = typeof(TEntity).GetProperties().Select(p => p.Name)
-				                                      .Where(p => !p.Equals(keyColumn, StringComparison.OrdinalIgnoreCase)).ToList();
-			string columns = string.Join(", ", properties.Select(p => "{p} = @{p}"));
-			return $"Update {tableName} Set {columns} where {keyColumn} = @{keyColumn}";
+					                                      .Where(p => !p.Equals(keyColumn, StringComparison.OrdinalIgnoreCase)).ToList();
+			string columns = string.Join(", ", properties.Select(p => $"{p} = @{p}"));
+			return $"UPDATE {tableName} SET {columns} WHERE {keyColumn} = @{keyColumn}";
 		}
 
 		public static string GenerateUpdateQuery<TEntity>(string tableName, object columnToUpdateName, string keyColumnName)
@@ -59,7 +59,7 @@ namespace TechHub.Core.Helper
 		public static string GenerateGetQueryByProperties( string propertyName)
 		{
 			var tableName = typeof(TEntity).Name;
-			return $"select * from {tableName} where {propertyName} = '@{propertyName}'";
+			return $"SELECT * FROM {tableName} WHERE {propertyName} = @{propertyName}";
 		}
 
 		/// <summary>
@@ -113,47 +113,18 @@ namespace TechHub.Core.Helper
 		}
 		public static string InsertQueryWithReturnedID(Dictionary<string, object> data, string tableName)
 		{
-			var queries = new StringBuilder();
-			var sb = new StringBuilder($"insert into {tableName} (  ");
-			int count = data.Count;
+			var sb = new StringBuilder($"INSERT INTO {tableName} (");
+			var keys = data.Keys.ToList();
 
-			foreach (var item in data.Keys)
-			{
-				count -= 1;
-				sb.Append($"{item}");
-				if (count == 0)
-				{
-					sb.Append(" )");
-				}
-				else
-				{
-					sb.Append(",");
-				}
+			// Column names
+			sb.Append(string.Join(", ", keys));
+			sb.Append(") VALUES (");
 
+			// Parameter placeholders — NOT inline values
+			sb.Append(string.Join(", ", keys.Select(k => $"@{k}")));
+			sb.Append(");\nSELECT SCOPE_IDENTITY();");
 
-			}
-			sb.Append(" values ( ");
-			int count2 = data.Count;
-
-			foreach (var item in data.Keys)
-			{
-				count2 -= 1;
-				sb.Append($"'{data[item]}'");
-				if (count2 == 0)
-				{
-					sb.Append(" )");
-				}
-				else
-				{
-					sb.Append(",");
-				}
-
-			}
-			sb.Append(" \nSELECT SCOPE_IDENTITY();");
-			var query = sb.ToString();
-			return query;
-
-
+			return sb.ToString();
 		}
 
 		public static string InsertQuery(Dictionary<string, object> data, string tableName)
