@@ -3174,11 +3174,11 @@ namespace TechHub.Service.Service
 
 								// Reactivate assignment
 								var activateDict = new Dictionary<string, object>
-						{
-							{ "IsActive", true },
-							{ "IsPrimary", action.IsPrimary },
-							{ "ModifiedDate", now }
-						};
+								{
+									{ "IsActive", true },
+									{ "IsPrimary", action.IsPrimary },
+									{ "ModifiedDate", now }
+								};
 
 								assignmentsToUpdate.Add((existingAssignment.Id, activateDict));
 

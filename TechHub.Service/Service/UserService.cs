@@ -2608,29 +2608,28 @@ namespace TechHub.Service.Service
 					switch (role)
 					{
 						case UserRole.SubjectTeacher:
-							// Classrooms + subjects per classroom
 							var subjectTeacherQuery = $@"
-								SELECT
-									c.Id          AS ClassroomId,
-									c.Name,
-									s.Id          AS SubjectId,
-									s.Subject     AS SubjectName,
-									s.Category    AS SubjectCategory
-								FROM   TeacherClassroom tc
-								JOIN   Classroom        c  ON c.Id = tc.ClassroomId
-								JOIN   TeacherSubject   ts ON ts.TeacherId = tc.TeacherId
-								JOIN   Subjects         s  ON s.Id = ts.SubjectId
-								WHERE  tc.TeacherId = '{userId}'
-								AND    tc.SchoolId  = '{claimSchoolId}'
-								AND    tc.IsActive  = 1
-								AND    ts.IsActive  = 1
-								ORDER  BY c.Name, s.Subject";
+							SELECT
+								c.Id       AS ClassroomId,
+								c.Name     AS ClassName,
+								s.Id       AS SubjectId,
+								s.Subject  AS SubjectName,
+								s.Category AS SubjectCategory
+							FROM   TeacherClassroom tc
+							JOIN   Classroom        c  ON c.Id = tc.ClassroomId
+							JOIN   TeacherSubject   ts ON ts.TeacherId  = tc.TeacherId
+													  AND ts.ClassroomId = tc.ClassroomId
+							JOIN   Subjects         s  ON s.Id = ts.SubjectId
+							WHERE  tc.TeacherId = '{userId}'
+							AND    tc.SchoolId  = '{claimSchoolId}'
+							AND    tc.IsActive  = 1
+							AND    ts.IsActive  = 1
+							ORDER  BY c.Name, s.Subject";
 
 							var subjectTeacherRows = await _queryrepositoryUser
 								.QueryAsync<SubjectTeacherAssignmentRow>(
 									subjectTeacherQuery, new Dictionary<string, object>());
 
-							// Group by classroom
 							var classroomsWithSubjects = subjectTeacherRows
 								.GroupBy(r => new { r.ClassroomId, r.Name })
 								.Select(g => new
@@ -2639,21 +2638,21 @@ namespace TechHub.Service.Service
 									ClassName = g.Key.Name,
 									Subjects = g.Select(r => new
 									{
-										SubjectId = r.SubjectId,
-										SubjectName = r.SubjectName,
-										SubjectCategory = r.SubjectCategory
+										r.SubjectId,
+										r.SubjectName,
+										r.SubjectCategory
 									}).ToList()
 								}).ToList();
 
 							roleData = new { Classrooms = classroomsWithSubjects };
 							break;
 
+						case UserRole.HeadTeacher:
 						case UserRole.ClassTeacher:
-							// Classrooms only
 							var classTeacherQuery = $@"
 								SELECT
 									c.Id       AS ClassroomId,
-									c.Name,
+									c.Name     AS ClassName,
 									c.IsActive AS ClassroomIsActive
 								FROM   TeacherClassroom tc
 								JOIN   Classroom        c ON c.Id = tc.ClassroomId
@@ -2678,11 +2677,10 @@ namespace TechHub.Service.Service
 							break;
 
 						case UserRole.Student:
-							// Single classroom + subjects enrolled in
-							var studentQuery = $@"
+							var studentClassroomQuery = $@"
 								SELECT
 									c.Id       AS ClassroomId,
-									c.Name     as CLassName,
+									c.Name     AS ClassName,
 									c.IsActive AS ClassroomIsActive
 								FROM   StudentClassroom sc
 								JOIN   Classroom        c ON c.Id = sc.ClassroomId
@@ -2692,32 +2690,78 @@ namespace TechHub.Service.Service
 
 							var studentClassroom = await _queryrepositoryUser
 								.QueryAsync<ClassroomRow>(
-									studentQuery, new Dictionary<string, object>());
+									studentClassroomQuery, new Dictionary<string, object>());
 
-							var studentSubjectQuery = $@"
+							// Major subjects via classroom
+							var majorSubjectQuery = $@"
 								SELECT
-									s.Id      AS SubjectId,
-									s.Subject AS SubjectName,
-									s.Category AS SubjectCategory
+									s.Id       AS SubjectId,
+									s.Subject  AS SubjectName,
+									s.Category AS SubjectCategory,
+									'Major'    AS SubjectType
+								FROM   StudentClassroom sc
+								JOIN   ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+								JOIN   Subjects         s  ON s.Id = cs.SubjectId
+								WHERE  sc.StudentId = '{userId}'
+								AND    sc.SchoolId  = '{claimSchoolId}'
+								AND    sc.IsActive  = 1
+								AND    cs.IsActive  = 1";
+
+							// Minor subjects
+							var minorSubjectQuery = $@"
+								SELECT
+									s.Id       AS SubjectId,
+									s.Subject  AS SubjectName,
+									s.Category AS SubjectCategory,
+									'Minor'    AS SubjectType
 								FROM   StudentMinorSubject sms
 								JOIN   Subjects            s ON s.Id = sms.SubjectId
 								WHERE  sms.StudentId = '{userId}'
 								AND    sms.SchoolId  = '{claimSchoolId}'
 								AND    sms.IsActive  = 1";
 
-							var studentSubjects = await _queryrepositoryUser
-								.QueryAsync<SubjectRow>(
-									studentSubjectQuery, new Dictionary<string, object>());
+							var majorSubjects = await _queryrepositoryUser
+								.QueryAsync<SubjectRow>(majorSubjectQuery, new Dictionary<string, object>());
+
+							var minorSubjects = await _queryrepositoryUser
+								.QueryAsync<SubjectRow>(minorSubjectQuery, new Dictionary<string, object>());
 
 							roleData = new
 							{
 								Classroom = studentClassroom.FirstOrDefault(),
-								Subjects = studentSubjects.ToList()
+								MajorSubjects = majorSubjects.ToList(),
+								MinorSubjects = minorSubjects.ToList(),
+								TotalSubjects = majorSubjects.Count() + minorSubjects.Count()
 							};
 							break;
 
+						case UserRole.Administrator:
+						case UserRole.SuperAdministrator:
+							// Fetch permissions for admin roles
+							var adminPermissions = await GetExistingPermissions(userId, claimSchoolId);
+							if (adminPermissions != null)
+							{
+								var permissionEnum = (AdminPermission)adminPermissions.Permissions;
+								var permissionNames = Enum.GetValues<AdminPermission>()
+									.Where(p => p != AdminPermission.None
+											 && p != AdminPermission.BasicAdmin
+											 && p != AdminPermission.FullAdmin
+											 && permissionEnum.HasFlag(p))
+									.Select(p => new
+									{
+										Value = (int)p,
+										Name = p.ToString()
+									}).ToList();
+
+								roleData = new
+								{
+									PermissionsValue = adminPermissions.Permissions,
+									Permissions = permissionNames
+								};
+							}
+							break;
+
 						default:
-							// HeadTeacher, Administrator, SuperAdministrator — no extra data
 							roleData = null;
 							break;
 					}
@@ -2746,7 +2790,7 @@ namespace TechHub.Service.Service
 							GuardianName = user.GuardianName,
 							CreatedDate = user.CreationDate,
 							ModifiedDate = user.ModifiedDate,
-							RoleData = roleData   
+							RoleData = roleData
 						}
 					};
 				}
