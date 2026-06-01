@@ -4600,7 +4600,6 @@ namespace TechHub.Service.Service
 				var currentQuery = $@"
 					SELECT SubjectId FROM TeacherSubject
 					WHERE  TeacherId   = '{teacherId}'
-					AND    ClassroomId = '{model.ClassroomId}'
 					AND    SchoolId    = '{schoolId}'
 					AND    IsActive    = 1";
 
@@ -4636,7 +4635,6 @@ namespace TechHub.Service.Service
 								   ModifiedDate = '{nowStr}'
 							WHERE  TeacherId   = '{teacherId}'
 							AND    SubjectId   = '{subjectId}'
-							AND    ClassroomId = '{model.ClassroomId}'
 							AND    SchoolId    = '{schoolId}'
 							AND    IsActive    = 1";
 
@@ -4651,7 +4649,7 @@ namespace TechHub.Service.Service
 							{ "Id",           Guid.NewGuid()    },
 							{ "TeacherId",    teacherId          },
 							{ "SubjectId",    subjectId          },
-							{ "ClassroomId",  model.ClassroomId },
+							//{ "ClassroomId",  model.ClassroomId },
 							{ "SchoolId",     schoolId           },
 							{ "CreatedBy",    requesterId        },
 							{ "CreationDate", nowStr             },
@@ -4679,17 +4677,27 @@ namespace TechHub.Service.Service
 					teacherId, model.ClassroomId, toAdd.Count, toRemove.Count, requesterId);
 
 				// ── Fetch updated assignments to return ───────────────────────
+				//var updatedQuery = $@"
+				//	SELECT
+				//		ts.SubjectId,
+				//		s.Subject  AS SubjectName,
+				//		ts.ClassroomId,
+				//		c.Name     AS ClassName
+				//	FROM   TeacherSubject ts
+				//	JOIN   Subjects        s ON s.Id = ts.SubjectId
+				//	JOIN   Classroom       c ON c.Id = ts.ClassroomId
+				//	WHERE  ts.TeacherId   = '{teacherId}'
+				//	AND    ts.ClassroomId = '{model.ClassroomId}'
+				//	AND    ts.SchoolId    = '{schoolId}'
+				//	AND    ts.IsActive    = 1";
+
 				var updatedQuery = $@"
 					SELECT
 						ts.SubjectId,
 						s.Subject  AS SubjectName,
-						ts.ClassroomId,
-						c.Name     AS ClassName
 					FROM   TeacherSubject ts
 					JOIN   Subjects        s ON s.Id = ts.SubjectId
-					JOIN   Classroom       c ON c.Id = ts.ClassroomId
 					WHERE  ts.TeacherId   = '{teacherId}'
-					AND    ts.ClassroomId = '{model.ClassroomId}'
 					AND    ts.SchoolId    = '{schoolId}'
 					AND    ts.IsActive    = 1";
 
