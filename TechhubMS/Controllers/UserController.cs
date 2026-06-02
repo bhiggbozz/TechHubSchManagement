@@ -350,6 +350,40 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		[HttpGet("{studentId}/minor-subjects")]
+		[Authorize]
+		public async Task<IActionResult> GetStudentMinorSubjects(Guid studentId,[FromQuery] Guid? classroomId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.GetStudentMinorSubjects(studentId, classroomId, claims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
+		}
+
+		[HttpPut("{studentId}/minor-subjects")]
+		[Authorize]
+		public async Task<IActionResult> UpdateStudentMinorSubjects(Guid studentId, [FromQuery] Guid? classroomId, [FromBody] UpdateStudentMinorSubjectViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.UpdateStudentMinorSubjects(studentId, model, claims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
+		}
+
 
 
 	}

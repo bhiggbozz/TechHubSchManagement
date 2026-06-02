@@ -5365,7 +5365,281 @@ namespace TechHub.Service.Service
 			}
 		}
 
+
+		public async Task<BaseResponse> GetStudentMinorSubjects(Guid studentId, Guid? classroomId, AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Invalid school identification",
+							Status = "failed"
+						};
+
+					// classroomId accepted but not used yet — reserved for future filtering
+					var sql = $@"
+						SELECT
+							s.Id       AS SubjectId,
+							s.Subject  AS SubjectName,
+							s.Category AS Category
+						FROM   StudentMinorSubject sms
+						JOIN   Subjects            s ON s.Id = sms.SubjectId
+						WHERE  sms.StudentId = '{studentId}'
+						AND    sms.SchoolId  = '{schoolId}'
+						AND    sms.IsActive  = 1
+						ORDER  BY s.Subject";
+
+					var rows = await _queryrepositoryUser.QueryAsync<StudentSubjectDto>(sql, new Dictionary<string, object>());
+
+					var subjects = rows.ToList();
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = subjects.Any()
+							? $"{subjects.Count} minor subject(s) found"
+							: "No minor subjects found for this student",
+						Status = "success",
+						Data = new
+						{
+							StudentId = studentId,
+							ClassroomId = classroomId,  // echoed back for future use
+							TotalSubjects = subjects.Count,
+							Subjects = subjects
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Error fetching student minor subjects - StudentId: {StudentId}",
+						studentId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching minor subjects",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
 		#endregion
+
+		public async Task<BaseResponse> UpdateStudentMinorSubjects(Guid studentId,UpdateStudentMinorSubjectViewModel model,AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(claims.UserId, out var requesterId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Unauthorised access",
+							Status = "failed"
+						};
+
+					if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Unauthorised school access",
+							Status = "failed"
+						};
+
+					// ── Validate at least one operation ───────────────────────
+					if (!model.AddSubjects.Any() && !model.RemoveSubjects.Any())
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "At least one subject to add or remove is required",
+							Status = "failed"
+						};
+
+					// ── Check for overlap between add and remove ───────────────
+					var overlap = model.AddSubjects.Intersect(model.RemoveSubjects).ToList();
+					if (overlap.Any())
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "The same subject cannot be in both add and remove lists",
+							Status = "failed"
+						};
+
+					// ── Verify student exists and belongs to school ───────────
+					var student = await _queryrepositoryUser.Get(studentId);
+					if (student == null || student.SchoolId != schoolId)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Student not found",
+							Status = "failed"
+						};
+
+					if (student.RoleId != (int)UserRole.Student)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "User is not a student",
+							Status = "failed"
+						};
+
+					// ── Verify all subjects to add exist and belong to school ─
+					foreach (var subjectId in model.AddSubjects)
+					{
+						var subject = await _subjectQueryRespository.Get(subjectId);
+						if (subject == null || subject.SchoolId != schoolId)
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.NotFound,
+								ResponseMessage = $"Subject {subjectId} not found",
+								Status = "failed"
+							};
+					}
+
+					var nowStr = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+					var added = 0;
+					var removed = 0;
+
+					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+					try
+					{
+						// ── Add subjects ──────────────────────────────────────
+						foreach (var subjectId in model.AddSubjects)
+						{
+							// Check not already active
+							var existing = await scope.Connection.QueryFirstOrDefaultAsync<StudentMinorSubject>(
+										$@"SELECT TOP 1 * FROM StudentMinorSubject
+								   WHERE  StudentId = '{studentId}'
+								   AND    SubjectId = '{subjectId}'
+								   AND    SchoolId  = '{schoolId}'
+								   AND    IsActive  = 1",
+								transaction: scope.Transaction);
+
+							if (existing != null) continue; // already assigned, skip
+
+							// Check if soft-deleted record exists — reactivate instead of insert
+							var softDeleted = await scope.Connection.QueryFirstOrDefaultAsync<StudentMinorSubject>(
+									$@"SELECT TOP 1 * FROM StudentMinorSubject
+							   WHERE  StudentId = '{studentId}'
+							   AND    SubjectId = '{subjectId}'
+							   AND    SchoolId  = '{schoolId}'
+							   AND    IsActive  = 0",
+								transaction: scope.Transaction);
+
+							if (softDeleted != null)
+							{
+								await scope.Connection.ExecuteAsync(
+										$@"UPDATE StudentMinorSubject
+								   SET    IsActive     = 1,
+										  ModifiedDate = '{nowStr}'
+								   WHERE  Id = '{softDeleted.Id}'",
+									transaction: scope.Transaction);
+							}
+							else
+							{
+								var insertDict = new Dictionary<string, object>
+								{
+									{ "Id",           Guid.NewGuid() },
+									{ "StudentId",    studentId      },
+									{ "SubjectId",    subjectId      },
+									{ "SchoolId",     schoolId       },
+									{ "CreatedBy",    requesterId    },
+									{ "CreationDate", nowStr         },
+									{ "ModifiedDate", nowStr         },
+									{ "IsActive",     true           }
+								};
+
+								await _commandRepositoryMinorSubject.Create(scope.Transaction, scope.Connection, insertDict);
+							}
+
+							added++;
+						}
+
+						// ── Remove subjects ───────────────────────────────────
+						foreach (var subjectId in model.RemoveSubjects)
+						{
+							var rows = await scope.Connection.ExecuteAsync(
+									$@"UPDATE StudentMinorSubject
+							   SET    IsActive     = 0,
+									  ModifiedDate = '{nowStr}'
+							   WHERE  StudentId = '{studentId}'
+							   AND    SubjectId = '{subjectId}'
+							   AND    SchoolId  = '{schoolId}'
+							   AND    IsActive  = 1",
+								transaction: scope.Transaction);
+
+							if (rows > 0) removed++;
+						}
+
+						await scope.CommitAsync();
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(ex,
+							"Rolling back student minor subject update - StudentId: {StudentId}",
+							studentId);
+						try { await scope.RollbackAsync(); } catch { }
+						throw;
+					}
+
+					_logger.Information(
+						"Student minor subjects updated - StudentId: {StudentId}, " +
+						"Added: {Added}, Removed: {Removed}, UpdatedBy: {RequesterId}",
+						studentId, added, removed, requesterId);
+
+					// ── Fetch updated minor subjects ───────────────────────────
+					var updatedQuery = $@"
+						SELECT
+							s.Id       AS SubjectId,
+							s.Subject  AS SubjectName,
+							s.Category AS Category
+						FROM   StudentMinorSubject sms
+						JOIN   Subjects            s ON s.Id = sms.SubjectId
+						WHERE  sms.StudentId = '{studentId}'
+						AND    sms.SchoolId  = '{schoolId}'
+						AND    sms.IsActive  = 1
+						ORDER  BY s.Subject";
+
+					var updated = await _queryrepositoryUser.QueryAsync<StudentSubjectDto>(updatedQuery, new Dictionary<string, object>());
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Student minor subjects updated successfully",
+						Status = "successful",
+						Data = new
+						{
+							StudentId = studentId,
+							StudentName = $"{student.FirstName} {student.LastName}",
+							Added = added,
+							Removed = removed,
+							TotalSubjects = updated.Count(),
+							Subjects = updated.ToList()
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Error updating student minor subjects - StudentId: {StudentId}",
+						studentId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while updating minor subjects",
+						Status = "failed"
+					};
+				}
+			}
+		}
 
 		#region HasPermission
 
