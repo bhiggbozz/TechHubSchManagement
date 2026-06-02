@@ -3362,7 +3362,7 @@ namespace TechHub.Service.Service
 
 				// ── Fetch current active classroom assignments ─────────────────
 				var currentQuery = $@"
-					SELECT ClassroomId FROM TeacherClassroom
+					SELECT ClassroomId FROM ClassroomTeacher  
 					WHERE  TeacherId = '{teacherId}'
 					AND    SchoolId  = '{schoolId}'
 					AND    IsActive  = 1";
@@ -3393,7 +3393,7 @@ namespace TechHub.Service.Service
 					foreach (var classroomId in toRemove)
 					{
 						var softDelete = $@"
-							UPDATE TeacherClassroom
+							UPDATE ClassroomTeacher   
 							SET    IsActive     = 0,
 								   ModifiedDate = '{nowStr}'
 							WHERE  TeacherId   = '{teacherId}'
