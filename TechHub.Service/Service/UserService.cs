@@ -2609,22 +2609,22 @@ namespace TechHub.Service.Service
 					{
 						case UserRole.SubjectTeacher:
 							var subjectTeacherQuery = $@"
-							SELECT
-								c.Id       AS ClassroomId,
-								c.Name     AS ClassName,
-								s.Id       AS SubjectId,
-								s.Subject  AS SubjectName,
-								s.Category AS SubjectCategory
-							FROM   TeacherClassroom tc
-							JOIN   Classroom        c  ON c.Id = tc.ClassroomId
-							JOIN   TeacherSubject   ts ON ts.TeacherId  = tc.TeacherId
-													  AND ts.ClassroomId = tc.ClassroomId
-							JOIN   Subjects         s  ON s.Id = ts.SubjectId
-							WHERE  tc.TeacherId = '{userId}'
-							AND    tc.SchoolId  = '{claimSchoolId}'
-							AND    tc.IsActive  = 1
-							AND    ts.IsActive  = 1
-							ORDER  BY c.Name, s.Subject";
+								SELECT
+									c.Id       AS ClassroomId,
+									c.Name     AS ClassName,
+									s.Id       AS SubjectId,
+									s.Subject  AS SubjectName,
+									s.Category AS SubjectCategory
+								FROM   TeacherClassroom tc
+								JOIN   Classroom        c  ON c.Id = tc.ClassroomId
+								JOIN   TeacherSubject   ts ON ts.TeacherId  = tc.TeacherId
+														  AND ts.ClassroomId = tc.ClassroomId
+								JOIN   Subjects         s  ON s.Id = ts.SubjectId
+								WHERE  tc.TeacherId = '{userId}'
+								AND    tc.SchoolId  = '{claimSchoolId}'
+								AND    tc.IsActive  = 1
+								AND    ts.IsActive  = 1
+								ORDER  BY c.Name, s.Subject";
 
 							var subjectTeacherRows = await _queryrepositoryUser
 								.QueryAsync<SubjectTeacherAssignmentRow>(

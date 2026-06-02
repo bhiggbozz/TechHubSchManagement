@@ -50,9 +50,6 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<ApprovalRequests> _approvalRequestCommandRepository;
 
 
-
-
-
 		private readonly IQueryRepository<State> _queryrepositoryState;
 		private readonly IQueryRepository<School> _schQueryRepository;
 		private readonly IQueryRepository<Subjects> _queryrepositorySubject;
@@ -60,7 +57,9 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<Classroom> _studentClassQueryRespository;
 		private readonly IQueryRepository<ClassroomSubject> _classroomSubjectQueryRespository;
 		private readonly IQueryRepository<ClassroomTeacher> _classroomTeacherQueryRespository;
-		
+		private readonly IQueryRepository<AdminPermissions> _adminPermissionsQueryRespository;
+
+
 		private readonly IQueryRepository<Topic> _topicQueryRepository;
 		private readonly IQueryRepository<SubTopic> _subTopicQueryRepository;
 
@@ -79,7 +78,8 @@ namespace TechHub.Service.Service
 			ICommandRespository<ClassroomSubject> classroomSubjectCommandRespository, IQueryRepository<ClassroomSubject> classroomSubjectQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IQueryRepository<Users> queryrepositoryUser, IQueryRepository<Classroom> studentClassQueryRespository,
 		    ICommandRespository<Subjects> subjectCommandRespository, IQueryRepository<ClassroomTeacher> classroomTeacherQueryRespository, 
-		    ICommandRespository<ClassroomTeacher> classroomTeacherCommandRepository, IQueryRepository<School> schQueryRepository, ICloudinaryService cloudinaryService,
+		    ICommandRespository<ClassroomTeacher> classroomTeacherCommandRepository,
+			IQueryRepository<School> schQueryRepository, ICloudinaryService cloudinaryService, IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,
 			IQueryRepository<Subjects> queryrepositorySubject, ICommandRespository<Topic> topicCommandRepository, IQueryRepository<Topic> topicQueryRepository, ICommandRespository<SubTopic> subTopicCommandRepository,
 			IQueryRepository<SubTopic> subTopicQueryRepository, ICommandRespository<Users> userCommandRepository, ICommandRespository<ApprovalRequests> approvalRequestCommandRepository,
 			IConfiguration configuration, ILogger logger)
@@ -103,6 +103,7 @@ namespace TechHub.Service.Service
 			_schQueryRepository = schQueryRepository;
 			_topicQueryRepository = topicQueryRepository;
 			_subTopicQueryRepository = subTopicQueryRepository;
+			_adminPermissionsQueryRespository = adminPermissionsQueryRespository;
 
 
 			_configuration = configuration;
@@ -2056,10 +2057,7 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				var nameConflicts = await CheckNameConflicts(
-					updateClassroomView.classroomUpdateViews,
-					schoolId
-				);
+				var nameConflicts = await CheckNameConflicts(updateClassroomView.classroomUpdateViews,schoolId);
 
 				if (nameConflicts.Any())
 				{
@@ -3272,8 +3270,216 @@ namespace TechHub.Service.Service
 			}
 		}
 
-		public async Task<CreateTopicResponse> CreateTopic(
-	CreateTopicViewModel model, AuthenticatedUserClaims userClaims)
+		public async Task<BaseResponse> UpdateTeacherClassroom(Guid teacherId, UpdateTeacherClassroomViewModel model, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.UserId, out var requesterId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Unauthorised access",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Unauthorised school access",
+						Status = "failed"
+					};
+
+				if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var requesterRole))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid role in token",
+						Status = "failed"
+					};
+
+				// ── Authorization ─────────────────────────────────────────────
+				if (requesterRole == UserRole.Administrator)
+				{
+					var hasPermission = await this.HasPermission(requesterId, schoolId, AdminPermission.ManageTeachers);
+
+					if (!hasPermission)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You do not have permission to update teacher classrooms",
+							Status = "failed"
+						};
+				}
+				else if (requesterRole != UserRole.SuperAdministrator && requesterRole != UserRole.HeadTeacher)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You are not authorized to update teacher classrooms",
+						Status = "failed"
+					};
+				}
+
+				// ── Verify teacher exists and belongs to school ───────────────
+				var teacher = await _queryrepositoryUser.Get(teacherId);
+				if (teacher == null || teacher.SchoolId != schoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Teacher not found",
+						Status = "failed"
+					};
+
+				if (teacher.RoleId != (int)UserRole.SubjectTeacher && teacher.RoleId != (int)UserRole.HeadTeacher && teacher.RoleId != (int)UserRole.ClassTeacher)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "User is not a teacher",
+						Status = "failed"
+					};
+
+				if (!teacher.IsActive)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = $"Teacher {teacher.FirstName} {teacher.LastName} is not active",
+						Status = "failed"
+					};
+
+				// ── Verify all incoming classrooms exist and belong to school ─
+				foreach (var classroomId in model.ClassroomIds)
+				{
+					var classroom = await _studentClassQueryRespository.Get(classroomId);
+					if (classroom == null || classroom.SchoolId != schoolId)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = $"Classroom {classroomId} not found",
+							Status = "failed"
+						};
+				}
+
+				// ── Fetch current active classroom assignments ─────────────────
+				var currentQuery = $@"
+					SELECT ClassroomId FROM TeacherClassroom
+					WHERE  TeacherId = '{teacherId}'
+					AND    SchoolId  = '{schoolId}'
+					AND    IsActive  = 1";
+
+				var currentRows = await _classroomTeacherQueryRespository.QueryAsync<TeacherClassroomIdRow>(currentQuery, new Dictionary<string, object>());
+
+				var currentClassroomIds = currentRows.Select(r => r.ClassroomId).ToHashSet();
+				var incomingClassroomIds = model.ClassroomIds.ToHashSet();
+
+				// ── Diff ───────────────────────────────────────────────────────
+				var toAdd = incomingClassroomIds.Except(currentClassroomIds).ToList();
+				var toRemove = currentClassroomIds.Except(incomingClassroomIds).ToList();
+
+				if (!toAdd.Any() && !toRemove.Any())
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "No changes detected — classrooms are already up to date",
+						Status = "successful"
+					};
+
+				var nowStr = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					// ── Soft delete removed classrooms ────────────────────────
+					foreach (var classroomId in toRemove)
+					{
+						var softDelete = $@"
+							UPDATE TeacherClassroom
+							SET    IsActive     = 0,
+								   ModifiedDate = '{nowStr}'
+							WHERE  TeacherId   = '{teacherId}'
+							AND    ClassroomId = '{classroomId}'
+							AND    SchoolId    = '{schoolId}'
+							AND    IsActive    = 1";
+
+						await scope.Connection.ExecuteAsync(softDelete, transaction: scope.Transaction);
+					}
+
+					// ── Insert new classrooms ─────────────────────────────────
+					foreach (var classroomId in toAdd)
+					{
+						var insertDict = new Dictionary<string, object>
+						{
+							{ "Id",           Guid.NewGuid() },
+							{ "TeacherId",    teacherId       },
+							{ "ClassroomId",  classroomId     },
+							{ "SchoolId",     schoolId        },
+							{ "CreatedBy",    requesterId     },
+							{ "CreationDate", nowStr          },
+							{ "ModifiedDate", nowStr          },
+							{ "IsActive",     true            }
+						};
+
+						await _classroomTeacherCommandRepository.Create(scope.Transaction, scope.Connection, insertDict);
+					}
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,"Rolling back teacher classroom update - TeacherId: {TeacherId}", teacherId);
+					try { await scope.RollbackAsync(); } catch { }
+					throw;
+				}
+
+				_logger.Information(
+					"Teacher classrooms updated - TeacherId: {TeacherId}, " +
+					"Added: {Added}, Removed: {Removed}, UpdatedBy: {RequesterId}",
+					teacherId, toAdd.Count, toRemove.Count, requesterId);
+
+				// ── Fetch updated assignments to return ───────────────────────
+				var updatedQuery = $@"
+					SELECT
+						tc.ClassroomId,
+						c.Name AS ClassName,
+						c.IsActive AS ClassroomIsActive
+					FROM   TeacherClassroom tc
+					JOIN   Classroom        c ON c.Id = tc.ClassroomId
+					WHERE  tc.TeacherId = '{teacherId}'
+					AND    tc.SchoolId  = '{schoolId}'
+					AND    tc.IsActive  = 1
+					ORDER  BY c.Name";
+
+				var updated = await _classroomTeacherQueryRespository.QueryAsync<ClassroomRow>(updatedQuery, new Dictionary<string, object>());
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Teacher classrooms updated successfully",
+					Status = "successful",
+					Data = new
+					{
+						TeacherId = teacherId,
+						TeacherName = $"{teacher.FirstName} {teacher.LastName}",
+						Added = toAdd.Count,
+						Removed = toRemove.Count,
+						Classrooms = updated.ToList()
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,"Error updating teacher classrooms - TeacherId: {TeacherId}",teacherId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while updating teacher classrooms",
+					Status = "failed"
+				};
+			}
+		}
+
+		public async Task<CreateTopicResponse> CreateTopic(CreateTopicViewModel model, AuthenticatedUserClaims userClaims)
 		{
 			using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
 			{
@@ -4359,6 +4565,48 @@ namespace TechHub.Service.Service
 				}
 			}
 		}
+
+		public async Task<bool> HasPermission(Guid adminUserId, Guid schoolId, AdminPermission permission)
+		{
+			try
+			{
+				var permissions = await GetExistingPermissions(adminUserId, schoolId);
+				if (permissions == null) return false;
+
+				// Convert database int to enum and check using bitwise AND
+				var adminPermissions = (AdminPermission)permissions.Permissions;
+				return adminPermissions.HasPermission(permission);
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error checking permission - AdminId: {AdminId}", adminUserId);
+				return false;
+			}
+		}
+
+		private async Task<AdminPermissions?> GetExistingPermissions(Guid adminUserId, Guid schoolId)
+		{
+			try
+			{
+				var query = $@"
+                    SELECT * FROM AdminPermissions 
+                    WHERE UserId = '{adminUserId}' 
+                    AND SchoolId = '{schoolId}' 
+                    AND IsActive = 1";
+
+				var permissions = await _adminPermissionsQueryRespository.Get(query);
+				return permissions;
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(
+					ex,
+					"Error fetching existing permissions - AdminId: {AdminId}",
+					adminUserId);
+				return null;
+			}
+		}
+
 
 		private async Task<ClassroomTeacher?> GetClassroomTeacherAssignment(Guid classroomId, Guid teacherId)
 		{
