@@ -334,6 +334,22 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		[HttpPut("teacher/{teacherId}/classrooms")]
+		[Authorize]
+		public async Task<IActionResult> UpdateTeacherClassroom(Guid teacherId,[FromBody] UpdateTeacherClassroomViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var response = await _schoolService.UpdateTeacherClassroom(teacherId, model, claims);
+
+			return response.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(response),
+				ResponseCode.NotFound => NotFound(response),
+				ResponseCode.Unauthorized => Unauthorized(response),
+				_ => BadRequest(response)
+			};
+		}
+
 
 	}
 
