@@ -43,7 +43,7 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<Classroom> _studentClassCommandRespository;
 		private readonly ICommandRespository<Subjects> _subjectCommandRespository;
 		private readonly ICommandRespository<ClassroomSubject> _classroomSubjectCommandRespository;
-		private readonly ICommandRespository<ClassroomTeacher> _classroomTeacherCommandRepository;
+		private readonly ICommandRespository<TeacherClassroom> _classroomTeacherCommandRepository;
 		private readonly ICommandRespository<Topic> _topicCommandRepository;
 		private readonly ICommandRespository<SubTopic> _subTopicCommandRepository;
 		private readonly ICommandRespository<Users> _userCommandRepository;
@@ -56,7 +56,7 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<Users> _queryrepositoryUser;
 		private readonly IQueryRepository<Classroom> _studentClassQueryRespository;
 		private readonly IQueryRepository<ClassroomSubject> _classroomSubjectQueryRespository;
-		private readonly IQueryRepository<ClassroomTeacher> _classroomTeacherQueryRespository;
+		private readonly IQueryRepository<TeacherClassroom> _classroomTeacherQueryRespository;
 		private readonly IQueryRepository<AdminPermissions> _adminPermissionsQueryRespository;
 
 
@@ -77,8 +77,8 @@ namespace TechHub.Service.Service
 			IMapper mapper, ICommandRespository<SchoolCode> schCodeCommandRespository, ICommandRespository<Classroom> studentClassCommandRespository,
 			ICommandRespository<ClassroomSubject> classroomSubjectCommandRespository, IQueryRepository<ClassroomSubject> classroomSubjectQueryRespository,
 			IDbTransactionScopeFactory dbTransactionScopeFactory, IQueryRepository<Users> queryrepositoryUser, IQueryRepository<Classroom> studentClassQueryRespository,
-		    ICommandRespository<Subjects> subjectCommandRespository, IQueryRepository<ClassroomTeacher> classroomTeacherQueryRespository, 
-		    ICommandRespository<ClassroomTeacher> classroomTeacherCommandRepository,
+		    ICommandRespository<Subjects> subjectCommandRespository, IQueryRepository<TeacherClassroom> classroomTeacherQueryRespository, 
+		    ICommandRespository<TeacherClassroom> classroomTeacherCommandRepository,
 			IQueryRepository<School> schQueryRepository, ICloudinaryService cloudinaryService, IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,
 			IQueryRepository<Subjects> queryrepositorySubject, ICommandRespository<Topic> topicCommandRepository, IQueryRepository<Topic> topicQueryRepository, ICommandRespository<SubTopic> subTopicCommandRepository,
 			IQueryRepository<SubTopic> subTopicQueryRepository, ICommandRespository<Users> userCommandRepository, ICommandRespository<ApprovalRequests> approvalRequestCommandRepository,
@@ -3273,7 +3273,7 @@ namespace TechHub.Service.Service
 		public async Task<BaseResponse> UpdateTeacherClassroom(Guid teacherId, UpdateTeacherClassroomViewModel model, AuthenticatedUserClaims claims)
 		{
 			try
-			{
+			{ 
 				if (!Guid.TryParse(claims.UserId, out var requesterId))
 					return new BaseResponse
 					{
@@ -3362,7 +3362,7 @@ namespace TechHub.Service.Service
 
 				// ── Fetch current active classroom assignments ─────────────────
 				var currentQuery = $@"
-					SELECT ClassroomId FROM ClassroomTeacher  
+					SELECT ClassroomId FROM TeacherClassroom
 					WHERE  TeacherId = '{teacherId}'
 					AND    SchoolId  = '{schoolId}'
 					AND    IsActive  = 1";
@@ -4608,7 +4608,7 @@ namespace TechHub.Service.Service
 		}
 
 
-		private async Task<ClassroomTeacher?> GetClassroomTeacherAssignment(Guid classroomId, Guid teacherId)
+		private async Task<TeacherClassroom?> GetClassroomTeacherAssignment(Guid classroomId, Guid teacherId)
 		{
 			try
 			{
