@@ -2621,7 +2621,7 @@ namespace TechHub.Service.Service
 														  AND ts.ClassroomId = tc.ClassroomId
 								JOIN   Subjects         s  ON s.Id = ts.SubjectId
 								WHERE  tc.TeacherId = '{userId}'
-								AND    tc.SchoolId  = '{claimSchoolId}'
+								AND    tc.SchoolId  = '{userClaims.SchoolId}'
 								AND    tc.IsActive  = 1
 								AND    ts.IsActive  = 1
 								ORDER  BY c.Name, s.Subject";
@@ -2657,7 +2657,7 @@ namespace TechHub.Service.Service
 								FROM   TeacherClassroom tc
 								JOIN   Classroom        c ON c.Id = tc.ClassroomId
 								WHERE  tc.TeacherId = '{userId}'
-								AND    tc.SchoolId  = '{claimSchoolId}'
+								AND    tc.SchoolId  = '{userClaims.SchoolId}'
 								AND    tc.IsActive  = 1
 								ORDER  BY c.Name";
 
@@ -2685,7 +2685,7 @@ namespace TechHub.Service.Service
 								FROM   StudentClassroom sc
 								JOIN   Classroom        c ON c.Id = sc.ClassroomId
 								WHERE  sc.StudentId = '{userId}'
-								AND    sc.SchoolId  = '{claimSchoolId}'
+								AND    sc.SchoolId  = '{userClaims.SchoolId}'
 								AND    sc.IsActive  = 1";
 
 							var studentClassroom = await _queryrepositoryUser
