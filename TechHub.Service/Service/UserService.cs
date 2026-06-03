@@ -5641,6 +5641,329 @@ namespace TechHub.Service.Service
 			}
 		}
 
+
+		public async Task<BaseResponse> UpdateStudentAssignment(Guid studentId,UpdateStudentAssignmentViewModel model,AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(claims.UserId, out var requesterId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Unauthorised access",
+							Status = "failed"
+						};
+
+					if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Unauthorised school access",
+							Status = "failed"
+						};
+
+					if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var requesterRole))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Invalid role in token",
+							Status = "failed"
+						};
+
+					// ── Authorization ─────────────────────────────────────────
+					if (requesterRole == UserRole.Administrator)
+					{
+						var hasPermission = await this.HasPermission(
+							requesterId, schoolId, AdminPermission.ManageStudents);
+
+						if (!hasPermission)
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Forbidden,
+								ResponseMessage = "You do not have permission to update student assignments",
+								Status = "failed"
+							};
+					}
+					else if (requesterRole != UserRole.SuperAdministrator && requesterRole != UserRole.HeadTeacher)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You are not authorized to update student assignments",
+							Status = "failed"
+						};
+					}
+
+					// ── Validate at least one change ──────────────────────────
+					if (!model.ClassroomId.HasValue
+					 && !model.AddSubjects.Any()
+					 && !model.RemoveSubjects.Any())
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "No changes provided",
+							Status = "failed"
+						};
+
+					// ── Check subject overlap ─────────────────────────────────
+					var overlap = model.AddSubjects.Intersect(model.RemoveSubjects).ToList();
+					if (overlap.Any())
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "The same subject cannot be in both add and remove lists",
+							Status = "failed"
+						};
+
+					// ── Verify student exists and belongs to school ───────────
+					var student = await _queryrepositoryUser.Get(studentId);
+					if (student == null || student.SchoolId != schoolId)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Student not found",
+							Status = "failed"
+						};
+
+					if (student.RoleId != (int)UserRole.Student)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "User is not a student",
+							Status = "failed"
+						};
+
+					// ── Verify classroom exists and belongs to school ─────────
+					if (model.ClassroomId.HasValue)
+					{
+						var classroom = await _classroomQueryRespository.Get(model.ClassroomId.Value);
+						if (classroom == null || classroom.SchoolId != schoolId)
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.NotFound,
+								ResponseMessage = "Classroom not found",
+								Status = "failed"
+							};
+					}
+
+					// ── Verify subjects to add exist and belong to school ─────
+					foreach (var subjectId in model.AddSubjects)
+					{
+						var subject = await _subjectQueryRespository.Get(subjectId);
+						if (subject == null || subject.SchoolId != schoolId)
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.NotFound,
+								ResponseMessage = $"Subject {subjectId} not found",
+								Status = "failed"
+							};
+					}
+
+					var nowStr = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+					var classroomChanged = false;
+					var subjectsAdded = 0;
+					var subjectsRemoved = 0;
+
+					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+					try
+					{
+						// ── Update classroom ──────────────────────────────────
+						if (model.ClassroomId.HasValue)
+						{
+							// Soft delete current classroom assignment
+							await scope.Connection.ExecuteAsync(
+									$@"UPDATE StudentClassroom
+							   SET    IsActive     = 0,
+									  ModifiedDate = '{nowStr}'
+							   WHERE  StudentId = '{studentId}'
+							   AND    SchoolId  = '{schoolId}'
+							   AND    IsActive  = 1",
+								transaction: scope.Transaction);
+
+							// Check if already assigned to new classroom (soft deleted)
+							var existing = await scope.Connection.QueryFirstOrDefaultAsync<dynamic>(
+									$@"SELECT TOP 1 Id FROM StudentClassroom
+							   WHERE  StudentId   = '{studentId}'
+							   AND    ClassroomId = '{model.ClassroomId.Value}'
+							   AND    SchoolId    = '{schoolId}'",
+								transaction: scope.Transaction);
+
+							if (existing != null)
+							{
+								// Reactivate
+								await scope.Connection.ExecuteAsync(
+										$@"UPDATE StudentClassroom
+								   SET    IsActive     = 1,
+										  ModifiedDate = '{nowStr}'
+								   WHERE  StudentId   = '{studentId}'
+								   AND    ClassroomId = '{model.ClassroomId.Value}'
+								   AND    SchoolId    = '{schoolId}'",
+									transaction: scope.Transaction);
+							}
+							else
+							{
+								// Insert new
+								await _commandRepositoryStudentClassroom.Create(
+									scope.Transaction, scope.Connection,
+									new Dictionary<string, object>
+									{
+										{ "Id",           Guid.NewGuid()          },
+										{ "StudentId",    studentId               },
+										{ "ClassroomId",  model.ClassroomId.Value },
+										{ "SchoolId",     schoolId                },
+										{ "CreatedBy",    requesterId             },
+										{ "CreationDate", nowStr                  },
+										{ "ModifiedDate", nowStr                  },
+										{ "IsActive",     true                    }
+									});
+							}
+
+							classroomChanged = true;
+						}
+
+						// ── Add minor subjects ────────────────────────────────
+						foreach (var subjectId in model.AddSubjects)
+						{
+							var existing = await scope.Connection.QueryFirstOrDefaultAsync<dynamic>(
+									$@"SELECT TOP 1 Id, IsActive FROM StudentMinorSubject
+							   WHERE  StudentId = '{studentId}'
+							   AND    SubjectId = '{subjectId}'
+							   AND    SchoolId  = '{schoolId}'",
+									transaction: scope.Transaction);
+
+							if (existing != null && existing.IsActive == true)
+								continue; // already active, skip
+
+							if (existing != null)
+							{
+								// Reactivate soft-deleted record
+									await scope.Connection.ExecuteAsync(
+										$@"UPDATE StudentMinorSubject
+								   SET    IsActive     = 1,
+										  ModifiedDate = '{nowStr}'
+								   WHERE  StudentId = '{studentId}'
+								   AND    SubjectId = '{subjectId}'
+								   AND    SchoolId  = '{schoolId}'",
+										transaction: scope.Transaction);
+							}
+							else
+							{
+								await _commandRepositoryMinorSubject.Create(
+									scope.Transaction, scope.Connection,
+									new Dictionary<string, object>
+									{
+										{ "Id",           Guid.NewGuid() },
+										{ "StudentId",    studentId      },
+										{ "SubjectId",    subjectId      },
+										{ "SchoolId",     schoolId       },
+										{ "CreatedBy",    requesterId    },
+										{ "CreationDate", nowStr         },
+										{ "ModifiedDate", nowStr         },
+										{ "IsActive",     true           }
+									});
+							}
+
+							subjectsAdded++;
+						}
+
+						// ── Remove minor subjects ─────────────────────────────
+						foreach (var subjectId in model.RemoveSubjects)
+						{
+							var rows = await scope.Connection.ExecuteAsync(
+									$@"UPDATE StudentMinorSubject
+							   SET    IsActive     = 0,
+									  ModifiedDate = '{nowStr}'
+							   WHERE  StudentId = '{studentId}'
+							   AND    SubjectId = '{subjectId}'
+							   AND    SchoolId  = '{schoolId}'
+							   AND    IsActive  = 1",
+								transaction: scope.Transaction);
+
+							if (rows > 0) subjectsRemoved++;
+						}
+
+						await scope.CommitAsync();
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(ex,
+							"Rolling back student assignment update - StudentId: {StudentId}",
+							studentId);
+						try { await scope.RollbackAsync(); } catch { }
+						throw;
+					}
+
+					_logger.Information(
+							"Student assignment updated - StudentId: {StudentId}, " +
+							"ClassroomChanged: {ClassroomChanged}, " +
+							"SubjectsAdded: {Added}, SubjectsRemoved: {Removed}, " +
+							"UpdatedBy: {RequesterId}",
+						studentId, classroomChanged,
+						subjectsAdded, subjectsRemoved, requesterId);
+
+					// ── Fetch updated state ───────────────────────────────────
+					var classroomQuery = $@"
+						SELECT
+							c.Id       AS ClassroomId,
+							c.Name     AS ClassName,
+							c.IsActive AS ClassroomIsActive
+						FROM   StudentClassroom sc
+						JOIN   Classroom        c ON c.Id = sc.ClassroomId
+						WHERE  sc.StudentId = '{studentId}'
+						AND    sc.SchoolId  = '{schoolId}'
+						AND    sc.IsActive  = 1";
+
+					var minorSubjectsQuery = $@"
+						SELECT
+							s.Id       AS SubjectId,
+							s.Subject  AS SubjectName,
+							s.Category AS Category
+						FROM   StudentMinorSubject sms
+						JOIN   Subjects            s ON s.Id = sms.SubjectId
+						WHERE  sms.StudentId = '{studentId}'
+						AND    sms.SchoolId  = '{schoolId}'
+						AND    sms.IsActive  = 1
+						ORDER  BY s.Subject";
+
+					var classroom2 = await _queryrepositoryUser.QueryAsync<ClassroomRow>(classroomQuery, new Dictionary<string, object>());
+
+					var minorSubjects = await _queryrepositoryUser.QueryAsync<StudentSubjectDto>(minorSubjectsQuery, new Dictionary<string, object>());
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Student assignment updated successfully",
+						Status = "successful",
+						Data = new
+						{
+							StudentId = studentId,
+							StudentName = $"{student.FirstName} {student.LastName}",
+							ClassroomChanged = classroomChanged,
+							SubjectsAdded = subjectsAdded,
+							SubjectsRemoved = subjectsRemoved,
+							Classroom = classroom2.FirstOrDefault(),
+							MinorSubjects = minorSubjects.ToList()
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Error updating student assignment - StudentId: {StudentId}",
+						studentId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while updating student assignment",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
 		#region HasPermission
 
 		/// <summary>
