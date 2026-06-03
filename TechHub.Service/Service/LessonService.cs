@@ -1070,7 +1070,6 @@ public class LessonService : ILessonService
 				return Unauthorized();
 			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
 				return Unauthorized();
-
 			if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
 				return BadRequest("Invalid role");
 
@@ -1083,79 +1082,135 @@ public class LessonService : ILessonService
 			if (!isTeacherOrAdmin)
 			{
 				var minorEnrollment = await _studentClassroomQuery.Get($@"
-					SELECT TOP 1 Id FROM StudentMinorSubject
-					WHERE  StudentId = '{userId}'
-					AND    SubjectId = '{subjectId}'
-					AND    SchoolId  = '{schoolId}'");
+                SELECT TOP 1 Id FROM StudentMinorSubject
+                WHERE  StudentId = '{userId}'
+                AND    SubjectId = '{subjectId}'
+                AND    SchoolId  = '{schoolId}'");
 
 				if (minorEnrollment is null)
 				{
 					var coreEnrollment = await _studentClassroomQuery.Get($@"
-						SELECT TOP 1 cs.Id
-						FROM   ClassroomSubject cs
-						JOIN   StudentClassroom sc ON sc.ClassroomId = cs.ClassroomId
-						WHERE  sc.StudentId = '{userId}'
-						AND    cs.SubjectId = '{subjectId}'
-						AND    cs.SchoolId  = '{schoolId}'
-						AND    sc.IsActive  = 1");
+                    SELECT TOP 1 cs.Id
+                    FROM   ClassroomSubject cs
+                    JOIN   StudentClassroom sc ON sc.ClassroomId = cs.ClassroomId
+                    WHERE  sc.StudentId = '{userId}'
+                    AND    cs.SubjectId = '{subjectId}'
+                    AND    cs.SchoolId  = '{schoolId}'
+                    AND    sc.IsActive  = 1");
 
 					if (coreEnrollment is null)
 						return Forbidden("You are not enrolled in this subject");
 				}
 			}
 
-			var statusFilter = isTeacherOrAdmin ? string.Empty : $"AND lc.Status = '{LessonStatus.Approved}'";
+			var statusFilter = isTeacherOrAdmin
+				? string.Empty
+				: $"AND lc.Status = '{LessonStatus.Approved}'";
 
 			var sql = $@"
-				SELECT
-					lc.Id,
-					lc.Aim,
-					lc.Description,
-					lc.Status,
-					lc.CreatedAt,
-					lc.ApprovedAt,
-					lc.RejectionReason,
-					lc.AccessDate,
-					lc.AccessTime,
-					lc.DurationMinutes,
-					lc.AccessEndsAt,
+            SELECT
+                lc.Id,
+                lc.Aim,
+                lc.Description,
+                lc.Status,
+                lc.CreatedAt,
+                lc.ApprovedAt,
+                lc.RejectionReason,
+                lc.AccessDate,
+                lc.AccessTime,
+                lc.DurationMinutes,
+                lc.AccessEndsAt,
+                s.Id          AS SubjectId,
+                s.Subject     AS SubjectName,
+                t.Id          AS TopicId,
+                t.Name        AS TopicName,
+                st.Id         AS SubTopicId,
+                st.Name       AS SubTopicName,
+                c.Id          AS ClassroomId,
+                c.Name        AS ClassName,
+                u.FirstName + ' ' + u.LastName   AS TeacherName,
+                ap.FirstName + ' ' + ap.LastName AS ApprovedByName,
+                (SELECT COUNT(*) FROM LessonMedia lm
+                 WHERE  lm.LessonContentId = lc.Id
+                 AND    lm.IsActive = 1) AS MediaCount
+            FROM   LessonContent lc
+            JOIN   Subjects      s   ON s.Id  = lc.SubjectId
+            JOIN   Topic         t   ON t.Id  = lc.TopicId
+            LEFT JOIN SubTopic   st  ON st.Id = lc.SubTopicId
+            JOIN   Classroom     c   ON c.Id  = lc.ClassroomId
+            JOIN   Users         u   ON u.Id  = lc.CreatedBy
+            LEFT JOIN Users      ap  ON ap.Id = lc.ApprovedBy
+            WHERE  lc.SubjectId = '{subjectId}'
+            AND    lc.SchoolId  = '{schoolId}'
+            {statusFilter}
+            ORDER  BY lc.CreatedAt DESC";
 
-					s.Id          AS SubjectId,
-					s.Subject     AS SubjectName,
-
-					t.Id          AS TopicId,
-					t.Name        AS TopicName,
-
-					st.Id         AS SubTopicId,
-					st.Name       AS SubTopicName,
-
-					c.Id          AS ClassroomId,
-					c.Name        AS ClassName,
-
-					u.FirstName + ' ' + u.LastName   AS TeacherName,
-					ap.FirstName + ' ' + ap.LastName AS ApprovedByName,
-
-					(SELECT COUNT(*) FROM LessonMedia lm
-					 WHERE  lm.LessonContentId = lc.Id
-					 AND    lm.IsActive = 1) AS MediaCount
-
-				FROM   LessonContent lc
-				JOIN   Subjects      s   ON s.Id  = lc.SubjectId
-				JOIN   Topic         t   ON t.Id  = lc.TopicId
-				LEFT JOIN SubTopic   st  ON st.Id = lc.SubTopicId
-				JOIN   Classroom     c   ON c.Id  = lc.ClassroomId
-				JOIN   Users         u   ON u.Id  = lc.CreatedBy
-				LEFT JOIN Users      ap  ON ap.Id = lc.ApprovedBy
-
-				WHERE  lc.SubjectId = '{subjectId}'
-				AND    lc.SchoolId  = '{schoolId}'
-				{statusFilter}
-
-				ORDER  BY lc.CreatedAt DESC";
-
-			var rows = await _lessonQuery.QueryAsync<AdminLessonItemDto>(sql, new Dictionary<string, object>());
+			var rows = await _lessonQuery.QueryAsync<AdminLessonItemDto>(
+				sql, new Dictionary<string, object>());
 
 			var lessons = rows.ToList();
+
+			// ── Fetch media for all lessons in one query ──────────────────
+			var lessonIds = string.Join("','", lessons.Select(l => l.Id));
+
+			var mediaRows = new List<LessonMediaItemDto>();
+
+			if (lessons.Any())
+			{
+				var mediaQuery = $@"
+                SELECT
+                    lm.LessonContentId,
+                    lm.Id           AS MediaId,
+                    lm.OriginalFileName AS MediaName,
+                    lm.CloudinaryUrl    AS Url,
+                    lm.MediaType,
+                    lm.FileExtension,
+                    lm.FileSizeBytes,
+                    lm.DisplayOrder
+                FROM   LessonMedia lm
+                WHERE  lm.LessonContentId IN ('{lessonIds}')
+                AND    lm.IsActive = 1
+                ORDER  BY lm.LessonContentId, lm.DisplayOrder ASC";
+
+				var media = await _mediaQuery.QueryAsync<LessonMediaItemDto>(
+					mediaQuery, new Dictionary<string, object>());
+
+				mediaRows = media.ToList();
+			}
+
+			// ── Group media by lesson and attach ──────────────────────────
+			var mediaByLesson = mediaRows
+				.GroupBy(m => m.LessonContentId)
+				.ToDictionary(g => g.Key, g => g.ToList());
+
+			var lessonsWithMedia = lessons.Select(l => new
+			{
+				l.Id,
+				l.Aim,
+				l.Description,
+				l.Status,
+				l.CreatedAt,
+				l.ApprovedAt,
+				l.RejectionReason,
+				l.AccessDate,
+				l.AccessTime,
+				l.DurationMinutes,
+				l.AccessEndsAt,
+				l.SubjectId,
+				l.SubjectName,
+				l.TopicId,
+				l.TopicName,
+				l.SubTopicId,
+				l.SubTopicName,
+				l.ClassroomId,
+				l.ClassName,
+				l.TeacherName,
+				l.ApprovedByName,
+				l.MediaCount,
+				Media = mediaByLesson.TryGetValue(l.Id, out var media)
+					? media
+					: new List<LessonMediaItemDto>()
+			}).ToList();
 
 			var summary = new
 			{
@@ -1181,7 +1236,7 @@ public class LessonService : ILessonService
 				{
 					SubjectId = subjectId,
 					Summary = summary,
-					Lessons = lessons
+					Lessons = lessonsWithMedia
 				}
 			};
 		}

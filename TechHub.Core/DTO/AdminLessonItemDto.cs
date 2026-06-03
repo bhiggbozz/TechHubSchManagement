@@ -20,8 +20,15 @@ public class AdminLessonItemDto
 	public string SubjectName { get; set; }
 	public Guid TopicId { get; set; }
 	public string TopicName { get; set; }
+	public Guid? SubTopicId { get; set; }  
+	public string? SubTopicName { get; set; }  
+	public Guid ClassroomId { get; set; }  
+	public string ClassName { get; set; }  
 	public string TeacherName { get; set; }
 	public string? ApprovedByName { get; set; }
 	public int MediaCount { get; set; }
+	public DateTime? AccessDate { get; set; }  
+	public TimeSpan? AccessTime { get; set; }  
+	public int? DurationMinutes { get; set; }  
+	public DateTime? AccessEndsAt { get; set; } 
 }
-
