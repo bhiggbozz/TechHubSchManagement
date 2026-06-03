@@ -384,6 +384,24 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		[HttpPut("{studentId}/assignment")]
+		[Authorize]
+		public async Task<IActionResult> UpdateStudentAssignment(Guid studentId,[FromBody] UpdateStudentAssignmentViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.UpdateStudentAssignment(studentId, model, claims);
+
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
+		}
+
 
 
 	}
