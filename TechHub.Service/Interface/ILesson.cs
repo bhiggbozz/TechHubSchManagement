@@ -20,5 +20,6 @@ public interface ILessonService
 	Task<BaseResponse> GetLessonForClass(Guid lessonId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetLessonsForStudent(Guid classroomId, AuthenticatedUserClaims claims);
     Task<BaseResponse> GetLessonsByClassroomForAdmin(Guid classroomId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetLessonsBySubject(Guid subjectId, AuthenticatedUserClaims claims);
 }
 
