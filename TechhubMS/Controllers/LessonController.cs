@@ -139,6 +139,17 @@ public class LessonController : ControllerBase
 		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 	}
 
+	[HttpGet("subject/{subjectId}")]
+	[Authorize]
+	public async Task<IActionResult> GetLessonsBySubject(Guid subjectId)
+	{
+		var claims = GetClaims();
+		var result = await _lessonService.GetLessonsBySubject(subjectId, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+
+		
+	}
+
 	//[HttpGet("classroom/{classroomId}/subject/{subjectId}/summary")]
 	//[Authorize]
 	//public async Task<IActionResult> GetSubjectQuestionSummary(Guid classroomId, Guid subjectId)
