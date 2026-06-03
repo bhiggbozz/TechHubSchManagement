@@ -2617,8 +2617,7 @@ namespace TechHub.Service.Service
 									s.Category AS SubjectCategory
 								FROM   TeacherClassroom tc
 								JOIN   Classroom        c  ON c.Id = tc.ClassroomId
-								JOIN   TeacherSubject   ts ON ts.TeacherId  = tc.TeacherId
-														  AND ts.ClassroomId = tc.ClassroomId
+								JOIN   TeacherSubject   ts ON ts.TeacherId = tc.TeacherId
 								JOIN   Subjects         s  ON s.Id = ts.SubjectId
 								WHERE  tc.TeacherId = '{userId}'
 								AND    tc.SchoolId  = '{userClaims.SchoolId}'
