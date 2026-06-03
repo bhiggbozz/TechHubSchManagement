@@ -1070,7 +1070,6 @@ public class LessonService : ILessonService
 				return Unauthorized();
 			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
 				return Unauthorized();
-
 			if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
 				return BadRequest("Invalid role");
 
@@ -1079,7 +1078,6 @@ public class LessonService : ILessonService
 								|| role == UserRole.Administrator
 								|| role == UserRole.SuperAdministrator;
 
-			// Students — verify they are enrolled in this subject
 			if (!isTeacherOrAdmin)
 			{
 				var minorEnrollment = await _studentClassroomQuery.Get($@"
@@ -1104,8 +1102,11 @@ public class LessonService : ILessonService
 				}
 			}
 
-			var statusFilter = isTeacherOrAdmin ? string.Empty : $"AND lc.Status = '{LessonStatus.Approved}'";
+			var statusFilter = isTeacherOrAdmin
+				? string.Empty
+				: $"AND lc.Status = '{LessonStatus.Approved}'";
 
+			// ── Fetch lessons ─────────────────────────────────────────────
 			var sql = $@"
 				SELECT
 					lc.Id,
@@ -1119,26 +1120,19 @@ public class LessonService : ILessonService
 					lc.AccessTime,
 					lc.DurationMinutes,
 					lc.AccessEndsAt,
-
 					s.Id          AS SubjectId,
 					s.Subject     AS SubjectName,
-
 					t.Id          AS TopicId,
 					t.Name        AS TopicName,
-
 					st.Id         AS SubTopicId,
 					st.Name       AS SubTopicName,
-
 					c.Id          AS ClassroomId,
 					c.Name        AS ClassName,
-
 					u.FirstName + ' ' + u.LastName   AS TeacherName,
 					ap.FirstName + ' ' + ap.LastName AS ApprovedByName,
-
 					(SELECT COUNT(*) FROM LessonMedia lm
 					 WHERE  lm.LessonContentId = lc.Id
 					 AND    lm.IsActive = 1) AS MediaCount
-
 				FROM   LessonContent lc
 				JOIN   Subjects      s   ON s.Id  = lc.SubjectId
 				JOIN   Topic         t   ON t.Id  = lc.TopicId
@@ -1146,16 +1140,49 @@ public class LessonService : ILessonService
 				JOIN   Classroom     c   ON c.Id  = lc.ClassroomId
 				JOIN   Users         u   ON u.Id  = lc.CreatedBy
 				LEFT JOIN Users      ap  ON ap.Id = lc.ApprovedBy
-
 				WHERE  lc.SubjectId = '{subjectId}'
 				AND    lc.SchoolId  = '{schoolId}'
 				{statusFilter}
-
 				ORDER  BY lc.CreatedAt DESC";
 
-			var rows = await _lessonQuery.QueryAsync<AdminLessonItemDto>(sql, new Dictionary<string, object>());
+			var rows = await _lessonQuery.QueryAsync<LessonWithMediaDto>(
+				sql, new Dictionary<string, object>());
 
 			var lessons = rows.ToList();
+
+			if (lessons.Any())
+			{
+				var lessonIds = string.Join("','", lessons.Select(l => l.Id));
+
+				var mediaQuery = $@"
+					SELECT
+						lm.LessonContentId,
+						lm.Id               AS MediaId,
+						lm.OriginalFileName AS MediaName,
+						lm.CloudinaryUrl    AS Url,
+						lm.MediaType,
+						lm.FileExtension,
+						lm.FileSizeBytes,
+						lm.DisplayOrder
+					FROM   LessonMedia lm
+					WHERE  lm.LessonContentId IN ('{lessonIds}')
+					AND    lm.IsActive = 1
+					ORDER  BY lm.LessonContentId, lm.DisplayOrder ASC";
+
+				var mediaRows = await _mediaQuery.QueryAsync<LessonMediaItemDto>(
+					mediaQuery, new Dictionary<string, object>());
+
+				var mediaByLesson = mediaRows
+					.GroupBy(m => m.LessonContentId)
+					.ToDictionary(g => g.Key, g => g.ToList());
+
+				foreach (var lesson in lessons)
+				{
+					lesson.Media = mediaByLesson.TryGetValue(lesson.Id, out var media)
+						? media
+						: new List<LessonMediaItemDto>();
+				}
+			}
 
 			var summary = new
 			{
@@ -1166,9 +1193,7 @@ public class LessonService : ILessonService
 				Published = lessons.Count(l => l.Status == LessonStatus.Published)
 			};
 
-			_logger.Information(
-				"Lessons fetched by subject - SubjectId: {SubjectId}, Count: {Count}, UserId: {UserId}",
-				subjectId, lessons.Count, userId);
+			_logger.Information("Lessons fetched by subject - SubjectId: {SubjectId}, Count: {Count}, UserId: {UserId}",subjectId, lessons.Count, userId);
 
 			return new BaseResponse
 			{
