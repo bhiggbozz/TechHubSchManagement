@@ -1060,6 +1060,140 @@ public class LessonService : ILessonService
 		}
 	}
 
+
+
+	public async Task<BaseResponse> GetLessonsBySubject(Guid subjectId, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.UserId, out var userId))
+				return Unauthorized();
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
+				return BadRequest("Invalid role");
+
+			var isTeacherOrAdmin = role == UserRole.SubjectTeacher
+								|| role == UserRole.HeadTeacher
+								|| role == UserRole.Administrator
+								|| role == UserRole.SuperAdministrator;
+
+			// Students — verify they are enrolled in this subject
+			if (!isTeacherOrAdmin)
+			{
+				var minorEnrollment = await _studentClassroomQuery.Get($@"
+					SELECT TOP 1 Id FROM StudentMinorSubject
+					WHERE  StudentId = '{userId}'
+					AND    SubjectId = '{subjectId}'
+					AND    SchoolId  = '{schoolId}'");
+
+				if (minorEnrollment is null)
+				{
+					var coreEnrollment = await _studentClassroomQuery.Get($@"
+						SELECT TOP 1 cs.Id
+						FROM   ClassroomSubject cs
+						JOIN   StudentClassroom sc ON sc.ClassroomId = cs.ClassroomId
+						WHERE  sc.StudentId = '{userId}'
+						AND    cs.SubjectId = '{subjectId}'
+						AND    cs.SchoolId  = '{schoolId}'
+						AND    sc.IsActive  = 1");
+
+					if (coreEnrollment is null)
+						return Forbidden("You are not enrolled in this subject");
+				}
+			}
+
+			var statusFilter = isTeacherOrAdmin ? string.Empty : $"AND lc.Status = '{LessonStatus.Approved}'";
+
+			var sql = $@"
+				SELECT
+					lc.Id,
+					lc.Aim,
+					lc.Description,
+					lc.Status,
+					lc.CreatedAt,
+					lc.ApprovedAt,
+					lc.RejectionReason,
+					lc.AccessDate,
+					lc.AccessTime,
+					lc.DurationMinutes,
+					lc.AccessEndsAt,
+
+					s.Id          AS SubjectId,
+					s.Subject     AS SubjectName,
+
+					t.Id          AS TopicId,
+					t.Name        AS TopicName,
+
+					st.Id         AS SubTopicId,
+					st.Name       AS SubTopicName,
+
+					c.Id          AS ClassroomId,
+					c.Name        AS ClassName,
+
+					u.FirstName + ' ' + u.LastName   AS TeacherName,
+					ap.FirstName + ' ' + ap.LastName AS ApprovedByName,
+
+					(SELECT COUNT(*) FROM LessonMedia lm
+					 WHERE  lm.LessonContentId = lc.Id
+					 AND    lm.IsActive = 1) AS MediaCount
+
+				FROM   LessonContent lc
+				JOIN   Subjects      s   ON s.Id  = lc.SubjectId
+				JOIN   Topic         t   ON t.Id  = lc.TopicId
+				LEFT JOIN SubTopic   st  ON st.Id = lc.SubTopicId
+				JOIN   Classroom     c   ON c.Id  = lc.ClassroomId
+				JOIN   Users         u   ON u.Id  = lc.CreatedBy
+				LEFT JOIN Users      ap  ON ap.Id = lc.ApprovedBy
+
+				WHERE  lc.SubjectId = '{subjectId}'
+				AND    lc.SchoolId  = '{schoolId}'
+				{statusFilter}
+
+				ORDER  BY lc.CreatedAt DESC";
+
+			var rows = await _lessonQuery.QueryAsync<AdminLessonItemDto>(sql, new Dictionary<string, object>());
+
+			var lessons = rows.ToList();
+
+			var summary = new
+			{
+				Total = lessons.Count,
+				Approved = lessons.Count(l => l.Status == LessonStatus.Approved),
+				PendingApproval = lessons.Count(l => l.Status == LessonStatus.PendingApproval),
+				Rejected = lessons.Count(l => l.Status == LessonStatus.Rejected),
+				Published = lessons.Count(l => l.Status == LessonStatus.Published)
+			};
+
+			_logger.Information(
+				"Lessons fetched by subject - SubjectId: {SubjectId}, Count: {Count}, UserId: {UserId}",
+				subjectId, lessons.Count, userId);
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = lessons.Any()
+					? $"{lessons.Count} lesson(s) found"
+					: "No lessons found for this subject",
+				Status = "successful",
+				Data = new
+				{
+					SubjectId = subjectId,
+					Summary = summary,
+					Lessons = lessons
+				}
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex,
+				"Error fetching lessons by subject - SubjectId: {SubjectId}",
+				subjectId);
+			return ServerError();
+		}
+	}
+
 	//public async Task<BaseResponse> GetLessonManifestForStudent(string sessionId, AuthenticatedUserClaims claims)
 	//{
 	//	try
@@ -1076,11 +1210,11 @@ public class LessonService : ILessonService
 
 	//		// 2. Verify the lesson exists and is Published
 	//		var lessonQuery = $@"
- //           SELECT lc.Id, lc.ClassroomId, lc.Status, lc.SchoolId
- //           FROM   LessonContent lc
- //           WHERE  lc.Id       = '{session.LessonId}'
- //           AND    lc.SchoolId = '{schoolId}'
- //           AND    lc.Status   = '{LessonStatus.Published}'";
+	//           SELECT lc.Id, lc.ClassroomId, lc.Status, lc.SchoolId
+	//           FROM   LessonContent lc
+	//           WHERE  lc.Id       = '{session.LessonId}'
+	//           AND    lc.SchoolId = '{schoolId}'
+	//           AND    lc.Status   = '{LessonStatus.Published}'";
 
 	//		var lesson = await _lessonQuery.Get(lessonQuery);
 	//		if (lesson is null)
@@ -1088,11 +1222,11 @@ public class LessonService : ILessonService
 
 	//		// 3. Verify student is enrolled in the lesson's classroom
 	//		var membershipQuery = $@"
- //           SELECT TOP 1 Id FROM StudentClassroom
- //           WHERE  StudentId   = '{studentId}'
- //           AND    ClassroomId = '{lesson.ClassroomId}'
- //           AND    SchoolId    = '{schoolId}'
- //           AND    IsActive    = 1";
+	//           SELECT TOP 1 Id FROM StudentClassroom
+	//           WHERE  StudentId   = '{studentId}'
+	//           AND    ClassroomId = '{lesson.ClassroomId}'
+	//           AND    SchoolId    = '{schoolId}'
+	//           AND    IsActive    = 1";
 
 	//		var membership = await _studentClassroomQuery.Get(membershipQuery);
 	//		if (membership is null)
