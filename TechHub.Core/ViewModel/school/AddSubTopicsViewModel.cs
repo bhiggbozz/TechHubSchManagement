@@ -11,3 +11,16 @@ public class AddSubTopicsViewModel
 	public Guid TopicId { get; set; }
 	public List<string> SubTopics { get; set; } = new();
 }
+
+
+public class TopicWithSubTopicsViewModel
+{
+	public string Name { get; set; }
+	public List<string> SubTopics { get; set; } = new();
+}
+
+public class CreateTopicsWithSubTopicsViewModel
+{
+	public string SubjectId { get; set; }
+	public List<TopicWithSubTopicsViewModel> Topics { get; set; } = new();
+}
