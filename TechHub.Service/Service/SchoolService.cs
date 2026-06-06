@@ -4620,7 +4620,7 @@ namespace TechHub.Service.Service
 						{
 							{ "Id",        Guid.NewGuid()    },
 							{ "TopicId",   topicId           },
-							{ "SubjectId", subjectId          },
+							//{ "SubjectId", subjectId          },
 							{ "SchoolId",  schoolId           },
 							{ "Name",      subTopic.Trim()   },
 							{ "IsActive",  isActive          },
