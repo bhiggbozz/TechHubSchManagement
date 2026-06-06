@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
+using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Service.Service;
 using MediaType = TechHub.Core.Enum.MediaType;
@@ -95,6 +96,7 @@ public interface ICloudinaryService
 	string GetUrl(Guid schoolId, MediaType mediaType, string entityId, bool isTemporary = false);
 	string GetRawUrl(string publicId);
 	CloudinarySignatureResponse GenerateUploadSignature(Guid schoolId, Guid teacherId, MediaType mediaType);
+	public SupabaseUploadTokenResponse GenerateSupabaseUploadToken(Guid schoolId, string fileName);
 
 }
 

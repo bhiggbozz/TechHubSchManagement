@@ -13,6 +13,7 @@ using TechHub.Core.Configuration;
 using TechHub.Core.Enum;
 using TechHub.Core.Enums;
 using TechHub.Core.Model;
+using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.school;
 using TechHub.Service.Interface;
@@ -907,7 +908,7 @@ namespace TechHub.Service.Service
 				MediaType.Image => "image",
 				MediaType.Video => "video",
 				MediaType.Audio => "video",
-				MediaType.Document => "image",  // ← was "raw", now "image"
+				MediaType.Document => "raw", 
 				_ => "image"
 			};
 
@@ -919,6 +920,30 @@ namespace TechHub.Service.Service
 				Timestamp = timestamp,
 				Folder = folder,
 				ResourceType = resourceType   // ← frontend uses this in the upload URL
+			};
+		}
+
+		public SupabaseUploadTokenResponse GenerateSupabaseUploadToken(Guid schoolId, string fileName)
+		{
+			var supabaseUrl = _configuration["Supabase:Url"];
+			var serviceRoleKey = _configuration["Supabase:ServiceRoleKey"];
+			var bucket = _configuration["Supabase:Bucket"];
+
+			// Sanitize filename
+			var ext = Path.GetExtension(fileName).ToLowerInvariant();
+			var safeFileName = $"{Guid.NewGuid()}{ext}";
+			var bucketPath = $"{schoolId}/{safeFileName}";
+
+			var uploadUrl = $"{supabaseUrl}/storage/v1/object/{bucket}/{bucketPath}";
+			var publicUrl = $"{supabaseUrl}/storage/v1/object/public/{bucket}/{bucketPath}";
+
+			return new SupabaseUploadTokenResponse
+			{
+				UploadUrl = uploadUrl,
+				PublicUrl = publicUrl,
+				Token = serviceRoleKey,
+				BucketPath = bucketPath,
+				Bucket = bucket
 			};
 		}
 	}
