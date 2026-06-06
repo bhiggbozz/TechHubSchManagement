@@ -42,6 +42,33 @@ public class LessonController : ControllerBase
 		});
 	}
 
+	[HttpGet("supabase-upload-token")]
+	[Authorize]
+	public IActionResult GetSupabaseUploadToken([FromQuery] string fileName)
+	{
+		if (string.IsNullOrWhiteSpace(fileName))
+			return BadRequest(new BaseResponse
+			{
+				ResponseCode = ResponseCode.BadRequest,
+				ResponseMessage = "File name is required",
+				Status = "failed"
+			});
+
+		var claims = GetClaims();
+		if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+			return Unauthorized();
+
+		var token = _signatureService.GenerateSupabaseUploadToken(schoolId, fileName);
+
+		return Ok(new BaseResponse
+		{
+			ResponseCode = ResponseCode.successful,
+			ResponseMessage = "Supabase upload token generated",
+			Status = "successful",
+			Data = token
+		});
+	}
+
 	[HttpPost("submit")]
 	public async Task<IActionResult> SubmitLesson([FromBody] SubmitLessonViewModel model)
 	{
