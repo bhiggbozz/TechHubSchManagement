@@ -296,6 +296,23 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		[HttpPost("createtopics")]
+		[Authorize]
+		public async Task<IActionResult> CreateTopicsWithSubTopics([FromBody] CreateTopicsWithSubTopicsViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.CreateTopicsWithSubTopics(model, claims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Conflict => Conflict(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				_ => BadRequest(result)
+			};
+		}
+
 		/// <summary>
 		/// Get all students enrolled in a specific classroom
 		/// </summary>
