@@ -4445,6 +4445,299 @@ namespace TechHub.Service.Service
 			}
 		}
 
+
+		public async Task<BaseResponse> CreateTopicsWithSubTopics(CreateTopicsWithSubTopicsViewModel model, AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				if (!Enum.TryParse<UserRole>(userClaims.Role, ignoreCase: true, out var userRole))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid role in token",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(model.SubjectId, out var subjectId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid subject identification",
+						Status = "failed"
+					};
+
+				if (!model.Topics.Any())
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "At least one topic is required",
+						Status = "failed"
+					};
+
+				foreach (var topic in model.Topics)
+				{
+					if (string.IsNullOrWhiteSpace(topic.Name))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Topic name cannot be empty",
+							Status = "failed"
+						};
+
+					if (!topic.SubTopics.Any())
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = $"Topic '{topic.Name}' must have at least one subtopic",
+							Status = "failed"
+						};
+
+					if (topic.SubTopics.Any(string.IsNullOrWhiteSpace))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = $"Topic '{topic.Name}' has empty subtopic names",
+							Status = "failed"
+						};
+
+					// Check duplicate subtopic names within same topic
+					if (topic.SubTopics.Count != topic.SubTopics.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = $"Topic '{topic.Name}' has duplicate subtopic names",
+							Status = "failed"
+						};
+				}
+
+				// ── Check duplicate topic names within request ─────────────────
+				var topicNames = model.Topics.Select(t => t.Name.Trim()).ToList();
+				if (topicNames.Count != topicNames.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Duplicate topic names found in request",
+						Status = "failed"
+					};
+
+				// ── Verify subject exists and belongs to school ───────────────
+				var subject = await _queryrepositorySubject.Get(subjectId);
+				if (subject == null || subject.SchoolId != schoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Subject not found",
+						Status = "failed"
+					};
+
+				// ── Check for existing topic names in DB ──────────────────────
+				var sanitizedTopicNames = string.Join(",",topicNames.Select(n => $"'{StringSanitizer.Sanitize(n)}'"));
+
+				var existingTopicsQuery = $@"
+					SELECT Name FROM Topic
+					WHERE  SubjectId = '{subjectId}'
+					AND    SchoolId  = '{schoolId}'
+					AND    IsDeleted = 0
+					AND    Name      IN ({sanitizedTopicNames})";
+
+				var existingTopics = await _topicQueryRepository.GetByQuery(existingTopicsQuery, DatabaseTarget.Core);
+
+				if (existingTopics?.Any() == true)
+				{
+					var duplicates = string.Join(", ", existingTopics.Select(t => t.Name));
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Conflict,
+						ResponseMessage = $"Topics already exist for this subject: {duplicates}",
+						Status = "failed"
+					};
+				}
+
+				// ── Fetch teacher for approval check ──────────────────────────
+				var teacher = await _queryrepositoryUser.Get(userId);
+				if (teacher is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Teacher not found",
+						Status = "failed"
+					};
+
+				var requiresApproval = userRole == UserRole.SubjectTeacher || userRole == UserRole.ClassTeacher;
+
+				if (requiresApproval && !teacher.LineManagerId.HasValue)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "No line manager assigned. Cannot submit for approval.",
+						Status = "failed"
+					};
+
+				var now = DateTime.UtcNow;
+				var nowStr = now.ToString("yyyy-MM-dd HH:mm:ss");
+				var isActive = !requiresApproval;
+
+				// ── Build topic and subtopic dicts ────────────────────────────
+				var topicDicts = new List<Dictionary<string, object>>();
+				var subTopicDicts = new List<Dictionary<string, object>>();
+				var topicResults = new List<object>();
+
+				foreach (var topic in model.Topics)
+				{
+					var topicId = Guid.NewGuid();
+
+					topicDicts.Add(new Dictionary<string, object>
+					{
+						{ "Id",        topicId          },
+						{ "SubjectId", subjectId         },
+						{ "SchoolId",  schoolId          },
+						{ "Name",      topic.Name.Trim() },
+						{ "IsActive",  isActive          },
+						{ "IsDeleted", false             },
+						{ "CreatedAt", nowStr            },
+						{ "CreatedBy", userId            }
+					});
+
+					foreach (var subTopic in topic.SubTopics)
+					{
+						subTopicDicts.Add(new Dictionary<string, object>
+						{
+							{ "Id",        Guid.NewGuid()    },
+							{ "TopicId",   topicId           },
+							{ "SubjectId", subjectId          },
+							{ "SchoolId",  schoolId           },
+							{ "Name",      subTopic.Trim()   },
+							{ "IsActive",  isActive          },
+							{ "IsDeleted", false             },
+							{ "CreatedAt", nowStr            },
+							{ "CreatedBy", userId            }
+						});
+					}
+
+					topicResults.Add(new
+					{
+						TopicId = topicId,
+						TopicName = topic.Name.Trim(),
+						SubTopicCount = topic.SubTopics.Count,
+						SubTopics = topic.SubTopics.Select(s => s.Trim()).ToList()
+					});
+				}
+
+				var approvalId = Guid.NewGuid();
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					// ── Batch insert topics ───────────────────────────────────
+					await _topicCommandRepository.CreateBatchAsync(
+						scope.Transaction, scope.Connection, topicDicts);
+
+					// ── Batch insert subtopics ────────────────────────────────
+					await _subTopicCommandRepository.CreateBatchAsync(
+						scope.Transaction, scope.Connection, subTopicDicts);
+
+					// ── Approval request for teachers ─────────────────────────
+					if (requiresApproval)
+					{
+						var expiryDays = int.Parse(
+							_configuration["Approvals:ExpiryDays"] ?? "5");
+
+						var payloadSummary = new ApprovalPayloadSummary
+						{
+							Title = $"{model.Topics.Count} topic(s) with subtopics for {subject.Subject}",
+							SubjectName = subject.Subject,
+							Description = string.Join(", ", model.Topics.Select(t => t.Name))
+						};
+
+						var approvalDict = new Dictionary<string, object>
+						{
+							{ "Id",              approvalId                   },
+							{ "SchoolId",        schoolId                     },
+							{ "RequestedBy",     userId                       },
+							{ "ApproverId",      teacher.LineManagerId!.Value },
+							{ "OperationType",   OperationType.AddSubTopics   },
+							{ "EntityType",      "Topic"                      },
+							{ "EntityId",        subjectId                    },
+							{ "Payload",         JsonSerializer.Serialize(
+													 payloadSummary)          },
+							{ "Status",          ApprovalStatus.Pending       },
+							{ "RejectionReason", DBNull.Value                 },
+							{ "CreatedAt",       now                          },
+							{ "RespondedAt",     DBNull.Value                 },
+							{ "ExpiresAt",       now.AddDays(expiryDays)      }
+						};
+
+						await _approvalRequestCommandRepository.Create(
+							scope.Transaction, scope.Connection, approvalDict);
+					}
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Rolling back topics creation - SubjectId: {SubjectId}", subjectId);
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx,
+							"Rollback failed - SubjectId: {SubjectId}", subjectId);
+					}
+					throw;
+				}
+
+				_logger.Information(
+					"Topics created - SubjectId: {SubjectId}, TopicCount: {TopicCount}, " +
+					"SubTopicCount: {SubTopicCount}, RequiresApproval: {RequiresApproval}",
+					subjectId, topicDicts.Count, subTopicDicts.Count, requiresApproval);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = requiresApproval
+						? $"{topicDicts.Count} topic(s) submitted for approval"
+						: $"{topicDicts.Count} topic(s) created successfully",
+					Status = "successful",
+					Data = new
+					{
+						SubjectId = subjectId,
+						SubjectName = subject.Subject,
+						TopicsCreated = topicDicts.Count,
+						SubTopicsCreated = subTopicDicts.Count,
+						RequiresApproval = requiresApproval,
+						Topics = topicResults
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error creating topics - SubjectId: {SubjectId}", model.SubjectId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
 		public async Task<BaseResponse> GetStudentsByClassroom(Guid classroomId, AuthenticatedUserClaims claims)
 		{
 			using (LogContext.PushProperty("RequestedBy", claims.UserId))
