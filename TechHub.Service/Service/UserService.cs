@@ -2611,7 +2611,7 @@ namespace TechHub.Service.Service
 							var subjectTeacherQuery = $@"
 								SELECT
 									c.Id       AS ClassroomId,
-									c.Name     AS ClassName,
+									c.Name     AS Name,
 									s.Id       AS SubjectId,
 									s.Subject  AS SubjectName,
 									s.Category AS SubjectCategory
@@ -2625,9 +2625,7 @@ namespace TechHub.Service.Service
 								AND    ts.IsActive  = 1
 								ORDER  BY c.Name, s.Subject";
 
-							var subjectTeacherRows = await _queryrepositoryUser
-								.QueryAsync<SubjectTeacherAssignmentRow>(
-									subjectTeacherQuery, new Dictionary<string, object>());
+							var subjectTeacherRows = await _queryrepositoryUser.QueryAsync<SubjectTeacherAssignmentRow>(subjectTeacherQuery, new Dictionary<string, object>());
 
 							var classroomsWithSubjects = subjectTeacherRows
 								.GroupBy(r => new { r.ClassroomId, r.Name })
