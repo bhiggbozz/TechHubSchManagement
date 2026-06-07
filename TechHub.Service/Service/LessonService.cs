@@ -1104,7 +1104,7 @@ public class LessonService : ILessonService
 
 			var statusFilter = isTeacherOrAdmin
 				? string.Empty
-				: $"AND lc.Status = '{LessonStatus.Approved}'";
+				: $"AND lc.Status = '{LessonStatus.Published}'";
 
 			// ── Fetch lessons ─────────────────────────────────────────────
 			var sql = $@"
