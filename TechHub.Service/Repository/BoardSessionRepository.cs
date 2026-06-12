@@ -80,6 +80,14 @@ public class BoardSessionRepository : IBoardSessionRepository
 				EndMs = message.EndMs,
 				StrokeCount = message.StrokeCount,
 				ReceivedAt = message.ReceivedAt,
+				AudioUrl = message.AudioUrl,        
+				BoardSwitches = message.BoardSwitches  
+					.Select(s => new BoardSwitchEvent
+					{
+						FromBoard = s.FromBoard,
+						ToBoard = s.ToBoard,
+						TimestampMs = s.TimestampMs
+					}).ToList(),
 				Strokes = strokes
 			};
 
@@ -94,8 +102,16 @@ public class BoardSessionRepository : IBoardSessionRepository
 				EndMs = message.EndMs,
 				StrokeCount = message.StrokeCount,
 				SizeBytes = message.SizeBytes,
-				BoardIndex = message.BoardIndex
-			};
+				BoardIndex = message.BoardIndex,
+				AudioUrl = message.AudioUrl,        
+				BoardSwitches = message.BoardSwitches  
+					.Select(s => new BoardSwitchEvent
+					{
+						FromBoard = s.FromBoard,
+						ToBoard = s.ToBoard,
+						TimestampMs = s.TimestampMs
+					}).ToList()
+				};
 
 			var manifestFilter = Builders<BoardManifest>.Filter
 				.Eq(m => m.Id, message.SessionId);
@@ -210,6 +226,12 @@ public class BoardSessionRepository : IBoardSessionRepository
 					Title = c.Title,
 					StartMs = c.StartMs,
 					EndMs = c.EndMs
+				}).ToList())
+				.Set(m => m.BoardSwitches, manifest.BoardSwitches.Select(s => new BoardSwitchEvent
+				{
+					FromBoard = s.FromBoard,
+					ToBoard = s.ToBoard,
+					TimestampMs = s.TimestampMs
 				}).ToList())
 				.Set(m => m.UpdatedAt, DateTime.UtcNow);
 

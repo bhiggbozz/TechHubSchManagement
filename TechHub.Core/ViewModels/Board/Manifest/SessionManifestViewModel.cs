@@ -45,6 +45,8 @@ public class SessionManifestViewModel
 	public List<MediaAssetViewModel> MediaAssets { get; set; } = new();
 	public List<BoardInfoViewModel> Boards { get; set; } = new();
 	public List<ChapterViewModel2> Chapters { get; set; } = new();
+	public List<BoardSwitchViewModel> BoardSwitches { get; set; } = new();  
+
 }
 
 public class SessionInfoViewModel2

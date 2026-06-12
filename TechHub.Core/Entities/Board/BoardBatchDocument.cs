@@ -41,5 +41,7 @@ public class BoardBatchDocument
 
 	[BsonElement("strokes")]
 	public List<BoardStroke> Strokes { get; set; } = new();
+	public string? AudioUrl { get; set; }                         
+	public List<BoardSwitchEvent> BoardSwitches { get; set; } = new();
 }
 

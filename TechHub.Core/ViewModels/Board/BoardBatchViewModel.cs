@@ -31,4 +31,19 @@ public class BoardBatchViewModel
 
 	[JsonPropertyName("strokes")]
 	public List<StrokeViewModel> Strokes { get; set; } = new();
+	public List<BoardSwitchViewModel> BoardSwitches { get; set; } = new();
+	[JsonPropertyName("audioUrl")]
+	public string? AudioUrl { get; set; }
+
+}
+public class BoardSwitchViewModel
+{
+	[JsonPropertyName("fromBoard")]
+	public int FromBoard { get; set; }
+
+	[JsonPropertyName("toBoard")]
+	public int ToBoard { get; set; }
+
+	[JsonPropertyName("timestampMs")]
+	public long TimestampMs { get; set; }
 }

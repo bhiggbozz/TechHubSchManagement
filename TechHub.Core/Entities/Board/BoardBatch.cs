@@ -30,4 +30,19 @@ public class BoardBatch
 
 	[BsonElement("strokes")]
 	public List<BoardStroke> Strokes { get; set; } = new();
+
+	[BsonElement("boardSwitches")]
+	public List<BoardSwitchEvent> BoardSwitches { get; set; } = new();
+}
+
+public class BoardSwitchEvent
+{
+	[BsonElement("fromBoard")]
+	public int FromBoard { get; set; }
+
+	[BsonElement("toBoard")]
+	public int ToBoard { get; set; }
+
+	[BsonElement("timestampMs")]
+	public long TimestampMs { get; set; }  // global session time when switch happened
 }

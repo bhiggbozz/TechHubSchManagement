@@ -16,6 +16,11 @@ public class BoardBatchMessage
 	public int BoardIndex { get; set; }
 	public List<StrokeViewModel> Strokes { get; set; } = new();
 	public DateTime ReceivedAt { get; set; } = DateTime.UtcNow;
+	public string? AudioUrl { get; set; } = string.Empty;
+	public List<BoardSwitchViewModel> BoardSwitches { get; set; } = new();  
+
+
+
 
 	public static BoardBatchMessage FromViewModel(
 		BoardBatchViewModel model,
@@ -33,6 +38,8 @@ public class BoardBatchMessage
 			SizeBytes = model.SizeBytes,
 			BoardIndex = model.BoardIndex,
 			Strokes = model.Strokes,
-			ReceivedAt = DateTime.UtcNow
+			ReceivedAt = DateTime.UtcNow,
+			AudioUrl = model.AudioUrl,        
+			BoardSwitches = model.BoardSwitches
 		};
 }
