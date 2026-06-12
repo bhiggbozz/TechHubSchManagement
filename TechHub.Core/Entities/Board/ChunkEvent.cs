@@ -17,5 +17,10 @@ public class ChunkEvent
 
 	[BsonElement("mediaAssetId")]
 	public string MediaAssetId { get; set; } = string.Empty;
+	[BsonElement("fromBoard")]
+	public int? FromBoard { get; set; }  // ← add
+
+	[BsonElement("toBoard")]
+	public int? ToBoard { get; set; }    // ← add
 }
 

@@ -223,9 +223,17 @@ public class BoardSessionService : IBoardSessionService
 					manifest.MediaAssets,
 					manifest.Boards,
 					manifest.Chapters,
-					StrokeBatches = manifest.BatchRefs  // ← BatchRefs not Batches
-						.OrderBy(b => b.BatchIndex)
-						.ToList()
+
+					
+					StrokeBatches = manifest.BatchRefs
+					.OrderBy(b => b.BatchIndex)
+					.ToList(),  
+
+					BoardSwitches = manifest.BatchRefs
+					.OrderBy(b => b.BatchIndex)
+					.SelectMany(b => b.BoardSwitches)
+					.OrderBy(s => s.TimestampMs)
+					.ToList()
 				}
 			};
 		}

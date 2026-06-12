@@ -7,23 +7,23 @@ using System.Threading.Tasks;
 
 namespace TechHub.Core.ViewModel.Board;
 
-public class ChunkViewModel
-{
-	[JsonPropertyName("index")]
-	public int Index { get; set; }
+//public class ChunkViewModel
+//{
+//	[JsonPropertyName("index")]
+//	public int Index { get; set; }
 
-	[JsonPropertyName("startMs")]
-	public long StartMs { get; set; }
+//	[JsonPropertyName("startMs")]
+//	public long StartMs { get; set; }
 
-	[JsonPropertyName("endMs")]
-	public long EndMs { get; set; }
+//	[JsonPropertyName("endMs")]
+//	public long EndMs { get; set; }
 
-	[JsonPropertyName("audio")]
-	public ChunkAudioViewModel Audio { get; set; } = new();
+//	[JsonPropertyName("audio")]
+//	public ChunkAudioViewModel Audio { get; set; } = new();
 
-	[JsonPropertyName("events")]
-	public List<ChunkEventViewModel> Events { get; set; } = new();  // ← typed
-}
+//	[JsonPropertyName("events")]
+//	public List<ChunkEventViewModel> Events { get; set; } = new();  // ← typed
+//}
 
 public class ChunkAudioViewModel
 {

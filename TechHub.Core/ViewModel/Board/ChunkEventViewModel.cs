@@ -17,4 +17,7 @@ public class ChunkEventViewModel
 
 	[JsonPropertyName("mediaAssetId")]
 	public string MediaAssetId { get; set; } = string.Empty;
+
+	public int? FromBoard { get; set; } 
+	public int? ToBoard { get; set; } 
 }

@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
+using TechHub.Core.ViewModel.Board;
 
 namespace TechHub.Core.ViewModels.Board.Manifest;
 
@@ -105,7 +106,7 @@ public class ChunkViewModel
 	public long StartMs { get; set; }
 	public long EndMs { get; set; }
 	public ChunkAudioViewModel Audio { get; set; }
-	public List<object> Events { get; set; } = new();
+	public List<ChunkEventViewModel> Events { get; set; } = new();  
 }
 
 public class ChunkAudioViewModel

@@ -34,7 +34,9 @@ public class BoardBatch
 	[BsonElement("boardSwitches")]
 	public List<BoardSwitchEvent> BoardSwitches { get; set; } = new();
 }
-
+/// <summary>
+/// //
+/// </summary>
 public class BoardSwitchEvent
 {
 	[BsonElement("fromBoard")]
