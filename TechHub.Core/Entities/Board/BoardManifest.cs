@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TechHub.Core.Model;
 
 namespace TechHub.Core.Entities.Board;
 
@@ -63,5 +64,9 @@ public class BoardManifest
 
 	[BsonElement("updatedAt")]
 	public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+	[BsonElement("boardSwitchEvent")]
+
+	public List<BoardSwitchEvent> BoardSwitches { get; set; } = new();
+
 }
 

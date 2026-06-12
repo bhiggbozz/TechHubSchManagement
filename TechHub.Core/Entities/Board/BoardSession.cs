@@ -65,6 +65,9 @@ public class BoardSession
 
 	[BsonElement("updatedAt")]
 	public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+	// Add to BoardSession
+	[BsonElement("boardSwitches")]
+	public List<BoardSwitchEvent> BoardSwitches { get; set; } = new();
 }
 
 

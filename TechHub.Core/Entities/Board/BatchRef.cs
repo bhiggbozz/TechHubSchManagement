@@ -28,6 +28,8 @@ public class BatchRef
 	public long SizeBytes { get; set; }
 
 	[BsonElement("boardIndex")]
-	public int BoardIndex { get; set; }  
+	public int BoardIndex { get; set; }
+	public string? AudioUrl { get; set; }                         
+	public List<BoardSwitchEvent> BoardSwitches { get; set; } = new();
 }
 
