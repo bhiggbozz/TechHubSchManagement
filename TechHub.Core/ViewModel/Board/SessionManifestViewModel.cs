@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using TechHub.Core.ViewModels.Board.Manifest;
 
 namespace TechHub.Core.ViewModel.Board;
 

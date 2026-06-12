@@ -199,9 +199,11 @@ public class BoardSessionRepository : IBoardSessionRepository
 					},
 					Events = c.Events.Select(e => new ChunkEvent
 					{
-						//Type = e.Type,
-						//TimestampMs = e.TimestampMs,
-						//MediaAssetId = e.MediaAssetId
+						Type = e.Type,
+						TimestampMs = e.TimestampMs,
+						MediaAssetId = e.MediaAssetId,
+						FromBoard = e.FromBoard,
+						ToBoard = e.ToBoard
 					}).ToList()
 				}).ToList())
 				.Set(m => m.MediaAssets, manifest.MediaAssets.Select(a => new MediaAsset
