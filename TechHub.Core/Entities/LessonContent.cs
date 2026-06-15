@@ -24,7 +24,7 @@ public class LessonContent
 	public DateTime CreatedAt { get; set; }
 	public DateTime ModifiedAt { get; set; }
 	public DateTime? ApprovedAt { get; set; }
-	public Guid? QuizId { get; set; }
+	public string? QuizCode { get; set; }
 
 	public DateTime? AccessDate { get; set; }
 	public TimeSpan? AccessTime { get; set; }

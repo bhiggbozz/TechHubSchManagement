@@ -337,3 +337,40 @@ ALTER TABLE LessonContent ADD AccessEndsAt    DATETIME2    NULL;
 -----------------------------------------------------------
 
 ALTER TABLE Questions ADD ClassroomId UNIQUEIDENTIFIER NULL;
+
+
+-------------------------------------------------------------------------------------
+
+CREATE TABLE Quiz (
+    Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+    Code         NVARCHAR(20)     NOT NULL,
+    SchoolId     UNIQUEIDENTIFIER NOT NULL,
+    CreatedBy    UNIQUEIDENTIFIER NOT NULL,
+    CreationDate NVARCHAR(30)     NOT NULL,
+    ModifiedDate NVARCHAR(30)     NOT NULL,
+    IsActive     BIT              NOT NULL DEFAULT 1
+);
+
+CREATE UNIQUE INDEX IX_Quiz_Code ON Quiz(Code);
+
+CREATE TABLE QuizQuestion (
+    Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+    QuizId       UNIQUEIDENTIFIER NOT NULL,
+    QuestionId   UNIQUEIDENTIFIER NOT NULL,
+    SchoolId     UNIQUEIDENTIFIER NOT NULL,
+    DisplayOrder INT              NOT NULL DEFAULT 0,
+    CreationDate NVARCHAR(30)     NOT NULL,
+    IsActive     BIT              NOT NULL DEFAULT 1,
+
+    CONSTRAINT FK_QuizQuestion_Quiz
+        FOREIGN KEY (QuizId) REFERENCES Quiz(Id)
+);
+
+CREATE INDEX IX_QuizQuestion_QuizId ON QuizQuestion(QuizId);
+
+-- Rename existing QuizId column on LessonContent
+ALTER TABLE LessonContent
+DROP COLUMN QuizId;
+
+ALTER TABLE LessonContent
+ADD QuizCode NVARCHAR(20) NULL;
