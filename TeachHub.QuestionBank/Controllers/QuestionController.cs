@@ -312,6 +312,22 @@ public class QuestionController : ControllerBase
 				: BadRequest(result);
 	}
 
+	[HttpGet("classroom/{classroomId}/subject/{subjectId}/topic/{topicId}")]
+	[Authorize]
+	public async Task<IActionResult> GetQuestionsByClassroomSubjectTopic(Guid classroomId,Guid subjectId,Guid topicId,[FromQuery] QuestionFilterViewModelV2 filter)
+	{
+		var claims = GetUserClaims();
+		var result = await _questionService.GetQuestionsByClassroomSubjectTopic(classroomId, subjectId, topicId, filter, claims);
+
+		return result.ResponseCode switch
+		{
+			ResponseCode.successful => Ok(result),
+			ResponseCode.BadRequest => BadRequest(result),
+			//ResponseCode.Unauthorized => Unauthorized(result),
+			_ => StatusCode(500, result)
+		};
+	}
+
 
 
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

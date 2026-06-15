@@ -65,8 +65,9 @@ public interface IQuestionService
 	Task<PendingReviewResponse> GetPendingReviewQuestions(Guid scanSessionId,AuthenticatedUserClaims userClaims);
 	Task<QuestionListResponse> GetQuestionsByClassroom(Guid classroomId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims);
 	Task<BaseResponse> GetSubjectQuestionSummary(Guid classroomId, Guid subjectId, AuthenticatedUserClaims userClaims);
-	//Task<BaseResponse> GetSubjectQuestionSummary(Guid classroomId, Guid subjectId, AuthenticatedUserClaims userClaims);
+
+	Task<QuestionListResponse> GetQuestionsByClassroomSubjectTopic(Guid classroomId,Guid subjectId,Guid topicId,QuestionFilterViewModelV2 filter,AuthenticatedUserClaims userClaims);
 
 
-	}
+}
 

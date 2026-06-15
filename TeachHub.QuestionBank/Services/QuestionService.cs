@@ -2912,6 +2912,183 @@ public class QuestionService : IQuestionService
 		}
 	}
 
+	public async Task<QuestionListResponse> GetQuestionsByClassroomSubjectTopic(
+	Guid classroomId,
+	Guid subjectId,
+	Guid topicId,
+	QuestionFilterViewModelV2 filter,
+	AuthenticatedUserClaims userClaims)
+	{
+		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+		using (LogContext.PushProperty("ClassroomId", classroomId))
+		using (LogContext.PushProperty("SubjectId", subjectId))
+		using (LogContext.PushProperty("TopicId", topicId))
+		{
+			try
+			{
+				_logger.Information(
+					"Getting questions by classroom/subject/topic - " +
+					"ClassroomId: {ClassroomId}, SubjectId: {SubjectId}, " +
+					"TopicId: {TopicId}, UserId: {UserId}",
+					classroomId, subjectId, topicId, userClaims.UserId);
+
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+					return new QuestionListResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new QuestionListResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				filter.Page = filter.Page < 1 ? 1 : filter.Page;
+				filter.PageSize = filter.PageSize < 1 ? 20 : filter.PageSize;
+				filter.PageSize = filter.PageSize > 50 ? 50 : filter.PageSize;
+
+				var offset = (filter.Page - 1) * filter.PageSize;
+
+				// ── Base filter — classroom + subject + topic all required ──
+				var whereClause = $@"
+					WHERE  q.SchoolId    = '{schoolId}'
+					AND    q.ClassroomId = '{classroomId}'
+					AND    q.SubjectId   = '{subjectId}'
+					AND    q.TopicId     = '{topicId}'
+					AND    q.IsDeleted   = 0
+					AND    q.IsActive    = 1";
+
+				// ── Optional filters ───────────────────────────────────────
+				if (filter.SubTopicIds?.Any() == true)
+				{
+					var ids = string.Join(",",
+						filter.SubTopicIds.Select(id => $"'{id}'"));
+					whereClause += $" AND q.SubTopicId IN ({ids})";
+				}
+
+				if (filter.QuestionType.HasValue)
+					whereClause += $" AND q.QuestionType = {(int)filter.QuestionType.Value}";
+
+				if (filter.DifficultyLevel.HasValue)
+					whereClause += $" AND q.DifficultyLevel = {(int)filter.DifficultyLevel.Value}";
+
+				if (filter.Status.HasValue)
+					whereClause += $" AND q.Status = {(int)filter.Status.Value}";
+				else if (!filter.IncludePendingReview)
+					whereClause += $" AND q.Status != {(int)QuestionStatus.PendingReview}";
+
+				if (!string.IsNullOrWhiteSpace(filter.SearchText))
+				{
+					var safeSearch = filter.SearchText.Replace("'", "''").Trim();
+					whereClause += $@" AND (
+                    q.Title          LIKE '%{safeSearch}%'
+                    OR q.Topic       LIKE '%{safeSearch}%'
+                    OR q.TextContent LIKE '%{safeSearch}%'
+                )";
+				}
+
+				// ── Total count ────────────────────────────────────────────
+				var countQuery = $"SELECT COUNT(*) FROM Questions q {whereClause}";
+				var totalCount = await _questionQueryRepo.CountAsync(
+					countQuery, DatabaseTarget.QuestionBank);
+
+				if (totalCount == 0)
+					return new QuestionListResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "No questions found",
+						Status = "successful",
+						Questions = new List<QuestionSummaryDto>(),
+						TotalCount = 0,
+						Page = filter.Page,
+						PageSize = filter.PageSize,
+						HasMore = false
+					};
+
+				// ── Paginated data ─────────────────────────────────────────
+				var dataQuery = $@"
+					SELECT
+						q.Id,
+						q.ClientId,
+						q.Title,
+						q.Topic,
+						q.SubTopic,
+						q.QuestionType,
+						q.DifficultyLevel,
+						q.MarksAllocation,
+						q.HasBoardSession,
+						q.HasMedia,
+						q.HasAudio,
+						q.IsScanned,
+						q.Status,
+						q.CreationDate,
+
+						s.Subject  AS SubjectName,
+						t.Name     AS TopicName,
+						st.Name    AS SubTopicName,
+						c.Name     AS ClassName
+
+					FROM   Questions q
+					LEFT JOIN Subjects  s  ON s.Id  = q.SubjectId
+					LEFT JOIN Topic     t  ON t.Id  = q.TopicId
+					LEFT JOIN SubTopic  st ON st.Id = q.SubTopicId
+					LEFT JOIN Classroom c  ON c.Id  = q.ClassroomId
+					{whereClause}
+					ORDER  BY q.CreationDate DESC
+					OFFSET {offset} ROWS
+					FETCH NEXT {filter.PageSize} ROWS ONLY";
+
+				var results = await _questionQueryRepo.GetByQuery(
+					dataQuery, DatabaseTarget.QuestionBank);
+
+				var questions = results?
+					.Select(q => MapToClassroomSummaryDto(q))
+					.ToList() ?? new List<QuestionSummaryDto>();
+
+				var hasMore = (filter.Page * filter.PageSize) < totalCount;
+
+				_logger.Information(
+					"Questions retrieved - ClassroomId: {ClassroomId}, " +
+					"SubjectId: {SubjectId}, TopicId: {TopicId}, " +
+					"Count: {Count}, Total: {Total}",
+					classroomId, subjectId, topicId,
+					questions.Count, totalCount);
+
+				return new QuestionListResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Questions retrieved successfully",
+					Status = "successful",
+					Questions = questions,
+					TotalCount = totalCount,
+					Page = filter.Page,
+					PageSize = filter.PageSize,
+					HasMore = hasMore
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error getting questions - ClassroomId: {ClassroomId}, " +
+					"SubjectId: {SubjectId}, TopicId: {TopicId}",
+					classroomId, subjectId, topicId);
+
+				return new QuestionListResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving questions",
+					Status = "failed",
+					Questions = new List<QuestionSummaryDto>()
+				};
+			}
+		}
+	}
+
 	private async Task<int> GetStatusCount(Guid schoolId, Guid classroomId, QuestionStatus status)
 	{
 		var query = $@"
