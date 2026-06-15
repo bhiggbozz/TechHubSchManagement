@@ -45,6 +45,7 @@ namespace TechhubMS
 			services.AddScoped<AuthService>();
 			services.AddScoped<IAdminApprovalService, AdminApprovalService>();
 			services.AddScoped<ITeacherTrustScoreService, TeacherTrustScoreService>();
+			services.AddScoped<IQuizService, QuizService>();
 			//services.AddScoped<IAdminPermissionsService, AdminPermissionsService>();
 
 			//background jobs
