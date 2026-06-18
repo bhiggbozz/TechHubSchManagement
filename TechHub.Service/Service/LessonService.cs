@@ -173,7 +173,7 @@ public class LessonService : ILessonService
 				{ "CreatedAt",   now },
 				{ "ModifiedAt",  now },
 				{ "ApprovedAt",  DBNull.Value },
-				{ "QuizId",  model.QuizId.HasValue ? (object)model.QuizId.Value : DBNull.Value },
+				{ "QuizCode",  model.QuizId.HasValue ? (object)model.QuizId.Value : DBNull.Value },
 				{ "AccessDate",      model.AccessDate.HasValue ? (object)model.AccessDate.Value.Date : DBNull.Value },
 				{ "AccessTime",      model.AccessTime.HasValue ? (object)model.AccessTime.Value: DBNull.Value },
 				{ "DurationMinutes", model.DurationMinutes.HasValue ? (object)model.DurationMinutes.Value : DBNull.Value },
