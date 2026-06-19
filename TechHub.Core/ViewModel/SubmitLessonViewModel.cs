@@ -45,7 +45,7 @@ public class SubmitLessonViewModel
 	[JsonIgnore]
 	public bool BypassApproval { get; set; } = false;
 
-	public Guid? QuizId { get; set; }
+	public string? QuizId { get; set; }
 
 	public DateTime? AccessDate { get; set; }  
 	public TimeSpan? AccessTime { get; set; } 
