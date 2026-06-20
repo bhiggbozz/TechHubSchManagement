@@ -24,8 +24,11 @@ public class CreateQuestionViewModel
 	public QuestionType QuestionType { get; set; }
 	public DifficultyLevel DifficultyLevel { get; set; }
 	public int MarksAllocation { get; set; }
+	public string? CorrectAnswer { get; set; }
 	public List<CreateOptionViewModel> Options { get; set; } = new();
 	public Guid? BoardSessionId { get; set; }
+	public string? SnapshotUrl { get; set; }
+	public string? SnapshotPublicId { get; set; }
 	public Guid? ScanSessionId { get; set; }
 	public bool IsScanned { get; set; }
 	public int? ExtractedQuestionIndex { get; set; }
@@ -66,11 +69,13 @@ public class UpdateQuestionViewModel
 	public QuestionType QuestionType { get; set; }
 	public DifficultyLevel DifficultyLevel { get; set; }
 	public int MarksAllocation { get; set; }
-
+	public string? CorrectAnswer { get; set; }
 
 	public List<CreateOptionViewModel> Options { get; set; }= new List<CreateOptionViewModel>();
 
 	public Guid? BoardSessionId { get; set; }
+	public string? SnapshotUrl { get; set; }
+	public string? SnapshotPublicId { get; set; }
 	// Teacher may attach or change board session
 	// during edit
 

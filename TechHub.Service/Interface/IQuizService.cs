@@ -21,6 +21,8 @@ public interface IQuizService
 	Task<BaseResponse> GetQuizConfig(AuthenticatedUserClaims claims);
 
 	// ── Attempt (student) ────────────────────────────────────────────────────
+	Task<BaseResponse> GetStudentQuizDisplay(Guid lessonId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetStudentQuizDisplayByCode(string quizCode, AuthenticatedUserClaims claims);
 	Task<BaseResponse> StartQuizAttempt(StartQuizViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> SubmitQuizAttempt(Guid attemptId, SubmitQuizViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetQuizResult(Guid attemptId, AuthenticatedUserClaims claims);
@@ -33,5 +35,14 @@ public interface IQuizService
 	Task<BaseResponse> GetLessonQuizResults(Guid lessonId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetLessonQuizAnalytics(Guid lessonId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetStudentQuizHistory(Guid studentId, AuthenticatedUserClaims claims);
+
+	// ── Assessment Sets ───────────────────────────────────────────────────────
+	Task<BaseResponse> CreateAssessmentSet(CreateAssessmentSetViewModel model, AuthenticatedUserClaims claims);
+	Task<BaseResponse> UpdateAssessmentSet(Guid id, UpdateAssessmentSetViewModel model, AuthenticatedUserClaims claims);
+	Task<BaseResponse> DeleteAssessmentSet(Guid id, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetAssessmentSets(AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetAssessmentSet(Guid id, AuthenticatedUserClaims claims);
+	Task<BaseResponse> AttachAssessmentSetToLesson(Guid lessonId, AttachAssessmentSetViewModel model, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetLessonAssessmentSet(Guid lessonId, AuthenticatedUserClaims claims);
 }
 

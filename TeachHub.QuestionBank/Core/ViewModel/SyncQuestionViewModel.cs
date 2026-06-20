@@ -66,6 +66,7 @@ public class SyncQuestionViewModel
 	public QuestionType QuestionType { get; set; }
 	public DifficultyLevel DifficultyLevel { get; set; }
 	public int MarksAllocation { get; set; }
+	public string? CorrectAnswer { get; set; }
 
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	// OPTIONS (MCQ)
@@ -79,6 +80,8 @@ public class SyncQuestionViewModel
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 	public Guid? BoardSessionId { get; set; }
+	public string? SnapshotUrl { get; set; }
+	public string? SnapshotPublicId { get; set; }
 
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	// SCAN SESSION
@@ -107,8 +110,11 @@ public class SyncQuestionViewModel
 			QuestionType = model.QuestionType,
 			DifficultyLevel = model.DifficultyLevel,
 			MarksAllocation = model.MarksAllocation,
+			CorrectAnswer = model.CorrectAnswer,
 			Options = model.Options,
 			BoardSessionId = model.BoardSessionId,
+			SnapshotUrl = model.SnapshotUrl,
+			SnapshotPublicId = model.SnapshotPublicId,
 			ScanSessionId = model.ScanSessionId,
 			IsScanned = model.IsScanned,
 			ExtractedQuestionIndex = model.ExtractedQuestionIndex,

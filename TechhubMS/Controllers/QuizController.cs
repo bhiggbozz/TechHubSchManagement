@@ -78,6 +78,24 @@ public class QuizController : ControllerBase
 	// ATTEMPT (student)
 	// ═══════════════════════════════════════════════════════════════════════
 
+	[HttpGet("student/lesson/{lessonId}/display")]
+	[Authorize]
+	public async Task<IActionResult> GetStudentQuizDisplay(Guid lessonId)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetStudentQuizDisplay(lessonId, claims);
+		return MapResponse(response);
+	}
+
+	[HttpGet("code/{quizCode}/display")]
+	[Authorize]
+	public async Task<IActionResult> GetStudentQuizDisplayByCode(string quizCode)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetStudentQuizDisplayByCode(quizCode, claims);
+		return MapResponse(response);
+	}
+
 	[HttpPost("attempt/start")]
 	[Authorize]
 	public async Task<IActionResult> StartQuizAttempt([FromBody] StartQuizViewModel model)
@@ -128,6 +146,73 @@ public class QuizController : ControllerBase
 	{
 		var claims = GetUserClaims();
 		var response = await _quizService.GradeAnswer(answerId, model, claims);
+		return MapResponse(response);
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// ASSESSMENT SETS
+	// ═══════════════════════════════════════════════════════════════════════
+
+	[HttpPost("assessment-sets")]
+	[Authorize]
+	public async Task<IActionResult> CreateAssessmentSet([FromBody] CreateAssessmentSetViewModel model)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.CreateAssessmentSet(model, claims);
+		return MapResponse(response);
+	}
+
+	[HttpPost("assessment-sets/{id}/update")]
+	[Authorize]
+	public async Task<IActionResult> UpdateAssessmentSet(Guid id, [FromBody] UpdateAssessmentSetViewModel model)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.UpdateAssessmentSet(id, model, claims);
+		return MapResponse(response);
+	}
+
+	[HttpDelete("assessment-sets/{id}")]
+	[Authorize]
+	public async Task<IActionResult> DeleteAssessmentSet(Guid id)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.DeleteAssessmentSet(id, claims);
+		return MapResponse(response);
+	}
+
+	[HttpGet("assessment-sets")]
+	[Authorize]
+	public async Task<IActionResult> GetAssessmentSets()
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetAssessmentSets(claims);
+		return MapResponse(response);
+	}
+
+	[HttpGet("assessment-sets/{id}")]
+	[Authorize]
+	public async Task<IActionResult> GetAssessmentSet(Guid id)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetAssessmentSet(id, claims);
+		return MapResponse(response);
+	}
+
+	[HttpPatch("lesson/{lessonId}/assessment-set")]
+	[Authorize]
+	public async Task<IActionResult> AttachAssessmentSetToLesson(Guid lessonId, [FromBody] AttachAssessmentSetViewModel model)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.AttachAssessmentSetToLesson(lessonId, model, claims);
+		return MapResponse(response);
+	}
+
+	[HttpGet("lesson/{lessonId}/assessment-set")]
+	[Authorize]
+	public async Task<IActionResult> GetLessonAssessmentSet(Guid lessonId)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetLessonAssessmentSet(lessonId, claims);
 		return MapResponse(response);
 	}
 

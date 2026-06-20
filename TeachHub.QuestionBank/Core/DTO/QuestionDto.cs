@@ -45,6 +45,10 @@ public class QuestionDto
 	public string DifficultyLevelName { get; set; }
 	// e.g "Easy", "Hard"
 	public int MarksAllocation { get; set; }
+	public string? CorrectAnswer { get; set; }
+	// Model answer / reference answer
+	// Required for TrueFalse ("True"/"False")
+	// Optional for Essay, ShortAnswer, FillInTheBlank
 
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	// OPTIONS (MCQ only)
@@ -59,7 +63,7 @@ public class QuestionDto
 
 	public Guid? BoardSessionId { get; set; }
 	public bool HasBoardSession { get; set; }
-	public string BoardSnapshotUrl { get; set; }
+	public string? BoardSnapshotUrl { get; set; }
 	// CDN url of board snapshot
 	// Null if no board session attached
 	public bool HasMedia { get; set; }

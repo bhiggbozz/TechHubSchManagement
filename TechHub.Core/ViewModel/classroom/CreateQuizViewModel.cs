@@ -44,7 +44,10 @@ public class QuizConfigViewModel
 	public bool AllowBoardAnswer { get; set; } = true;
 	public bool AllowAIAssistance { get; set; } = false;
 	public int MaxAIAssistancePerQuestion { get; set; } = 1000;
-	public string StarMarkConfig { get; set; } = "{\"1\":1,\"2\":2,\"3\":3,\"4\":4,\"5\":5}";
+	public int EasyMarks { get; set; } = 1;
+	public int MediumMarks { get; set; } = 2;
+	public int HardMarks { get; set; } = 3;
+	public int ExamLevelMarks { get; set; } = 5;
 }
 
 public class QuizConfigDto
@@ -62,7 +65,10 @@ public class QuizConfigDto
 	public bool AllowBoardAnswer { get; set; }
 	public bool AllowAIAssistance { get; set; }
 	public int MaxAIAssistancePerQuestion { get; set; }
-	public string StarMarkConfig { get; set; }
+	public int EasyMarks { get; set; }
+	public int MediumMarks { get; set; }
+	public int HardMarks { get; set; }
+	public int ExamLevelMarks { get; set; }
 }
 
 // ── Quiz Attempt (student) ─────────────────────────────────────────────────
@@ -117,6 +123,61 @@ public class StartQuizResponseDto
 	public int? TimeLimitMinutes { get; set; }
 	public int TotalQuestions { get; set; }
 	public List<QuizQuestionDetailDto> Questions { get; set; } = new();
+}
+
+// ── Student Quiz Display (before / during attempt) ─────────────────────────
+public class StudentQuizDisplayDto
+{
+	public Guid LessonId { get; set; }
+	public string QuizCode { get; set; } = string.Empty;
+	public QuizSettingsDisplayDto Config { get; set; } = new();
+	public AttemptStatusDisplayDto AttemptStatus { get; set; } = new();
+	public List<StudentQuizQuestionDto> Questions { get; set; } = new();
+	public int TotalQuestions { get; set; }
+	public decimal TotalMarks { get; set; }
+}
+
+public class QuizSettingsDisplayDto
+{
+	public bool AllowRetakes { get; set; }
+	public int MaxAttempts { get; set; }
+	public int PassMarkPercent { get; set; }
+	public int? TimeLimitMinutes { get; set; }
+	public bool AutoSubmitOnTimeout { get; set; }
+	public bool ShuffleQuestions { get; set; }
+	public string ShowResultMode { get; set; } = "Immediate";
+	public bool ShowCorrectAnswers { get; set; }
+	public bool AllowBoardAnswer { get; set; }
+	public int EasyMarks { get; set; }
+	public int MediumMarks { get; set; }
+	public int HardMarks { get; set; }
+	public int ExamLevelMarks { get; set; }
+}
+
+public class AttemptStatusDisplayDto
+{
+	public bool HasInProgressAttempt { get; set; }
+	public Guid? InProgressAttemptId { get; set; }
+	public int CompletedAttempts { get; set; }
+	public bool MaxAttemptsReached { get; set; }
+	public bool CanStart { get; set; }
+}
+
+public class StudentQuizQuestionDto
+{
+	public Guid QuestionId { get; set; }
+	public string Title { get; set; } = string.Empty;
+	public string TextContent { get; set; } = string.Empty;
+	public int QuestionType { get; set; }
+	public string QuestionTypeName { get; set; } = string.Empty;
+	public int DifficultyLevel { get; set; }
+	public string DifficultyName { get; set; } = string.Empty;
+	public int MarksAllocation { get; set; }
+	public decimal ResolvedMaxMarks { get; set; }
+	public int DisplayOrder { get; set; }
+	public string SubjectName { get; set; } = string.Empty;
+	public string TopicName { get; set; } = string.Empty;
+	public List<QuizOptionDto> Options { get; set; } = new();
 }
 
 // ── Grading (teacher) ──────────────────────────────────────────────────────

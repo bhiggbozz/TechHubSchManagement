@@ -154,6 +154,20 @@ public class QuestionService : IQuestionService
 						return Fail($"Option {emptyOption.OptionLabel} cannot be empty");
 				}
 
+				// TrueFalse validation
+				if (model.QuestionType == QuestionType.TrueOrFalse)
+				{
+					if (string.IsNullOrWhiteSpace(model.CorrectAnswer))
+						return Fail("True/False questions require a correct answer (True or False)");
+
+					var normalized = model.CorrectAnswer.Trim();
+					if (!string.Equals(normalized, "True", StringComparison.OrdinalIgnoreCase)
+					    && !string.Equals(normalized, "False", StringComparison.OrdinalIgnoreCase))
+					{
+						return Fail("Correct answer for True/False must be either 'True' or 'False'");
+					}
+				}
+
 				// Idempotency check — before opening transaction
 				if (!string.IsNullOrWhiteSpace(model.ClientId))
 				{
@@ -211,8 +225,12 @@ public class QuestionService : IQuestionService
 					TextContent = model.TextContent?.Trim(),
 					DifficultyLevel = model.DifficultyLevel,
 					MarksAllocation = model.MarksAllocation,
+					CorrectAnswer = model.CorrectAnswer?.Trim(),
 					BoardSessionId = model.BoardSessionId,
-					HasBoardSession = model.BoardSessionId.HasValue,
+					HasBoardSession = model.BoardSessionId.HasValue
+									 || !string.IsNullOrWhiteSpace(model.SnapshotUrl),
+					SnapshotUrl = model.SnapshotUrl?.Trim(),
+					SnapshotPublicId = model.SnapshotPublicId?.Trim(),
 					HasMedia = !string.IsNullOrWhiteSpace(model.ImageUrl),
 					ImageUrl = model.ImageUrl?.Trim(),
 					ImagePublicId = model.ImagePublicId?.Trim(),
@@ -492,6 +510,32 @@ public class QuestionService : IQuestionService
 					}
 				}
 
+				// TrueFalse validation
+				if (model.QuestionType == QuestionType.TrueOrFalse)
+				{
+					if (string.IsNullOrWhiteSpace(model.CorrectAnswer))
+					{
+						return new UpdateQuestionResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "True/False questions require a correct answer (True or False)",
+							Status = "failed"
+						};
+					}
+
+					var normalized = model.CorrectAnswer.Trim();
+					if (!string.Equals(normalized, "True", StringComparison.OrdinalIgnoreCase)
+					    && !string.Equals(normalized, "False", StringComparison.OrdinalIgnoreCase))
+					{
+						return new UpdateQuestionResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Correct answer for True/False must be either 'True' or 'False'",
+							Status = "failed"
+						};
+					}
+				}
+
 
 
 				var question = await _questionQueryRepo.Get(model.QuestionId, DatabaseTarget.QuestionBank);
@@ -622,8 +666,11 @@ public class QuestionService : IQuestionService
 					{ "QuestionType",   (int)model.QuestionType },
 					{ "DifficultyLevel",(int)model.DifficultyLevel },
 					{ "MarksAllocation",model.MarksAllocation },
+					{ "CorrectAnswer", (object?)model.CorrectAnswer?.Trim() ?? DBNull.Value },
 					{ "BoardSessionId", model.BoardSessionId as object ?? DBNull.Value },
-					{ "HasBoardSession",model.BoardSessionId.HasValue },
+					{ "HasBoardSession",model.BoardSessionId.HasValue || !string.IsNullOrWhiteSpace(model.SnapshotUrl) },
+					{ "SnapshotUrl", (object?)model.SnapshotUrl?.Trim() ?? DBNull.Value },
+					{ "SnapshotPublicId", (object?)model.SnapshotPublicId?.Trim() ?? DBNull.Value },
 					{ "ModifiedDate",   now }
 				};
 
@@ -1570,8 +1617,10 @@ public class QuestionService : IQuestionService
 			// Board & Media
 			BoardSessionId = question.BoardSessionId,
 			HasBoardSession = question.HasBoardSession,
+			BoardSnapshotUrl = question.SnapshotUrl,
 			HasMedia = question.HasMedia,
 			HasAudio = question.HasAudio,
+			CorrectAnswer = question.CorrectAnswer,
 
 			// Source
 			IsScanned = question.IsScanned,
