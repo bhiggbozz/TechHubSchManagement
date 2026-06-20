@@ -52,14 +52,6 @@ try
 	builder.Services.AddHttpContextAccessor();
 	builder.Services.Configure<CloudinarySettings>(
 	builder.Configuration.GetSection("Cloudinary"));
-	builder.Services.AddCors(options =>
-	{
-		options.AddPolicy("AllowAllOrigins",
-			policy => policy
-				.AllowAnyOrigin()
-				.AllowAnyHeader()
-				.AllowAnyMethod());
-	});
 	builder.Services.AddHostedService<QuestionJobWorker>();
 
 	// Multi-tenant services
@@ -83,7 +75,7 @@ try
 	//}
 
 	app.UseHttpsRedirection();
-	app.UseCors("AllowAllOrigins");
+	app.UseCors("MultiTenantCors");
 
 	// ? Middleware order matters!
 	app.UseMiddleware<MultiTenantMiddleware>();  // Must be before Authentication

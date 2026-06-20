@@ -71,6 +71,14 @@ namespace TechhubMS
 			services.AddScoped<IQueryRepository<StudentClassroom>, QueryRepositoryService<StudentClassroom>>();
 			services.AddScoped<IQueryRepository<LessonContent>, QueryRepositoryService<LessonContent>>();
 
+			// Quiz module repositories
+			services.AddScoped<IQueryRepository<QuizAttempt>, QueryRepositoryService<QuizAttempt>>();
+			services.AddScoped<ICommandRespository<QuizAttempt>, CommandRepositoryService<QuizAttempt>>();
+			services.AddScoped<IQueryRepository<QuizAttemptAnswer>, QueryRepositoryService<QuizAttemptAnswer>>();
+			services.AddScoped<ICommandRespository<QuizAttemptAnswer>, CommandRepositoryService<QuizAttemptAnswer>>();
+			services.AddScoped<IQueryRepository<QuizConfig>, QueryRepositoryService<QuizConfig>>();
+			services.AddScoped<ICommandRespository<QuizConfig>, CommandRepositoryService<QuizConfig>>();
+
 			// Register QuestionBank module
 			services.AddQuestionBankServices();
 
