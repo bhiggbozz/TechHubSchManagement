@@ -1671,6 +1671,8 @@ public class QuestionService : IQuestionService
 			MarksAllocation = question.MarksAllocation,
 			HasBoardSession = question.HasBoardSession,
 			HasMedia = question.HasMedia,
+			BoardSessionId = question.BoardSessionId.ToString(),  
+			SnapshotUrl = question.SnapshotUrl,
 			//HasAudio = question.HasAudio,
 			IsScanned = question.IsScanned,
 			Status = (int)question.Status,
@@ -1820,7 +1822,7 @@ public class QuestionService : IQuestionService
 				if (!isAdmin && question.CreatedBy != userId)
 				{
 					_logger.Warning(
-						"🚫 Ownership check failed - " +
+						"Ownership check failed - " +
 						"QuestionId: {QuestionId}, " +
 						"RequestedBy: {UserId}",
 						questionId,
