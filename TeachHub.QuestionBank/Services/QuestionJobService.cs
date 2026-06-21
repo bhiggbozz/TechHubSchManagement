@@ -1030,7 +1030,9 @@ public class QuestionJobService : IQuestionJobService
 					{
 						{ "Status",         "Completed"            },
 						{ "ExtractedCount", savedQuestionIds.Count },
-						{ "CompletedAt",    now                    }
+						{ "CompletedAt",    now                    },
+					    { "QuestionId",     savedQuestionIds.FirstOrDefault()   }
+
 					};
 
 					await _jobCommandRepo.UpdateTableColumnById(
