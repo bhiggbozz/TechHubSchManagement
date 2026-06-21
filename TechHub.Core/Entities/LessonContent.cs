@@ -30,5 +30,6 @@ public class LessonContent
 	public TimeSpan? AccessTime { get; set; }
 	public int? DurationMinutes { get; set; }
 	public DateTime? AccessEndsAt { get; set; }
+	public Guid? AssessmentSetId { get; set; }
 }
 

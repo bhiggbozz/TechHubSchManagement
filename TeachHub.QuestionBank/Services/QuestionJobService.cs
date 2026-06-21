@@ -1157,7 +1157,7 @@ public class QuestionJobService : IQuestionJobService
 
 			var parameters = new MessageParameters
 			{
-				Model = AnthropicModels.Claude4Sonnet,
+				Model = "claude-sonnet-4-5",//AnthropicModels.Claude4Sonnet,
 				MaxTokens = 8192,
 				Messages = messages,
 				System = new List<SystemMessage>
