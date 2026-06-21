@@ -416,13 +416,12 @@ public class QuestionJobService : IQuestionJobService
 	// Teacher fetches processed question when Status = Completed
 	// ═══════════════════════════════════════════════════════════
 
-	public async Task<QuestionPreviewResponse> GetQuestionPreview(Guid jobId,AuthenticatedUserClaims userClaims)
+	public async Task<QuestionPreviewResponse> GetQuestionPreview(Guid jobId, AuthenticatedUserClaims userClaims)
 	{
 		try
 		{
 			if (!Guid.TryParse(userClaims.UserId, out var userId))
 				return Fail<QuestionPreviewResponse>("Invalid user identification");
-
 			if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
 				return Fail<QuestionPreviewResponse>("Invalid school identification");
 
@@ -443,58 +442,85 @@ public class QuestionJobService : IQuestionJobService
 				return Fail<QuestionPreviewResponse>(
 					$"Question not ready yet. Current status: {job.Status}");
 
-			// Fetch the processed question
-			var question = await _questionQueryRepo.Get(
-				job.QuestionId.Value, DatabaseTarget.QuestionBank);
+			// ── Fetch ALL questions by JobId — not QuestionId ────────────
+			var questionsQuery = $@"
+            SELECT * FROM Questions
+            WHERE  JobId     = '{jobId}'
+            AND    SchoolId  = '{schoolId}'
+            AND    IsDeleted = 0
+            AND    IsActive  = 1
+            ORDER  BY QuestionNumber ASC";
 
-			if (question == null || question.IsDeleted)
-				return Fail<QuestionPreviewResponse>("Question not found");
+			var questionResults = await _questionQueryRepo.GetByQuery(
+				questionsQuery, DatabaseTarget.QuestionBank);
 
-			// Fetch options if Objective question
-			var options = new List<OptionPreviewDto>();
+			var questionList = questionResults?.ToList() ?? new();
 
-			if (job.QuestionType == "Objective")
+			if (!questionList.Any())
+				return Fail<QuestionPreviewResponse>("No questions found for this job");
+
+			// ── Build preview per question ────────────────────────────────
+			var previews = new List<QuestionPreviewItem>();
+
+			foreach (var question in questionList)
 			{
-				var optionsQuery = $@"
-                    SELECT *
-                    FROM QuestionOptions
-                    WHERE QuestionId = '{question.Id}'
-                    AND   IsDeleted  = 0
-                    AND   IsActive   = 1
-                    ORDER BY OrderIndex ASC";
+				var options = new List<OptionPreviewDto>();
 
-				var optionResults = await _optionQueryRepo.GetByQuery(optionsQuery, DatabaseTarget.QuestionBank);
-
-				options = optionResults?.Select(o => new OptionPreviewDto
+				if (job.QuestionType == "Objective")
 				{
-					Id = o.Id,
-					OptionLabel = o.OptionLabel,
-					OptionText = o.OptionText,
-					OptionHtml = o.OptionHtml,
-					ContentParts = o.ContentParts,
-					IsCorrect = o.IsCorrect,
-					HasLatex = o.HasLatex,
-					HasImages = o.HasImages,
-					OrderIndex = o.OrderIndex
-				}).ToList() ?? new List<OptionPreviewDto>();
+					var optionsQuery = $@"
+                    SELECT * FROM QuestionOptions
+                    WHERE  QuestionId = '{question.Id}'
+                    AND    IsDeleted  = 0
+                    AND    IsActive   = 1
+                    ORDER  BY OrderIndex ASC";
+
+					var optionResults = await _optionQueryRepo.GetByQuery(
+						optionsQuery, DatabaseTarget.QuestionBank);
+
+					options = optionResults?.Select(o => new OptionPreviewDto
+					{
+						Id = o.Id,
+						OptionLabel = o.OptionLabel,
+						OptionText = o.OptionText,
+						OptionHtml = o.OptionHtml,
+						ContentParts = o.ContentParts,
+						IsCorrect = o.IsCorrect,
+						HasLatex = o.HasLatex,
+						HasImages = o.HasImages,
+						OrderIndex = o.OrderIndex
+					}).ToList() ?? new();
+				}
+
+				previews.Add(new QuestionPreviewItem
+				{
+					QuestionId = question.Id,
+					QuestionNumber = question.QuestionNumber,
+					QuestionType = job.QuestionType,
+					QuestionHtml = question.QuestionHtml,
+					ContentParts = question.ContentParts,
+					Options = options,
+					HasLatex = question.HasLatex,
+					HasImages = question.HasMedia,
+					IsPartial = question.IsPartial,
+					DifficultyLevel = question.DifficultyLevel.ToString(),
+					MarksAllocation = question.MarksAllocation,
+					Status = question.Status.ToString()
+				});
 			}
+
+			_logger.Information(
+				"Question preview retrieved - JobId: {JobId}, Count: {Count}",
+				jobId, previews.Count);
 
 			return new QuestionPreviewResponse
 			{
 				ResponseCode = ResponseCode.successful,
 				ResponseMessage = "Question preview retrieved",
-				//Status = "successful",
-				QuestionId = question.Id,
+				Status = "successful",
 				JobId = jobId,
-				QuestionType = job.QuestionType,
-				QuestionHtml = question.QuestionHtml,
-				ContentParts = question.ContentParts,
-				Options = options,
-				HasLatex = question.HasLatex,
-				HasImages = question.HasMedia,
-				DifficultyLevel = question.DifficultyLevel.ToString(),
-				MarksAllocation = question.MarksAllocation,
-				Status = question.Status.ToString()
+				TotalExtracted = previews.Count,
+				Questions = previews
 			};
 		}
 		catch (Exception ex)
@@ -1030,8 +1056,8 @@ public class QuestionJobService : IQuestionJobService
 					{
 						{ "Status",         "Completed"            },
 						{ "ExtractedCount", savedQuestionIds.Count },
-						{ "CompletedAt",    now                    },
-					    { "QuestionId",     savedQuestionIds.FirstOrDefault()   }
+						{ "CompletedAt",    now                    }
+					    //{ "QuestionId",     savedQuestionIds.FirstOrDefault()   }  
 
 					};
 
