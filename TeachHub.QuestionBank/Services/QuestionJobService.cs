@@ -765,16 +765,20 @@ public class QuestionJobService : IQuestionJobService
 		try
 		{
 			// ── STEP 1: Fetch next pending job — no transaction needed ───
-			var pendingQuery = $@"
-				SELECT TOP 1 *
-				FROM   QuestionJob
-				WHERE  Status IN ('Pending', 'Processing')
-				AND    AttemptCount < {MaxAttempts}
-				ORDER  BY CreatedAt ASC";
+			var claimQuery = $@"
+				UPDATE TOP(1) QuestionJob
+				SET    Status       = 'Processing',
+					   AttemptCount = AttemptCount + 1
+				OUTPUT INSERTED.*
+				WHERE  Status       = 'Pending'
+				AND    AttemptCount < {MaxAttempts}";
 
-			var pending = await _jobQueryRepo.GetByQuery(pendingQuery, DatabaseTarget.QuestionBank);
+			var claimed = await _jobQueryRepo.QueryAsync<QuestionJob>(
+				claimQuery,
+				new Dictionary<string, object>(),
+				DatabaseTarget.QuestionBank);
 
-			job = pending?.FirstOrDefault();
+			job = claimed?.FirstOrDefault();
 
 			if (job == null)
 			{
@@ -875,6 +879,9 @@ public class QuestionJobService : IQuestionJobService
 
 				_logger.Information(
 					"Image processing complete - JobId: {JobId}, " + "Uploaded: {Uploaded}/{Total}",job.Id, imageUrlMap.Count,claudeResult.ImageBounds.Count);
+
+				_logger.Information("Image URL map before replacement - JobId: {JobId}, Count: {Count}, Keys: {Keys}",job.Id, imageUrlMap.Count, string.Join(", ", imageUrlMap.Keys));
+
 
 				// Replace placeholders in all questions before saving
 				foreach (var extracted in claudeResult.Questions)
