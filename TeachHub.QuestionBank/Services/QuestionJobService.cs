@@ -439,7 +439,7 @@ public class QuestionJobService : IQuestionJobService
 					Status = "failed"
 				};
 
-			if (job.Status != "Completed" || job.QuestionId == null)
+			if (job.Status != "Completed")
 				return Fail<QuestionPreviewResponse>(
 					$"Question not ready yet. Current status: {job.Status}");
 

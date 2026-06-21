@@ -47,7 +47,59 @@ try
 	// Add services to the container
 	builder.Services.AddControllers();
 	builder.Services.AddEndpointsApiExplorer();
-	builder.Services.AddSwaggerGen();
+	//builder.Services.AddSwaggerGen();
+	builder.Services.AddSwaggerGen(c =>
+	{
+		// ?? JWT Bearer token ??????????????????????????????????????????????
+		c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+		{
+			Name = "Authorization",
+			Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+			Scheme = "Bearer",
+			BearerFormat = "JWT",
+			In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+			Description = "Enter your JWT token. Example: eyJhbGci..."
+		});
+
+		c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+	{
+		{
+			new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+			{
+				Reference = new Microsoft.OpenApi.Models.OpenApiReference
+				{
+					Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+					Id   = "Bearer"
+				}
+			},
+			Array.Empty<string>()
+		}
+	});
+
+		// ?? X-Tenant-ID header ????????????????????????????????????????????
+		c.AddSecurityDefinition("TenantId", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+		{
+			Name = "X-Tenant-ID",
+			Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+			In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+			Description = "Enter your school code. Example: pearl"
+		});
+
+		c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+	{
+		{
+			new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+			{
+				Reference = new Microsoft.OpenApi.Models.OpenApiReference
+				{
+					Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+					Id   = "TenantId"
+				}
+			},
+			Array.Empty<string>()
+		}
+	});
+	});
 	builder.Services.AddAutoMapper(typeof(AutoMapperProfile));
 	builder.Services.AddHttpContextAccessor();
 	builder.Services.Configure<CloudinarySettings>(
