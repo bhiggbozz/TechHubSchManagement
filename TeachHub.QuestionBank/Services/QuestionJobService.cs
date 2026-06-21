@@ -792,18 +792,18 @@ public class QuestionJobService : IQuestionJobService
 				job.Id, job.SubTopicId, job.QuestionType, job.AttemptCount + 1);
 
 			// ── STEP 2: Mark as Processing — own transaction ─────────────
-			using (var markScope = _dbTransactionScopeFactory.Create("QuestionBankConnection"))
-			{
-				var processingDict = new Dictionary<string, object>
-				{
-					{ "Status",       "Processing"       },
-					{ "AttemptCount", job.AttemptCount + 1 }
-				};
+			//using (var markScope = _dbTransactionScopeFactory.Create("QuestionBankConnection"))
+			//{
+			//	var processingDict = new Dictionary<string, object>
+			//	{
+			//		{ "Status",       "Processing"       },
+			//		{ "AttemptCount", job.AttemptCount + 1 }
+			//	};
 
-				await _jobCommandRepo.UpdateTableColumnById(markScope.Transaction, markScope.Connection,processingDict,new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
+			//	await _jobCommandRepo.UpdateTableColumnById(markScope.Transaction, markScope.Connection,processingDict,new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
 
-				await markScope.CommitAsync();
-			}
+			//	await markScope.CommitAsync();
+			//}
 
 			_logger.Information(
 				"Job marked as Processing - JobId: {JobId}", job.Id);
@@ -1601,6 +1601,10 @@ STRICT RULES:
 		{
 			try
 			{
+				var paddedX = Math.Max(0, bound.X - 3);
+				var paddedY = Math.Max(0, bound.Y - 3);
+				var paddedWidth = Math.Min(100 - paddedX, bound.Width + 6);
+				var paddedHeight = Math.Min(100 - paddedY, bound.Height + 6);
 				_logger.Information(
 					"Cropping image - Key: {Key}, " +
 					"X: {X}%, Y: {Y}%, W: {W}%, H: {H}%",
@@ -1757,42 +1761,75 @@ STRICT RULES:
 	}
 
 
-	private byte[] CropImage(byte[] sourceBytes,int xPct, int yPct,int widthPct, int heightPct)
-{
+	// REPLACE ENTIRE METHOD ↓
+	private byte[] CropImage(byte[] sourceBytes, int xPct, int yPct, int widthPct, int heightPct)
+	{
+		if (sourceBytes == null || sourceBytes.Length == 0)
+		{
+			_logger.Error("CropImage received empty sourceBytes");
+			return Array.Empty<byte>();
+		}
+
 		using var bitmap = SKBitmap.Decode(sourceBytes);
+
+		if (bitmap == null)
+		{
+			_logger.Error(
+				"SKBitmap.Decode returned null - " +
+				"SourceSize: {Size} bytes, " +
+				"First4Bytes: {Header}",
+				sourceBytes.Length,
+				BitConverter.ToString(sourceBytes.Take(4).ToArray()));
+			return Array.Empty<byte>();
+		}
+
+		if (bitmap == null)
+			throw new Exception("Failed to decode source image");
 
 		var x = (int)(bitmap.Width * xPct / 100.0);
 		var y = (int)(bitmap.Height * yPct / 100.0);
 		var width = (int)(bitmap.Width * widthPct / 100.0);
 		var height = (int)(bitmap.Height * heightPct / 100.0);
 
-		// Clamp to bitmap bounds
 		x = Math.Max(0, Math.Min(x, bitmap.Width - 1));
 		y = Math.Max(0, Math.Min(y, bitmap.Height - 1));
 		width = Math.Max(1, Math.Min(width, bitmap.Width - x));
 		height = Math.Max(1, Math.Min(height, bitmap.Height - y));
 
-		_logger.Information(
-			"Crop pixels - X: {X}, Y: {Y}, W: {W}, H: {H} " +
-			"(Image: {IW}x{IH})",
-			x, y, width, height,
-			bitmap.Width, bitmap.Height);
+		// ── Guard against invalid crop area ──────────────────────────────
+		if (width <= 0 || height <= 0 ||
+			x + width > bitmap.Width ||
+			y + height > bitmap.Height)
+		{
+			_logger.Warning(
+				"Invalid crop area - X:{X} Y:{Y} W:{W} H:{H} Bitmap:{BW}x{BH}",
+				x, y, width, height, bitmap.Width, bitmap.Height);
+			return Array.Empty<byte>();
+		}
 
-		// Extract the cropped region
+		_logger.Information(
+			"Crop pixels - X:{X} Y:{Y} W:{W} H:{H} (Bitmap:{BW}x{BH})",
+			x, y, width, height, bitmap.Width, bitmap.Height);
+
 		var cropRect = new SKRectI(x, y, x + width, y + height);
 		using var cropped = new SKBitmap();
-		bitmap.ExtractSubset(cropped, cropRect);
 
-		// Encode to JPEG
+		if (!bitmap.ExtractSubset(cropped, cropRect))
+		{
+			_logger.Warning("ExtractSubset failed for crop area");
+			return Array.Empty<byte>();
+		}
+
 		using var image = SKImage.FromBitmap(cropped);
 		using var data = image.Encode(SKEncodedImageFormat.Jpeg, 90);
 		using var ms = new MemoryStream();
 		data.SaveTo(ms);
 
 		return ms.ToArray();
-}
-// ── Extract all {{image:key}} keys from an HTML string ───────────────────
-private List<string> ExtractPlaceholderKeys(string html)
+	}
+	// REPLACE ENTIRE METHOD ↑
+	// ── Extract all {{image:key}} keys from an HTML string ───────────────────
+	private List<string> ExtractPlaceholderKeys(string html)
 {
 		var keys = new List<string>();
 		var start = 0;
