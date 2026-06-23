@@ -129,6 +129,17 @@ namespace TechhubMS
 							if (host.EndsWith(".vluethub.com"))
 								return true;
 
+							if (host.EndsWith(".onrender.com"))
+								return true;
+
+							// ── Vercel deployments ────────────────────────────────
+							if (host.EndsWith(".vercel.app"))
+								return true;
+
+							// ── Netlify deployments ───────────────────────────────
+							if (host.EndsWith(".netlify.app"))
+								return true;
+
 							if (host.EndsWith(".localhost") || host == "localhost")
 								return true;
 

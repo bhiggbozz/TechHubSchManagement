@@ -78,28 +78,52 @@ public class JobListResponse : BaseResponse
 /// Returned when teacher fetches the processed question
 /// for preview and editing before publishing
 /// </summary>
+//public class QuestionPreviewResponse : BaseResponse
+//{
+//	public Guid QuestionId { get; set; }
+//	public Guid JobId { get; set; }
+//	public string QuestionType { get; set; }
+
+//	// Claude-generated HTML — render directly
+//	// Frontend: DOMPurify.sanitize → innerHTML → KaTeX
+//	public string QuestionHtml { get; set; }
+
+//	// Claude-generated JSON — for editing
+//	public string ContentParts { get; set; }
+
+//	// Options for Objective questions
+//	public List<OptionPreviewDto> Options { get; set; } = new();
+
+//	public bool HasLatex { get; set; }
+//	public bool HasImages { get; set; }
+//	public string DifficultyLevel { get; set; }
+//	public int MarksAllocation { get; set; }
+//	public string Status { get; set; }
+//}
+
 public class QuestionPreviewResponse : BaseResponse
 {
-	public Guid QuestionId { get; set; }
 	public Guid JobId { get; set; }
-	public string QuestionType { get; set; }
+	public int TotalExtracted { get; set; }
+	public List<QuestionPreviewItem> Questions { get; set; } = new();
+}
 
-	// Claude-generated HTML — render directly
-	// Frontend: DOMPurify.sanitize → innerHTML → KaTeX
-	public string QuestionHtml { get; set; }
-
-	// Claude-generated JSON — for editing
-	public string ContentParts { get; set; }
-
-	// Options for Objective questions
-	public List<OptionPreviewDto> Options { get; set; } = new();
-
+public class QuestionPreviewItem
+{
+	public Guid QuestionId { get; set; }
+	public int? QuestionNumber { get; set; }
+	public string QuestionType { get; set; } = string.Empty;
+	public string? QuestionHtml { get; set; }
+	public string? ContentParts { get; set; }
 	public bool HasLatex { get; set; }
 	public bool HasImages { get; set; }
-	public string DifficultyLevel { get; set; }
+	public bool IsPartial { get; set; }
+	public string DifficultyLevel { get; set; } = string.Empty;
 	public int MarksAllocation { get; set; }
-	public string Status { get; set; }
+	public string Status { get; set; } = string.Empty;
+	public List<OptionPreviewDto> Options { get; set; } = new();
 }
+
 
 public class OptionPreviewDto
 {

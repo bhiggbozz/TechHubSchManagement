@@ -416,13 +416,12 @@ public class QuestionJobService : IQuestionJobService
 	// Teacher fetches processed question when Status = Completed
 	// ═══════════════════════════════════════════════════════════
 
-	public async Task<QuestionPreviewResponse> GetQuestionPreview(Guid jobId,AuthenticatedUserClaims userClaims)
+	public async Task<QuestionPreviewResponse> GetQuestionPreview(Guid jobId, AuthenticatedUserClaims userClaims)
 	{
 		try
 		{
 			if (!Guid.TryParse(userClaims.UserId, out var userId))
 				return Fail<QuestionPreviewResponse>("Invalid user identification");
-
 			if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
 				return Fail<QuestionPreviewResponse>("Invalid school identification");
 
@@ -439,62 +438,89 @@ public class QuestionJobService : IQuestionJobService
 					Status = "failed"
 				};
 
-			if (job.Status != "Completed" || job.QuestionId == null)
+			if (job.Status != "Completed")
 				return Fail<QuestionPreviewResponse>(
 					$"Question not ready yet. Current status: {job.Status}");
 
-			// Fetch the processed question
-			var question = await _questionQueryRepo.Get(
-				job.QuestionId.Value, DatabaseTarget.QuestionBank);
+			// ── Fetch ALL questions by JobId — not QuestionId ────────────
+			var questionsQuery = $@"
+            SELECT * FROM Questions
+            WHERE  JobId     = '{jobId}'
+            AND    SchoolId  = '{schoolId}'
+            AND    IsDeleted = 0
+            AND    IsActive  = 1
+            ORDER  BY QuestionNumber ASC";
 
-			if (question == null || question.IsDeleted)
-				return Fail<QuestionPreviewResponse>("Question not found");
+			var questionResults = await _questionQueryRepo.GetByQuery(
+				questionsQuery, DatabaseTarget.QuestionBank);
 
-			// Fetch options if Objective question
-			var options = new List<OptionPreviewDto>();
+			var questionList = questionResults?.ToList() ?? new();
 
-			if (job.QuestionType == "Objective")
+			if (!questionList.Any())
+				return Fail<QuestionPreviewResponse>("No questions found for this job");
+
+			// ── Build preview per question ────────────────────────────────
+			var previews = new List<QuestionPreviewItem>();
+
+			foreach (var question in questionList)
 			{
-				var optionsQuery = $@"
-                    SELECT *
-                    FROM QuestionOptions
-                    WHERE QuestionId = '{question.Id}'
-                    AND   IsDeleted  = 0
-                    AND   IsActive   = 1
-                    ORDER BY OrderIndex ASC";
+				var options = new List<OptionPreviewDto>();
 
-				var optionResults = await _optionQueryRepo.GetByQuery(optionsQuery, DatabaseTarget.QuestionBank);
-
-				options = optionResults?.Select(o => new OptionPreviewDto
+				if (job.QuestionType == "Objective")
 				{
-					Id = o.Id,
-					OptionLabel = o.OptionLabel,
-					OptionText = o.OptionText,
-					OptionHtml = o.OptionHtml,
-					ContentParts = o.ContentParts,
-					IsCorrect = o.IsCorrect,
-					HasLatex = o.HasLatex,
-					HasImages = o.HasImages,
-					OrderIndex = o.OrderIndex
-				}).ToList() ?? new List<OptionPreviewDto>();
+					var optionsQuery = $@"
+                    SELECT * FROM QuestionOptions
+                    WHERE  QuestionId = '{question.Id}'
+                    AND    IsDeleted  = 0
+                    AND    IsActive   = 1
+                    ORDER  BY OrderIndex ASC";
+
+					var optionResults = await _optionQueryRepo.GetByQuery(
+						optionsQuery, DatabaseTarget.QuestionBank);
+
+					options = optionResults?.Select(o => new OptionPreviewDto
+					{
+						Id = o.Id,
+						OptionLabel = o.OptionLabel,
+						OptionText = o.OptionText,
+						OptionHtml = o.OptionHtml,
+						ContentParts = o.ContentParts,
+						IsCorrect = o.IsCorrect,
+						HasLatex = o.HasLatex,
+						HasImages = o.HasImages,
+						OrderIndex = o.OrderIndex
+					}).ToList() ?? new();
+				}
+
+				previews.Add(new QuestionPreviewItem
+				{
+					QuestionId = question.Id,
+					QuestionNumber = question.QuestionNumber,
+					QuestionType = job.QuestionType,
+					QuestionHtml = question.QuestionHtml,
+					ContentParts = question.ContentParts,
+					Options = options,
+					HasLatex = question.HasLatex,
+					HasImages = question.HasMedia,
+					IsPartial = question.IsPartial,
+					DifficultyLevel = question.DifficultyLevel.ToString(),
+					MarksAllocation = question.MarksAllocation,
+					Status = question.Status.ToString()
+				});
 			}
+
+			_logger.Information(
+				"Question preview retrieved - JobId: {JobId}, Count: {Count}",
+				jobId, previews.Count);
 
 			return new QuestionPreviewResponse
 			{
 				ResponseCode = ResponseCode.successful,
 				ResponseMessage = "Question preview retrieved",
-				//Status = "successful",
-				QuestionId = question.Id,
+				Status = "successful",
 				JobId = jobId,
-				QuestionType = job.QuestionType,
-				QuestionHtml = question.QuestionHtml,
-				ContentParts = question.ContentParts,
-				Options = options,
-				HasLatex = question.HasLatex,
-				HasImages = question.HasMedia,
-				DifficultyLevel = question.DifficultyLevel.ToString(),
-				MarksAllocation = question.MarksAllocation,
-				Status = question.Status.ToString()
+				TotalExtracted = previews.Count,
+				Questions = previews
 			};
 		}
 		catch (Exception ex)
@@ -739,16 +765,20 @@ public class QuestionJobService : IQuestionJobService
 		try
 		{
 			// ── STEP 1: Fetch next pending job — no transaction needed ───
-			var pendingQuery = $@"
-				SELECT TOP 1 *
-				FROM   QuestionJob
-				WHERE  Status IN ('Pending', 'Processing')
-				AND    AttemptCount < {MaxAttempts}
-				ORDER  BY CreatedAt ASC";
+			var claimQuery = $@"
+				UPDATE TOP(1) QuestionJob
+				SET    Status       = 'Processing',
+					   AttemptCount = AttemptCount + 1
+				OUTPUT INSERTED.*
+				WHERE  Status       = 'Pending'
+				AND    AttemptCount < {MaxAttempts}";
 
-			var pending = await _jobQueryRepo.GetByQuery(pendingQuery, DatabaseTarget.QuestionBank);
+			var claimed = await _jobQueryRepo.QueryAsync<QuestionJob>(
+				claimQuery,
+				new Dictionary<string, object>(),
+				DatabaseTarget.QuestionBank);
 
-			job = pending?.FirstOrDefault();
+			job = claimed?.FirstOrDefault();
 
 			if (job == null)
 			{
@@ -762,18 +792,18 @@ public class QuestionJobService : IQuestionJobService
 				job.Id, job.SubTopicId, job.QuestionType, job.AttemptCount + 1);
 
 			// ── STEP 2: Mark as Processing — own transaction ─────────────
-			using (var markScope = _dbTransactionScopeFactory.Create("QuestionBankConnection"))
-			{
-				var processingDict = new Dictionary<string, object>
-				{
-					{ "Status",       "Processing"       },
-					{ "AttemptCount", job.AttemptCount + 1 }
-				};
+			//using (var markScope = _dbTransactionScopeFactory.Create("QuestionBankConnection"))
+			//{
+			//	var processingDict = new Dictionary<string, object>
+			//	{
+			//		{ "Status",       "Processing"       },
+			//		{ "AttemptCount", job.AttemptCount + 1 }
+			//	};
 
-				await _jobCommandRepo.UpdateTableColumnById(markScope.Transaction, markScope.Connection,processingDict,new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
+			//	await _jobCommandRepo.UpdateTableColumnById(markScope.Transaction, markScope.Connection,processingDict,new KeyValuePair<string, object>("Id", job.Id),DatabaseTarget.QuestionBank);
 
-				await markScope.CommitAsync();
-			}
+			//	await markScope.CommitAsync();
+			//}
 
 			_logger.Information(
 				"Job marked as Processing - JobId: {JobId}", job.Id);
@@ -849,6 +879,9 @@ public class QuestionJobService : IQuestionJobService
 
 				_logger.Information(
 					"Image processing complete - JobId: {JobId}, " + "Uploaded: {Uploaded}/{Total}",job.Id, imageUrlMap.Count,claudeResult.ImageBounds.Count);
+
+				_logger.Information("Image URL map before replacement - JobId: {JobId}, Count: {Count}, Keys: {Keys}",job.Id, imageUrlMap.Count, string.Join(", ", imageUrlMap.Keys));
+
 
 				// Replace placeholders in all questions before saving
 				foreach (var extracted in claudeResult.Questions)
@@ -1031,6 +1064,8 @@ public class QuestionJobService : IQuestionJobService
 						{ "Status",         "Completed"            },
 						{ "ExtractedCount", savedQuestionIds.Count },
 						{ "CompletedAt",    now                    }
+					    //{ "QuestionId",     savedQuestionIds.FirstOrDefault()   }  
+
 					};
 
 					await _jobCommandRepo.UpdateTableColumnById(
@@ -1157,7 +1192,7 @@ public class QuestionJobService : IQuestionJobService
 
 			var parameters = new MessageParameters
 			{
-				Model = AnthropicModels.Claude4Sonnet,
+				Model = "claude-sonnet-4-5",//AnthropicModels.Claude4Sonnet,
 				MaxTokens = 8192,
 				Messages = messages,
 				System = new List<SystemMessage>
@@ -1566,6 +1601,10 @@ STRICT RULES:
 		{
 			try
 			{
+				var paddedX = Math.Max(0, bound.X - 3);
+				var paddedY = Math.Max(0, bound.Y - 3);
+				var paddedWidth = Math.Min(100 - paddedX, bound.Width + 6);
+				var paddedHeight = Math.Min(100 - paddedY, bound.Height + 6);
 				_logger.Information(
 					"Cropping image - Key: {Key}, " +
 					"X: {X}%, Y: {Y}%, W: {W}%, H: {H}%",
@@ -1722,42 +1761,75 @@ STRICT RULES:
 	}
 
 
-	private byte[] CropImage(byte[] sourceBytes,int xPct, int yPct,int widthPct, int heightPct)
-{
+	// REPLACE ENTIRE METHOD ↓
+	private byte[] CropImage(byte[] sourceBytes, int xPct, int yPct, int widthPct, int heightPct)
+	{
+		if (sourceBytes == null || sourceBytes.Length == 0)
+		{
+			_logger.Error("CropImage received empty sourceBytes");
+			return Array.Empty<byte>();
+		}
+
 		using var bitmap = SKBitmap.Decode(sourceBytes);
+
+		if (bitmap == null)
+		{
+			_logger.Error(
+				"SKBitmap.Decode returned null - " +
+				"SourceSize: {Size} bytes, " +
+				"First4Bytes: {Header}",
+				sourceBytes.Length,
+				BitConverter.ToString(sourceBytes.Take(4).ToArray()));
+			return Array.Empty<byte>();
+		}
+
+		if (bitmap == null)
+			throw new Exception("Failed to decode source image");
 
 		var x = (int)(bitmap.Width * xPct / 100.0);
 		var y = (int)(bitmap.Height * yPct / 100.0);
 		var width = (int)(bitmap.Width * widthPct / 100.0);
 		var height = (int)(bitmap.Height * heightPct / 100.0);
 
-		// Clamp to bitmap bounds
 		x = Math.Max(0, Math.Min(x, bitmap.Width - 1));
 		y = Math.Max(0, Math.Min(y, bitmap.Height - 1));
 		width = Math.Max(1, Math.Min(width, bitmap.Width - x));
 		height = Math.Max(1, Math.Min(height, bitmap.Height - y));
 
-		_logger.Information(
-			"Crop pixels - X: {X}, Y: {Y}, W: {W}, H: {H} " +
-			"(Image: {IW}x{IH})",
-			x, y, width, height,
-			bitmap.Width, bitmap.Height);
+		// ── Guard against invalid crop area ──────────────────────────────
+		if (width <= 0 || height <= 0 ||
+			x + width > bitmap.Width ||
+			y + height > bitmap.Height)
+		{
+			_logger.Warning(
+				"Invalid crop area - X:{X} Y:{Y} W:{W} H:{H} Bitmap:{BW}x{BH}",
+				x, y, width, height, bitmap.Width, bitmap.Height);
+			return Array.Empty<byte>();
+		}
 
-		// Extract the cropped region
+		_logger.Information(
+			"Crop pixels - X:{X} Y:{Y} W:{W} H:{H} (Bitmap:{BW}x{BH})",
+			x, y, width, height, bitmap.Width, bitmap.Height);
+
 		var cropRect = new SKRectI(x, y, x + width, y + height);
 		using var cropped = new SKBitmap();
-		bitmap.ExtractSubset(cropped, cropRect);
 
-		// Encode to JPEG
+		if (!bitmap.ExtractSubset(cropped, cropRect))
+		{
+			_logger.Warning("ExtractSubset failed for crop area");
+			return Array.Empty<byte>();
+		}
+
 		using var image = SKImage.FromBitmap(cropped);
 		using var data = image.Encode(SKEncodedImageFormat.Jpeg, 90);
 		using var ms = new MemoryStream();
 		data.SaveTo(ms);
 
 		return ms.ToArray();
-}
-// ── Extract all {{image:key}} keys from an HTML string ───────────────────
-private List<string> ExtractPlaceholderKeys(string html)
+	}
+	// REPLACE ENTIRE METHOD ↑
+	// ── Extract all {{image:key}} keys from an HTML string ───────────────────
+	private List<string> ExtractPlaceholderKeys(string html)
 {
 		var keys = new List<string>();
 		var start = 0;

@@ -34,5 +34,7 @@ public class QuestionSummaryDto
 	public string? TopicName { get; set; }  
 	public string? SubTopicName { get; set; } 
 	public string? ClassName { get; set; }
+	public string? BoardSessionId { get; set; }  // ← add
+    public string? SnapshotUrl { get; set; }
 }
 
