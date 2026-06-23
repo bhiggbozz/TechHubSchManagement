@@ -66,6 +66,7 @@ public class QuestionDto
 	public string? BoardSnapshotUrl { get; set; }
 	// CDN url of board snapshot
 	// Null if no board session attached
+	public string? ImageUrl { get; set; }
 	public bool HasMedia { get; set; }
 	public bool HasAudio { get; set; }
 

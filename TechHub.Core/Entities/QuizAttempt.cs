@@ -28,6 +28,8 @@ public class QuizAttempt
 	public decimal TotalMarks { get; set; }
 	public decimal? FinalScorePercent { get; set; }
 	public bool? IsPassed { get; set; }
+	public string? DeviceId { get; set; }  // frontend generated UUID
+	public string? UserAgent { get; set; }  // browser/device string
 	public string Status { get; set; } = QuizAttemptStatus.InProgress;
 	public string CreationDate { get; set; } = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 	public string ModifiedDate { get; set; } = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");

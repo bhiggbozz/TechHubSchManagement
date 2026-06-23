@@ -32,6 +32,15 @@ public class QuizController : ControllerBase
 		return MapResponse(response);
 	}
 
+	[HttpPost("assessments")]
+	[Authorize]
+	public async Task<IActionResult> CreateAssessment([FromBody] CreateAssessmentViewModel model)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.CreateAssessment(model, claims);
+		return MapResponse(response);
+	}
+
 	[HttpPatch("lesson/{lessonId}/attach")]
 	[Authorize]
 	public async Task<IActionResult> AttachQuizToLesson(

@@ -242,3 +242,7 @@ FROM LessonContent l
 INNER JOIN QuizConfig q ON q.TeacherId = l.CreatedBy
 WHERE l.QuizCode IS NOT NULL
   AND l.AssessmentSetId IS NULL;
+
+
+  ALTER TABLE QuizAttempt ADD DeviceId  NVARCHAR(100) NULL;
+ALTER TABLE QuizAttempt ADD UserAgent NVARCHAR(500) NULL;

@@ -137,6 +137,15 @@ public class QuestionService : IQuestionService
 				if (model.MarksAllocation <= 0)
 					return Fail("Marks allocation must be greater than zero");
 
+				var hasText = !string.IsNullOrWhiteSpace(model.TextContent);
+				var hasBoard = model.BoardSessionId.HasValue
+							|| !string.IsNullOrWhiteSpace(model.SnapshotUrl);
+				var hasImage = !string.IsNullOrWhiteSpace(model.ImageUrl);
+
+				if (!hasText && !hasBoard && !hasImage)
+					return Fail("Question must have at least one of: " +
+								"text content, board session, or image");
+
 				if (model.QuestionType == QuestionType.MultipleChoice)
 				{
 					if (model.Options == null || model.Options.Count < 2)
@@ -205,6 +214,35 @@ public class QuestionService : IQuestionService
 							IsDuplicate = true
 						};
 					}
+				}
+
+				// ── Auto-resolve QuestionType for mixed content ───────────────────
+				var contentCount = (hasText ? 1 : 0)
+								 + (hasBoard ? 1 : 0)
+								 + (hasImage ? 1 : 0);
+
+				var resolvedType = model.QuestionType;
+
+				if (contentCount > 1)
+				{
+					// Multiple content types — only override if type is not
+					// explicitly set to a specific type by the teacher
+					if (resolvedType != QuestionType.MultipleChoice
+					 && resolvedType != QuestionType.TrueOrFalse
+					 && resolvedType != QuestionType.ShortAnswer
+					 && resolvedType != QuestionType.Essay
+					 && resolvedType != QuestionType.FillInTheBlank)
+					{
+						resolvedType = QuestionType.Mixed;
+					}
+				}
+				else if (hasBoard && !hasText && !hasImage)
+				{
+					resolvedType = QuestionType.BoardBased;
+				}
+				else if (hasImage && !hasText && !hasBoard)
+				{
+					resolvedType = QuestionType.ImageBased;
 				}
 
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
@@ -1082,6 +1120,8 @@ public class QuestionService : IQuestionService
 						q.HasBoardSession,
 						q.HasMedia,
 						q.HasAudio,
+						q.ImageUrl,
+						q.SnapshotUrl,
 						q.IsScanned,
 						q.Status,
 						q.CreationDate,
@@ -1618,6 +1658,7 @@ public class QuestionService : IQuestionService
 			BoardSessionId = question.BoardSessionId,
 			HasBoardSession = question.HasBoardSession,
 			BoardSnapshotUrl = question.SnapshotUrl,
+			ImageUrl = question.ImageUrl,
 			HasMedia = question.HasMedia,
 			HasAudio = question.HasAudio,
 			CorrectAnswer = question.CorrectAnswer,
@@ -1673,6 +1714,8 @@ public class QuestionService : IQuestionService
 			HasMedia = question.HasMedia,
 			BoardSessionId = question.BoardSessionId.ToString(),  
 			SnapshotUrl = question.SnapshotUrl,
+			ImageUrl = question.ImageUrl,
+			BoardSnapshotUrl = question.SnapshotUrl,
 			//HasAudio = question.HasAudio,
 			IsScanned = question.IsScanned,
 			Status = (int)question.Status,
@@ -2703,6 +2746,8 @@ public class QuestionService : IQuestionService
 						q.HasBoardSession,
 						q.HasMedia,
 						q.HasAudio,
+						q.ImageUrl,
+						q.SnapshotUrl,
 						q.IsScanned,
 						q.Status,
 						q.CreationDate,
@@ -3075,6 +3120,8 @@ public class QuestionService : IQuestionService
 						q.HasBoardSession,
 						q.HasMedia,
 						q.HasAudio,
+						q.ImageUrl,
+						q.SnapshotUrl,
 						q.IsScanned,
 						q.Status,
 						q.CreationDate,
@@ -3173,6 +3220,8 @@ public class QuestionService : IQuestionService
 			MarksAllocation = question.MarksAllocation,
 			HasBoardSession = question.HasBoardSession,
 			HasMedia = question.HasMedia,
+			ImageUrl = question.ImageUrl,
+			BoardSnapshotUrl = question.SnapshotUrl,
 			IsScanned = question.IsScanned,
 			Status = (int)question.Status,
 			StatusName = question.Status.ToString(),
