@@ -271,6 +271,177 @@ public class QuizService : IQuizService
 		}
 	}
 
+	public async Task<BaseResponse> CreateAssessment(CreateAssessmentViewModel model, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.UserId, out var userId))
+				return Unauthorized();
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			if (!model.QuestionIds.Any())
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = "At least one question is required",
+					Status = "failed"
+				};
+
+			if (model.QuestionIds.Distinct().Count() != model.QuestionIds.Count)
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = "Duplicate questions are not allowed",
+					Status = "failed"
+				};
+
+			// ── Resolve AssessmentSet ──────────────────────────────────────
+			Guid? resolvedSetId = null;
+			string resolvedSetName = "System Default";
+
+			if (model.AssessmentSetId.HasValue)
+			{
+				var set = await _assessmentSetQuery.Get($@"
+                    SELECT TOP 1 Id, Name, SchoolId, TeacherId
+                    FROM   AssessmentSet
+                    WHERE  Id       = '{model.AssessmentSetId.Value}'
+                    AND    SchoolId = '{schoolId}'
+                    AND    IsActive = 1");
+
+				if (set is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Assessment set not found",
+						Status = "failed"
+					};
+
+				resolvedSetId = set.Id;
+				resolvedSetName = set.Name;
+			}
+			else
+			{
+				var config = await _configQuery.Get($@"
+                    SELECT TOP 1 DefaultAssessmentSetId
+                    FROM   QuizConfig
+                    WHERE  TeacherId = '{userId}'
+                    AND    SchoolId  = '{schoolId}'
+                    AND    IsActive  = 1");
+
+				if (config?.DefaultAssessmentSetId is not null)
+				{
+					var set = await _assessmentSetQuery.Get($@"
+                        SELECT TOP 1 Id, Name
+                        FROM   AssessmentSet
+                        WHERE  Id       = '{config.DefaultAssessmentSetId}'
+                        AND    SchoolId = '{schoolId}'
+                        AND    IsActive = 1");
+					if (set is not null)
+					{
+						resolvedSetId = set.Id;
+						resolvedSetName = set.Name;
+					}
+				}
+			}
+
+			// ── Generate QuizCode ─────────────────────────────────────────
+			string code;
+			int attempts = 0;
+			do
+			{
+				code = QuizCodeGenerator.Generate();
+				attempts++;
+
+				var existing = await _quizQuery.Get($@"
+                    SELECT TOP 1 Id FROM Quiz
+                    WHERE Code     = '{code}'
+                    AND   IsActive = 1");
+
+				if (existing is null) break;
+
+				if (attempts > 10)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "Could not generate unique quiz code. Please try again.",
+						Status = "failed"
+					};
+
+			} while (true);
+
+			// ── Insert Quiz + QuizQuestions ──────────────────────────────
+			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+			var quizId = Guid.NewGuid();
+
+			var quizDict = new Dictionary<string, object>
+			{
+				{ "Id",           quizId   },
+				{ "Code",         code     },
+				{ "SchoolId",     schoolId },
+				{ "CreatedBy",    userId   },
+				{ "CreationDate", now      },
+				{ "ModifiedDate", now      },
+				{ "IsActive",     true     }
+			};
+
+			var questionDicts = model.QuestionIds.Select((qId, index) =>
+				new Dictionary<string, object>
+				{
+					{ "Id",           Guid.NewGuid() },
+					{ "QuizId",       quizId         },
+					{ "QuestionId",   qId            },
+					{ "SchoolId",     schoolId       },
+					{ "DisplayOrder", index + 1      },
+					{ "CreationDate", now            },
+					{ "IsActive",     true           }
+				}).ToList();
+
+			using var scope = _scopeFactory.Create("DbConnectionString");
+			try
+			{
+				await _quizCommand.Create(scope.Transaction, scope.Connection, quizDict);
+				await _quizQuestionCommand.CreateBatchAsync(scope.Transaction, scope.Connection, questionDicts);
+				await scope.CommitAsync();
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Rolling back assessment creation");
+				try { await scope.RollbackAsync(); } catch { }
+				throw;
+			}
+
+			_logger.Information(
+				"Assessment created - Code: {Code}, QuestionCount: {Count}, AssessmentSet: {SetName}, CreatedBy: {UserId}",
+				code, model.QuestionIds.Count, resolvedSetName, userId);
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = "Assessment created successfully",
+				Status = "successful",
+				Data = new AssessmentCreatedDto
+				{
+					QuizCode = code,
+					AssessmentSetId = resolvedSetId,
+					AssessmentSetName = resolvedSetName,
+					QuestionCount = model.QuestionIds.Count,
+					CreatedAt = now
+				}
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex, "Error creating assessment");
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.ErrorOccured,
+				ResponseMessage = "An error occurred while creating assessment",
+				Status = "failed"
+			};
+		}
+	}
+
 	public async Task<BaseResponse> GetQuizByLesson(Guid lessonId, AuthenticatedUserClaims claims)
 	{
 		try

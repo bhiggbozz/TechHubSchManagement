@@ -25,6 +25,8 @@ public class QuestionSummaryDto
 	public int MarksAllocation { get; set; }
 	public bool HasBoardSession { get; set; }
 	public bool HasMedia { get; set; }
+	public string? ImageUrl { get; set; }
+	public string? BoardSnapshotUrl { get; set; }
 	public bool IsScanned { get; set; }
 	public int Status { get; set; }
 	public string StatusName { get; set; }

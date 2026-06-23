@@ -17,6 +17,22 @@ public class AttachQuizViewModel
 	public string QuizCode { get; set; } = string.Empty;
 }
 
+public class CreateAssessmentViewModel
+{
+	public List<Guid> QuestionIds { get; set; } = new();
+	public Guid? AssessmentSetId { get; set; }
+	public string? Name { get; set; }
+}
+
+public class AssessmentCreatedDto
+{
+	public string QuizCode { get; set; } = string.Empty;
+	public Guid? AssessmentSetId { get; set; }
+	public string AssessmentSetName { get; set; } = string.Empty;
+	public int QuestionCount { get; set; }
+	public string CreatedAt { get; set; } = string.Empty;
+}
+
 public class QuizQuestionDto
 {
 	public Guid QuestionId { get; set; }

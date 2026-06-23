@@ -27,6 +27,9 @@ public interface IQuizService
 	Task<BaseResponse> SubmitQuizAttempt(Guid attemptId, SubmitQuizViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetQuizResult(Guid attemptId, AuthenticatedUserClaims claims);
 
+	// ── Assessments ──────────────────────────────────────────────────────────
+	Task<BaseResponse> CreateAssessment(CreateAssessmentViewModel model, AuthenticatedUserClaims claims);
+
 	// ── Grading (teacher) ────────────────────────────────────────────────────
 	Task<BaseResponse> GetPendingGrades(AuthenticatedUserClaims claims);
 	Task<BaseResponse> GradeAnswer(Guid answerId, GradeAnswerViewModel model, AuthenticatedUserClaims claims);
