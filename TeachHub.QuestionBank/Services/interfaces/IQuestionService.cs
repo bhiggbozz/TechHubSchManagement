@@ -19,6 +19,12 @@ public interface IQuestionService
 	Task<CreateQuestionResponse> CreateQuestion(CreateQuestionViewModel model, AuthenticatedUserClaims userClaims);
 
 	/// <summary>
+	/// Batch create multiple questions in one request
+	/// Partial success supported — returns per-item results
+	/// </summary>
+	Task<CreateQuestionsBatchResponse> CreateQuestionsBatch(CreateQuestionsBatchViewModel model, AuthenticatedUserClaims userClaims);
+
+	/// <summary>
 	/// Update an existing question
 	/// Handles dirty state detection
 	/// </summary>
