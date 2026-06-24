@@ -361,6 +361,96 @@ public class QuestionService : IQuestionService
 		}
 	}
 
+	/// <summary>
+	/// Batch create multiple questions in one request.
+	/// Each question is processed independently.
+	/// Partial success is supported — failed items do not block others.
+	/// </summary>
+	public async Task<CreateQuestionsBatchResponse> CreateQuestionsBatch(CreateQuestionsBatchViewModel model, AuthenticatedUserClaims userClaims)
+	{
+		using (LogContext.PushProperty("RequestedBy", userClaims?.UserId))
+		{
+			try
+			{
+				if (model?.Questions == null || !model.Questions.Any())
+					return new CreateQuestionsBatchResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "No questions provided",
+						Status = "failed",
+						Results = new List<BatchQuestionResult>(),
+						TotalCount = 0,
+						SuccessCount = 0,
+						FailedCount = 0
+					};
+
+				var results = new List<BatchQuestionResult>();
+
+				foreach (var question in model.Questions)
+				{
+					try
+					{
+						var singleResult = await CreateQuestion(question, userClaims);
+
+						results.Add(new BatchQuestionResult
+						{
+							ClientId = question.ClientId ?? string.Empty,
+							QuestionId = singleResult.QuestionId,
+							Success = singleResult.ResponseCode == ResponseCode.successful,
+							ErrorMessage = singleResult.ResponseCode == ResponseCode.successful
+								? null
+								: singleResult.ResponseMessage,
+							IsDuplicate = singleResult.IsDuplicate
+						});
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(ex,
+							"Batch item failed - ClientId: {ClientId}", question.ClientId);
+
+						results.Add(new BatchQuestionResult
+						{
+							ClientId = question.ClientId ?? string.Empty,
+							Success = false,
+							ErrorMessage = "Unexpected error occurred"
+						});
+					}
+				}
+
+				var successCount = results.Count(r => r.Success);
+				var failedCount = results.Count - successCount;
+
+				_logger.Information(
+					"Batch creation complete - Total: {Total}, Success: {Success}, Failed: {Failed}",
+					results.Count, successCount, failedCount);
+
+				return new CreateQuestionsBatchResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = $"Batch processed: {successCount} succeeded, {failedCount} failed",
+					Status = "successful",
+					Results = results,
+					TotalCount = results.Count,
+					SuccessCount = successCount,
+					FailedCount = failedCount
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error processing batch question creation");
+				return new CreateQuestionsBatchResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while processing batch creation",
+					Status = "failed",
+					Results = new List<BatchQuestionResult>(),
+					TotalCount = 0,
+					SuccessCount = 0,
+					FailedCount = 0
+				};
+			}
+		}
+	}
 
 	/// <summary>
 	/// Update an existing question
@@ -1658,7 +1748,9 @@ public class QuestionService : IQuestionService
 			BoardSessionId = question.BoardSessionId,
 			HasBoardSession = question.HasBoardSession,
 			BoardSnapshotUrl = question.SnapshotUrl,
+			SnapshotPublicId = question.SnapshotPublicId,
 			ImageUrl = question.ImageUrl,
+			ImagePublicId = question.ImagePublicId,
 			HasMedia = question.HasMedia,
 			HasAudio = question.HasAudio,
 			CorrectAnswer = question.CorrectAnswer,

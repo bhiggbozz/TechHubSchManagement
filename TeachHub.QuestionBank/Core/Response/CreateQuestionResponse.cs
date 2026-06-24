@@ -16,6 +16,23 @@ public class CreateQuestionResponse :BaseResponse
 	// which local record this maps to
 }
 
+public class BatchQuestionResult
+{
+	public string ClientId { get; set; } = string.Empty;
+	public Guid? QuestionId { get; set; }
+	public bool Success { get; set; }
+	public string? ErrorMessage { get; set; }
+	public bool IsDuplicate { get; set; }
+}
+
+public class CreateQuestionsBatchResponse : BaseResponse
+{
+	public List<BatchQuestionResult> Results { get; set; } = new();
+	public int TotalCount { get; set; }
+	public int SuccessCount { get; set; }
+	public int FailedCount { get; set; }
+}
+
 public class QuestionListResponse : BaseResponse
 {
 	public List<QuestionSummaryDto> Questions { get; set; }

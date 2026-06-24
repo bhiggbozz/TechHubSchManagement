@@ -45,6 +45,11 @@ public class CreateOptionViewModel
 	public int OrderIndex { get; set; }
 }
 
+public class CreateQuestionsBatchViewModel
+{
+	public List<CreateQuestionViewModel> Questions { get; set; } = new();
+}
+
 public class UpdateQuestionViewModel
 {
 	

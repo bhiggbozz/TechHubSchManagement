@@ -49,6 +49,18 @@ public class QuestionController : ControllerBase
 		return result.ResponseCode ==ResponseCode.successful ? Ok(result) : BadRequest(result);
 	}
 
+	[HttpPost("batch")]
+	public async Task<IActionResult> CreateQuestionsBatch([FromBody] CreateQuestionsBatchViewModel model)
+	{
+		var userClaims = GetUserClaims();
+		if (userClaims == null)
+			return Unauthorized();
+
+		var result = await _questionService.CreateQuestionsBatch(model, userClaims);
+
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	// UPDATE QUESTION
 	// PUT api/questions
