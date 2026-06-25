@@ -3100,6 +3100,193 @@ public class QuestionService : IQuestionService
 		}
 	}
 
+	// ═════════════════════════════════════════════════════════════════════════
+	// FILTERED QUESTION LIST (by subtopic, combinations)
+	// ═════════════════════════════════════════════════════════════════════════
+
+	public async Task<QuestionListResponse> GetQuestionsBySubTopic(Guid subTopicId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims)
+	{
+		return await GetQuestionsByFilterCore(
+			userClaims, filter,
+			baseWhere: $@"q.SubTopicId = '{subTopicId}'");
+	}
+
+	public async Task<QuestionListResponse> GetQuestionsByClassroomAndSubject(Guid classroomId, Guid subjectId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims)
+	{
+		return await GetQuestionsByFilterCore(
+			userClaims, filter,
+			baseWhere: $@"q.ClassroomId = '{classroomId}' AND q.SubjectId = '{subjectId}'");
+	}
+
+	public async Task<QuestionListResponse> GetQuestionsByClassroomAndSubTopic(Guid classroomId, Guid subTopicId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims)
+	{
+		return await GetQuestionsByFilterCore(
+			userClaims, filter,
+			baseWhere: $@"q.ClassroomId = '{classroomId}' AND q.SubTopicId = '{subTopicId}'");
+	}
+
+	public async Task<QuestionListResponse> GetQuestionsBySubjectAndSubTopic(Guid subjectId, Guid subTopicId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims)
+	{
+		return await GetQuestionsByFilterCore(
+			userClaims, filter,
+			baseWhere: $@"q.SubjectId = '{subjectId}' AND q.SubTopicId = '{subTopicId}'");
+	}
+
+	public async Task<QuestionListResponse> GetQuestionsByClassroomSubjectAndSubTopic(Guid classroomId, Guid subjectId, Guid subTopicId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims)
+	{
+		return await GetQuestionsByFilterCore(
+			userClaims, filter,
+			baseWhere: $@"q.ClassroomId = '{classroomId}' AND q.SubjectId = '{subjectId}' AND q.SubTopicId = '{subTopicId}'");
+	}
+
+	/// <summary>
+	/// Shared core for all filtered list methods.
+	/// Builds WHERE clause from base conditions + optional filters.
+	/// </summary>
+	private async Task<QuestionListResponse> GetQuestionsByFilterCore(
+		AuthenticatedUserClaims userClaims,
+		QuestionFilterViewModelV2 filter,
+		string baseWhere)
+	{
+		using (LogContext.PushProperty("RequestedBy", userClaims.UserId))
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.UserId, out var userId))
+					return new QuestionListResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid user identification",
+						Status = "failed"
+					};
+
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+					return new QuestionListResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+
+				filter.Page = filter.Page < 1 ? 1 : filter.Page;
+				filter.PageSize = filter.PageSize < 1 ? 20 : filter.PageSize;
+				filter.PageSize = filter.PageSize > 50 ? 50 : filter.PageSize;
+
+				var offset = (filter.Page - 1) * filter.PageSize;
+
+				var whereClause = $@"
+					WHERE  q.SchoolId  = '{schoolId}'
+					AND    q.IsDeleted = 0
+					AND    q.IsActive  = 1
+					AND    {baseWhere}";
+
+				// Optional filters
+				if (filter.QuestionType.HasValue)
+					whereClause += $" AND q.QuestionType = {(int)filter.QuestionType.Value}";
+
+				if (filter.DifficultyLevel.HasValue)
+					whereClause += $" AND q.DifficultyLevel = {(int)filter.DifficultyLevel.Value}";
+
+				if (filter.Status.HasValue)
+					whereClause += $" AND q.Status = {(int)filter.Status.Value}";
+				else if (!filter.IncludePendingReview)
+					whereClause += $" AND q.Status != {(int)QuestionStatus.PendingReview}";
+
+				if (!string.IsNullOrWhiteSpace(filter.SearchText))
+				{
+					var safeSearch = filter.SearchText.Replace("'", "''").Trim();
+					whereClause += $@" AND (
+						q.Title          LIKE '%{safeSearch}%'
+						OR q.Topic       LIKE '%{safeSearch}%'
+						OR q.TextContent LIKE '%{safeSearch}%'
+					)";
+				}
+
+				// Count
+				var countQuery = $"SELECT COUNT(*) FROM Questions q {whereClause}";
+				var totalCount = await _questionQueryRepo.CountAsync(countQuery, DatabaseTarget.QuestionBank);
+
+				if (totalCount == 0)
+					return new QuestionListResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "No questions found",
+						Status = "successful",
+						Questions = new List<QuestionSummaryDto>(),
+						TotalCount = 0,
+						Page = filter.Page,
+						PageSize = filter.PageSize,
+						HasMore = false
+					};
+
+				// Data query
+				var dataQuery = $@"
+					SELECT
+						q.Id,
+						q.ClientId,
+						q.Title,
+						q.Topic,
+						q.SubTopic,
+						q.QuestionType,
+						q.DifficultyLevel,
+						q.MarksAllocation,
+						q.HasBoardSession,
+						q.HasMedia,
+						q.HasAudio,
+						q.ImageUrl,
+						q.SnapshotUrl,
+						q.IsScanned,
+						q.Status,
+						q.CreationDate,
+
+						s.Subject  AS SubjectName,
+						t.Name     AS TopicName,
+						st.Name    AS SubTopicName,
+						c.Name     AS ClassName
+
+					FROM   Questions q
+					LEFT JOIN Subjects  s  ON s.Id  = q.SubjectId
+					LEFT JOIN Topic     t  ON t.Id  = q.TopicId
+					LEFT JOIN SubTopic  st ON st.Id = q.SubTopicId
+					LEFT JOIN Classroom c  ON c.Id  = q.ClassroomId
+					{whereClause}
+					ORDER  BY q.CreationDate DESC
+					OFFSET {offset} ROWS
+					FETCH NEXT {filter.PageSize} ROWS ONLY";
+
+				var results = await _questionQueryRepo.GetByQuery(dataQuery, DatabaseTarget.QuestionBank);
+
+				var questions = results?
+					.Select(q => MapToClassroomSummaryDto(q))
+					.ToList() ?? new List<QuestionSummaryDto>();
+
+				var hasMore = (filter.Page * filter.PageSize) < totalCount;
+
+				return new QuestionListResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Questions retrieved successfully",
+					Status = "successful",
+					Questions = questions,
+					TotalCount = totalCount,
+					Page = filter.Page,
+					PageSize = filter.PageSize,
+					HasMore = hasMore
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error retrieving filtered questions");
+				return new QuestionListResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while retrieving questions",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
 	public async Task<QuestionListResponse> GetQuestionsByClassroomSubjectTopic(
 	Guid classroomId,
 	Guid subjectId,
