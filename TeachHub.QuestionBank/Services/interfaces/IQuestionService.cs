@@ -70,6 +70,11 @@ public interface IQuestionService
 	/// </summary>
 	Task<PendingReviewResponse> GetPendingReviewQuestions(Guid scanSessionId,AuthenticatedUserClaims userClaims);
 	Task<QuestionListResponse> GetQuestionsByClassroom(Guid classroomId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims);
+	Task<QuestionListResponse> GetQuestionsBySubTopic(Guid subTopicId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims);
+	Task<QuestionListResponse> GetQuestionsByClassroomAndSubject(Guid classroomId, Guid subjectId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims);
+	Task<QuestionListResponse> GetQuestionsByClassroomAndSubTopic(Guid classroomId, Guid subTopicId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims);
+	Task<QuestionListResponse> GetQuestionsBySubjectAndSubTopic(Guid subjectId, Guid subTopicId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims);
+	Task<QuestionListResponse> GetQuestionsByClassroomSubjectAndSubTopic(Guid classroomId, Guid subjectId, Guid subTopicId, QuestionFilterViewModelV2 filter, AuthenticatedUserClaims userClaims);
 	Task<BaseResponse> GetSubjectQuestionSummary(Guid classroomId, Guid subjectId, AuthenticatedUserClaims userClaims);
 
 	Task<QuestionListResponse> GetQuestionsByClassroomSubjectTopic(Guid classroomId,Guid subjectId,Guid topicId,QuestionFilterViewModelV2 filter,AuthenticatedUserClaims userClaims);

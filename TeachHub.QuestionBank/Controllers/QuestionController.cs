@@ -340,7 +340,59 @@ public class QuestionController : ControllerBase
 		};
 	}
 
+	// ═══════════════════════════════════════════════════════════════════════
+	// NEW FILTER ENDPOINTS (by subtopic, combinations)
+	// ═══════════════════════════════════════════════════════════════════════
 
+	[HttpGet("subtopic/{subTopicId:guid}")]
+	[Authorize]
+	public async Task<IActionResult> GetQuestionsBySubTopic(Guid subTopicId, [FromQuery] QuestionFilterViewModelV2 filter)
+	{
+		var claims = GetUserClaims();
+		if (claims == null) return Unauthorized();
+		var result = await _questionService.GetQuestionsBySubTopic(subTopicId, filter, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
+	[HttpGet("classroom/{classroomId:guid}/subject/{subjectId:guid}")]
+	[Authorize]
+	public async Task<IActionResult> GetQuestionsByClassroomAndSubject(Guid classroomId, Guid subjectId, [FromQuery] QuestionFilterViewModelV2 filter)
+	{
+		var claims = GetUserClaims();
+		if (claims == null) return Unauthorized();
+		var result = await _questionService.GetQuestionsByClassroomAndSubject(classroomId, subjectId, filter, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
+	[HttpGet("classroom/{classroomId:guid}/subtopic/{subTopicId:guid}")]
+	[Authorize]
+	public async Task<IActionResult> GetQuestionsByClassroomAndSubTopic(Guid classroomId, Guid subTopicId, [FromQuery] QuestionFilterViewModelV2 filter)
+	{
+		var claims = GetUserClaims();
+		if (claims == null) return Unauthorized();
+		var result = await _questionService.GetQuestionsByClassroomAndSubTopic(classroomId, subTopicId, filter, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
+	[HttpGet("subject/{subjectId:guid}/subtopic/{subTopicId:guid}")]
+	[Authorize]
+	public async Task<IActionResult> GetQuestionsBySubjectAndSubTopic(Guid subjectId, Guid subTopicId, [FromQuery] QuestionFilterViewModelV2 filter)
+	{
+		var claims = GetUserClaims();
+		if (claims == null) return Unauthorized();
+		var result = await _questionService.GetQuestionsBySubjectAndSubTopic(subjectId, subTopicId, filter, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
+	[HttpGet("classroom/{classroomId:guid}/subject/{subjectId:guid}/subtopic/{subTopicId:guid}")]
+	[Authorize]
+	public async Task<IActionResult> GetQuestionsByClassroomSubjectAndSubTopic(Guid classroomId, Guid subjectId, Guid subTopicId, [FromQuery] QuestionFilterViewModelV2 filter)
+	{
+		var claims = GetUserClaims();
+		if (claims == null) return Unauthorized();
+		var result = await _questionService.GetQuestionsByClassroomSubjectAndSubTopic(classroomId, subjectId, subTopicId, filter, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
 
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	// PRIVATE HELPERS
