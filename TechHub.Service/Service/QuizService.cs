@@ -728,7 +728,7 @@ public class QuizService : IQuizService
 						{ "MediumMarks", model.StarMarkMedium },
 						{ "HardMarks", model.StarMarkHard },
 						{ "ExamLevelMarks", model.StarMarkExpert },
-						{ "DefaultAssessmentSetId", (object?)model.DefaultAssessmentSetId ?? DBNull.Value },
+						{ "DefaultAssessmentSetId", model.DefaultAssessmentSetId },
 						{ "ModifiedDate", now }
 					};
 
@@ -769,7 +769,7 @@ public class QuizService : IQuizService
 						{ "MediumMarks", model.StarMarkMedium },
 						{ "HardMarks", model.StarMarkHard },
 						{ "ExamLevelMarks", model.StarMarkExpert },
-						{ "DefaultAssessmentSetId", (object?)model.DefaultAssessmentSetId ?? DBNull.Value },
+						{ "DefaultAssessmentSetId", model.DefaultAssessmentSetId },
 						{ "CreatedBy", teacherId },
 						{ "CreationDate", now },
 						{ "ModifiedDate", now },
