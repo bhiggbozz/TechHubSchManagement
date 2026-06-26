@@ -26,6 +26,7 @@ using TechHub.QuestionBank.Core.Response;
 using TechHub.QuestionBank.Core.ViewModel;
 using TechHub.QuestionBank.Services.interfaces;
 using TechHub.Service.Interface;
+using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
 using static System.Formats.Asn1.AsnWriter;
 
@@ -158,27 +159,36 @@ public class QuestionJobService : IQuestionJobService
 
 				if (subTopic == null || subTopic.IsDeleted || subTopic.SchoolId != schoolId)
 					return Fail<SubmitJobResponse>("SubTopic not found");
-
-				// ── Upload file to Cloudinary temp folder ────────────
 				var jobId = Guid.NewGuid();
 				var mediaKey = $"qjob_{jobId}";
 
-				using var stream = file.OpenReadStream();
+				// ── Upload to correct storage based on file type ─────────────────
+				CloudinaryUploadResult uploadResult;
 
-				var mediaType = isPdf ? MediaType.Document : MediaType.Image;
-				var uploadResult = await _cloudinaryService.UploadMediaAsync(stream, mediaKey, schoolId, mediaType, isTemporary: true);
+				if (isPdf)
+				{
+					// PDF → Supabase (raw file, downloadable)
+					using var stream = file.OpenReadStream();
+					uploadResult = await _cloudinaryService.UploadToSupabaseAsync(
+						stream, file.FileName, schoolId);
+				}
+				else
+				{
+					// Image → Cloudinary (optimized, temp)
+					using var stream = file.OpenReadStream();
+					uploadResult = await _cloudinaryService.UploadMediaAsync(
+						stream, mediaKey, schoolId, MediaType.Image, isTemporary: true);
+				}
 
 				if (!uploadResult.Success)
 				{
 					_logger.Error(
-						"Temp file upload failed - JobId: {JobId}, Error: {Error}",
+						"File upload failed - JobId: {JobId}, Error: {Error}",
 						jobId, uploadResult.ErrorMessage);
-
-					return Fail<SubmitJobResponse>(
-						"Failed to save file. Please try again");
+					return Fail<SubmitJobResponse>("Failed to save file. Please try again");
 				}
 
-				// ── Create QuestionJob record ────────────────────────
+				// ── Create QuestionJob record ─────────────────────────────────────
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
 				var job = new QuestionJob
@@ -189,11 +199,11 @@ public class QuestionJobService : IQuestionJobService
 					SubjectId = model.SubjectId,
 					SubTopicId = model.SubTopicId,
 					TeacherId = userId,
-					QuestionId = null,              // ← fixed
+					QuestionId = null,
 					QuestionType = model.QuestionType,
 					HasImages = model.HasImages,
-					FileType = fileType,          // ← Image | PDF
-					TempImagePath = uploadResult.PublicId,
+					FileType = fileType,           // "PDF" | "Image"
+					TempImagePath = uploadResult.PublicId, // Supabase path or Cloudinary publicId
 					Status = "Pending",
 					AttemptCount = 0,
 					CreatedAt = now,
@@ -819,13 +829,32 @@ public class QuestionJobService : IQuestionJobService
 			if (string.IsNullOrWhiteSpace(job.TempImagePath))
 				throw new Exception("TempImagePath is missing on job record");
 
-			//var imageBytes = await DownloadImageFromCloudinary(job.TempImagePath);
-			var fileBytes = await DownloadImageFromCloudinary(job.TempImagePath);
+			byte[] fileBytes;
 
-			if (fileBytes == null || fileBytes.Length == 0)
-				throw new Exception(
-					$"Failed to download temp file. PublicId: {job.TempImagePath}");
+			if (job.FileType == "PDF")
+			{
+				// PDF → downloaded from Supabase
+				fileBytes = await _cloudinaryService.DownloadFromSupabaseAsync(job.TempImagePath);
 
+				if (fileBytes == null || fileBytes.Length == 0)
+					throw new Exception($"Failed to download PDF from Supabase. Path: {job.TempImagePath}");
+
+				_logger.Information("PDF downloaded from Supabase - JobId: {JobId}, Size: {Size} bytes",
+					job.Id, fileBytes.Length);
+			}
+			else
+			{
+				// Image → downloaded from Cloudinary
+				fileBytes = await DownloadImageFromCloudinary(job.TempImagePath);
+
+				if (fileBytes == null || fileBytes.Length == 0)
+					throw new Exception($"Failed to download image from Cloudinary. PublicId: {job.TempImagePath}");
+
+				_logger.Information("Image downloaded from Cloudinary - JobId: {JobId}, Size: {Size} bytes",
+					job.Id, fileBytes.Length);
+			}
+
+			// ── STEP 4b: Convert PDF to image for Claude ─────────────────────
 			byte[] imageBytes;
 
 			if (job.FileType == "PDF")
@@ -836,15 +865,13 @@ public class QuestionJobService : IQuestionJobService
 				if (imageBytes == null || imageBytes.Length == 0)
 					throw new Exception("PDF conversion to image failed");
 
-				_logger.Information(
-					"PDF converted - JobId: {JobId}, Size: {Size} bytes",
+				_logger.Information("PDF converted - JobId: {JobId}, Size: {Size} bytes",
 					job.Id, imageBytes.Length);
 			}
 			else
 			{
 				imageBytes = fileBytes;
 			}
-
 
 			//if (imageBytes == null || imageBytes.Length == 0)
 			//	throw new Exception($"Failed to download temp image. PublicId: {job.TempImagePath}");
@@ -1088,23 +1115,30 @@ public class QuestionJobService : IQuestionJobService
 				}
 			}
 
-			// ── STEP 7: Delete temp image — fire and forget ───────────────
+			// ── STEP 7: Delete temp file — fire and forget ────────────────────
 			_ = Task.Run(async () =>
 			{
 				try
 				{
-					await _cloudinaryService.DeleteMediaAsync(
-						job.TempImagePath, MediaType.Image);
+					if (job.FileType == "PDF")
+					{
+						// TODO: Delete from Supabase when you add delete method
+						_logger.Information("PDF cleanup skipped - Supabase delete not yet implemented");
+					}
+					else
+					{
+						await _cloudinaryService.DeleteMediaAsync(
+							job.TempImagePath, MediaType.Image);
 
-					_logger.Information(
-						"Temp image deleted - PublicId: {PublicId}",
-						job.TempImagePath);
+						_logger.Information(
+							"Temp image deleted - PublicId: {PublicId}",
+							job.TempImagePath);
+					}
 				}
 				catch (Exception ex)
 				{
 					_logger.Warning(ex,
-						"Temp image deletion failed - PublicId: {PublicId}. " +
-						"Cloudinary auto-delete policy will handle cleanup",
+						"Temp file deletion failed - Path: {Path}",
 						job.TempImagePath);
 				}
 			});

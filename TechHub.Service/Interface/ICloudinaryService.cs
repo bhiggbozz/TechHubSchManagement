@@ -96,7 +96,10 @@ public interface ICloudinaryService
 	string GetUrl(Guid schoolId, MediaType mediaType, string entityId, bool isTemporary = false);
 	string GetRawUrl(string publicId);
 	CloudinarySignatureResponse GenerateUploadSignature(Guid schoolId, Guid teacherId, MediaType mediaType);
-	public SupabaseUploadTokenResponse GenerateSupabaseUploadToken(Guid schoolId, string fileName);
+	SupabaseUploadTokenResponse GenerateSupabaseUploadToken(Guid schoolId, string fileName);
+	Task<byte[]?> DownloadFromSupabaseAsync(string filePath);
+	Task<CloudinaryUploadResult> UploadToSupabaseAsync(Stream fileStream, string fileName, Guid schoolId);
+
 
 }
 

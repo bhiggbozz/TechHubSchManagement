@@ -2808,8 +2808,7 @@ public class QuestionService : IQuestionService
 
 				// ── Total count ──────────────────────────────────────────
 				var countQuery = $"SELECT COUNT(*) FROM Questions q {whereClause}";
-				var totalCount = await _questionQueryRepo.CountAsync(
-					countQuery, DatabaseTarget.QuestionBank);
+				var totalCount = await _questionQueryRepo.CountAsync(countQuery, DatabaseTarget.QuestionBank);
 
 				if (totalCount == 0)
 					return new QuestionListResponse
@@ -2859,12 +2858,9 @@ public class QuestionService : IQuestionService
 					OFFSET {offset} ROWS
 					FETCH NEXT {filter.PageSize} ROWS ONLY";
 
-				var results = await _questionQueryRepo.GetByQuery(
-					dataQuery, DatabaseTarget.QuestionBank);
+				var results = await _questionQueryRepo.GetByQuery(dataQuery, DatabaseTarget.QuestionBank);
 
-				var questions = results?
-					.Select(q => MapToClassroomSummaryDto(q))
-					.ToList() ?? new List<QuestionSummaryDto>();
+				var questions = results?.Select(q => MapToClassroomSummaryDto(q)).ToList() ?? new List<QuestionSummaryDto>();
 
 				var hasMore = (filter.Page * filter.PageSize) < totalCount;
 
