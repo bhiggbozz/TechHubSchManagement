@@ -946,6 +946,97 @@ namespace TechHub.Service.Service
 				Bucket = bucket
 			};
 		}
+
+		public async Task<CloudinaryUploadResult> UploadToSupabaseAsync(Stream fileStream, string fileName, Guid schoolId)
+		{
+			try
+			{
+				var supabaseUrl = _configuration["Supabase:Url"];
+				var serviceRoleKey = _configuration["Supabase:ServiceRoleKey"];
+				var bucket = _configuration["Supabase:Bucket"];
+
+				var ext = Path.GetExtension(fileName).ToLowerInvariant();
+				var safeFileName = $"temp/{schoolId}/{Guid.NewGuid()}{ext}";
+				var uploadUrl = $"{supabaseUrl}/storage/v1/object/{bucket}/{safeFileName}";
+
+				using var httpClient = new System.Net.Http.HttpClient();
+				httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {serviceRoleKey}");
+				httpClient.DefaultRequestHeaders.Add("apikey", serviceRoleKey);
+
+				var content = new StreamContent(fileStream);
+				content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+					"application/pdf");
+
+				var response = await httpClient.PostAsync(uploadUrl, content);
+
+				if (!response.IsSuccessStatusCode)
+				{
+					var error = await response.Content.ReadAsStringAsync();
+					_logger.Error("Supabase upload failed - Status: {Status}, Error: {Error}",
+						response.StatusCode, error);
+					return new CloudinaryUploadResult
+					{
+						Success = false,
+						ErrorMessage = $"Supabase upload failed: {error}"
+					};
+				}
+
+				var publicUrl = $"{supabaseUrl}/storage/v1/object/public/{bucket}/{safeFileName}";
+
+				_logger.Information("PDF uploaded to Supabase - Path: {Path}", safeFileName);
+
+				return new CloudinaryUploadResult
+				{
+					Success = true,
+					PublicId = safeFileName,   // ← store supabase path
+					SecureUrl = publicUrl
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Exception uploading to Supabase");
+				return new CloudinaryUploadResult
+				{
+					Success = false,
+					ErrorMessage = ex.Message
+				};
+			}
+		}
+
+		public async Task<byte[]?> DownloadFromSupabaseAsync(string filePath)
+		{
+			try
+			{
+				var supabaseUrl = _configuration["Supabase:Url"];
+				var serviceRoleKey = _configuration["Supabase:ServiceRoleKey"];
+				var bucket = _configuration["Supabase:Bucket"];
+
+				var downloadUrl = $"{supabaseUrl}/storage/v1/object/{bucket}/{filePath}";
+
+				using var httpClient = new System.Net.Http.HttpClient();
+				httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {serviceRoleKey}");
+				httpClient.DefaultRequestHeaders.Add("apikey", serviceRoleKey);
+				httpClient.Timeout = TimeSpan.FromSeconds(60);
+
+				var response = await httpClient.GetAsync(downloadUrl);
+
+				if (!response.IsSuccessStatusCode)
+				{
+					_logger.Error("Supabase download failed - Status: {Status}, Path: {Path}",
+						response.StatusCode, filePath);
+					return null;
+				}
+
+				var bytes = await response.Content.ReadAsByteArrayAsync();
+				_logger.Information("PDF downloaded from Supabase - Size: {Size} bytes", bytes.Length);
+				return bytes;
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Exception downloading from Supabase - Path: {Path}", filePath);
+				return null;
+			}
+		}
 	}
 
 		#region Result Classes
