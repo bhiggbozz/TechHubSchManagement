@@ -29,6 +29,7 @@ public interface IQuizService
 
 	// ── Assessments ──────────────────────────────────────────────────────────
 	Task<BaseResponse> CreateAssessment(CreateAssessmentViewModel model, AuthenticatedUserClaims claims);
+	Task<BaseResponse> ConfigureQuiz(ConfigureQuizViewModel model, AuthenticatedUserClaims claims);
 
 	// ── Grading (teacher) ────────────────────────────────────────────────────
 	Task<BaseResponse> GetPendingGrades(AuthenticatedUserClaims claims);
