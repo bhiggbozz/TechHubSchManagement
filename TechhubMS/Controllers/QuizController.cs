@@ -41,6 +41,15 @@ public class QuizController : ControllerBase
 		return MapResponse(response);
 	}
 
+	[HttpPost("configure")]
+	[Authorize]
+	public async Task<IActionResult> ConfigureQuiz([FromBody] ConfigureQuizViewModel model)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.ConfigureQuiz(model, claims);
+		return MapResponse(response);
+	}
+
 	[HttpPatch("lesson/{lessonId}/attach")]
 	[Authorize]
 	public async Task<IActionResult> AttachQuizToLesson(

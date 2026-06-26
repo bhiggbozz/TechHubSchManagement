@@ -12,6 +12,7 @@ public class Quiz
 	public string Code { get; set; } = string.Empty;
 	public Guid SchoolId { get; set; }
 	public Guid CreatedBy { get; set; }
+	public Guid? AssessmentSetId { get; set; }
 	public string CreationDate { get; set; } = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 	public string ModifiedDate { get; set; } = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 	public bool IsActive { get; set; } = true;

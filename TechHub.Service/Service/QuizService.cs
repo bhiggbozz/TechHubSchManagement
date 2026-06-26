@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using TechHub.Core;
 using TechHub.Core.Entities;
+using TechHub.Core.Enum;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel.classroom;
 using TechHub.Service.Interface;
@@ -380,6 +381,7 @@ public class QuizService : IQuizService
 				{ "Code",         code     },
 				{ "SchoolId",     schoolId },
 				{ "CreatedBy",    userId   },
+				{ "AssessmentSetId", resolvedSetId.HasValue ? (object)resolvedSetId.Value : DBNull.Value },
 				{ "CreationDate", now      },
 				{ "ModifiedDate", now      },
 				{ "IsActive",     true     }
@@ -437,6 +439,163 @@ public class QuizService : IQuizService
 			{
 				ResponseCode = ResponseCode.ErrorOccured,
 				ResponseMessage = "An error occurred while creating assessment",
+				Status = "failed"
+			};
+		}
+	}
+
+	public async Task<BaseResponse> ConfigureQuiz(ConfigureQuizViewModel model, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.UserId, out var userId))
+				return Unauthorized();
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			if (string.IsNullOrWhiteSpace(model.QuizCode))
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = "Quiz code is required",
+					Status = "failed"
+				};
+
+			if (!model.QuestionIds.Any())
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = "At least one question is required",
+					Status = "failed"
+				};
+
+			if (model.QuestionIds.Distinct().Count() != model.QuestionIds.Count)
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = "Duplicate questions are not allowed",
+					Status = "failed"
+				};
+
+			// ── Find the quiz ─────────────────────────────────────────────
+			var quiz = await _quizQuery.Get($@"
+                SELECT TOP 1 Id, Code, CreatedBy FROM Quiz
+                WHERE  Code     = '{model.QuizCode}'
+                AND    SchoolId = '{schoolId}'
+                AND    IsActive = 1");
+
+			if (quiz is null)
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.NotFound,
+					ResponseMessage = "Quiz not found",
+					Status = "failed"
+				};
+
+			// ── Only the creator can configure the quiz ────────────────────
+			if (quiz.CreatedBy != userId)
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.Forbidden,
+					ResponseMessage = "Only the quiz creator can configure it",
+					Status = "failed"
+				};
+
+			// ── Validate AssessmentSetId if provided ──────────────────────
+			if (model.AssessmentSetId.HasValue)
+			{
+				var set = await _assessmentSetQuery.Get($@"
+                    SELECT TOP 1 Id FROM AssessmentSet
+                    WHERE  Id       = '{model.AssessmentSetId.Value}'
+                    AND    SchoolId = '{schoolId}'
+                    AND    IsActive = 1");
+
+				if (set is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Assessment set not found",
+						Status = "failed"
+					};
+			}
+
+			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+			// ── Transaction: replace questions + update config ────────────
+			using var scope = _scopeFactory.Create("DbConnectionString");
+			try
+			{
+				// Deactivate existing QuizQuestion rows
+				await _quizQuestionCommand.UpdateAsync(
+					scope.Transaction, scope.Connection,
+					"UPDATE QuizQuestion SET IsActive = 0 WHERE QuizId = @QuizId",
+					new Dictionary<string, object> { { "QuizId", quiz.Id } },
+					new KeyValuePair<string, object>("QuizId", quiz.Id));
+
+				// Insert new QuizQuestion rows
+				var questionDicts = model.QuestionIds.Select((qId, index) =>
+					new Dictionary<string, object>
+					{
+						{ "Id",           Guid.NewGuid() },
+						{ "QuizId",       quiz.Id        },
+						{ "QuestionId",   qId            },
+						{ "SchoolId",     schoolId       },
+						{ "DisplayOrder", index + 1     },
+						{ "CreationDate", now           },
+						{ "IsActive",     true          }
+					}).ToList();
+
+				await _quizQuestionCommand.CreateBatchAsync(scope.Transaction, scope.Connection, questionDicts);
+
+				// Update AssessmentSetId on the Quiz if provided
+				if (model.AssessmentSetId.HasValue)
+				{
+					await _quizCommand.UpdateAsync(
+						scope.Transaction, scope.Connection,
+						"UPDATE Quiz SET AssessmentSetId = @SetId, ModifiedDate = @Now WHERE Id = @Id",
+						new Dictionary<string, object>
+						{
+							{ "SetId", model.AssessmentSetId.Value },
+							{ "Now",   now                        },
+							{ "Id",    quiz.Id                    }
+						},
+						new KeyValuePair<string, object>("Id", quiz.Id));
+				}
+
+				await scope.CommitAsync();
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Rolling back quiz configuration");
+				try { await scope.RollbackAsync(); } catch { }
+				throw;
+			}
+
+			_logger.Information(
+				"Quiz configured - Code: {Code}, QuestionCount: {Count}, AssessmentSetId: {SetId}, UserId: {UserId}",
+				model.QuizCode, model.QuestionIds.Count, model.AssessmentSetId, userId);
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = "Quiz configured successfully",
+				Status = "successful",
+				Data = new QuizConfiguredDto
+				{
+					QuizCode = model.QuizCode,
+					AssessmentSetId = model.AssessmentSetId,
+					QuestionCount = model.QuestionIds.Count,
+					ModifiedAt = now
+				}
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex, "Error configuring quiz - Code: {Code}", model.QuizCode);
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.ErrorOccured,
+				ResponseMessage = "An error occurred while configuring quiz",
 				Status = "failed"
 			};
 		}
@@ -982,43 +1141,79 @@ public class QuizService : IQuizService
 				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
 					return Unauthorized();
 
-				// ── Find lesson by QuizCode ──────────────────────────────────────
-				var lesson = await _lessonQuery.Get($@"
-                    SELECT TOP 1 Id, QuizCode, ClassroomId, CreatedBy
-                    FROM LessonContent
-                    WHERE  QuizCode  = '{quizCode}'
-                    AND    SchoolId  = '{schoolId}'
-                    AND    Status    = '{LessonStatus.Published}'");
+				// ── Find quiz by code ────────────────────────────────────────────
+				var quiz = await _quizQuery.Get($@"
+                    SELECT TOP 1 Id, AssessmentSetId
+                    FROM   Quiz
+                    WHERE  Code     = '{quizCode}'
+                    AND    SchoolId = '{schoolId}'
+                    AND    IsActive = 1");
 
-				if (lesson is null)
+				if (quiz is null)
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.NotFound,
-						ResponseMessage = "No published lesson found with this quiz code",
+						ResponseMessage = "Quiz not found",
 						Status = "failed"
 					};
 
-				// ── Verify student enrollment ────────────────────────────────────
-				var enrolled = await _quizQuery.QueryAsync<int>($@"
-                    SELECT TOP 1 1 FROM StudentClassroom
-                    WHERE StudentId   = '{studentId}'
-                    AND   ClassroomId = '{lesson.ClassroomId}'
-                    AND   SchoolId    = '{schoolId}'
-                    AND   IsActive    = 1", new Dictionary<string, object>());
+				// ── Resolve config: quiz-level AssessmentSetId first, then lesson ─
+				AssessmentSet assessmentSet = null;
+				Guid? lessonId = null;
 
-				if (!enrolled.Any())
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.Forbidden,
-						ResponseMessage = "You are not enrolled in this class",
-						Status = "failed"
-					};
+				if (quiz.AssessmentSetId.HasValue)
+				{
+					// Quiz has its own AssessmentSet baked in
+					assessmentSet = await _assessmentSetQuery.Get($@"
+                        SELECT TOP 1
+                            Id, Name, Label, TeacherId, SchoolId, AllowRetakes, MaxAttempts,
+                            PassMarkPercent, TimeLimitMinutes, AutoSubmitOnTimeout, ShuffleQuestions,
+                            ShowResultMode, ShowCorrectAnswers, AllowBoardAnswer,
+                            EasyMarks, MediumMarks, HardMarks, ExamLevelMarks,
+                            IsActive, CreationDate, ModifiedDate
+                        FROM AssessmentSet
+                        WHERE Id = '{quiz.AssessmentSetId}' AND IsActive = 1");
+				}
+				else
+				{
+					// Fallback: resolve from lesson's AssessmentSet
+					var lesson = await _lessonQuery.Get($@"
+                        SELECT TOP 1 Id, QuizCode, ClassroomId, CreatedBy
+                        FROM LessonContent
+                        WHERE  QuizCode  = '{quizCode}'
+                        AND    SchoolId  = '{schoolId}'
+                        AND    Status    = '{LessonStatus.Published}'");
 
-				var lessonId = lesson.Id;
+					if (lesson is null)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "No published lesson found with this quiz code",
+							Status = "failed"
+						};
 
-				// ── Get assessment set config ────────────────────────────────────
-				var assessmentSet = await ResolveAssessmentSet(lessonId, schoolId);
+					lessonId = lesson.Id;
 
+					// ── Verify student enrollment ────────────────────────────────
+					var enrolled = await _quizQuery.QueryAsync<int>($@"
+                        SELECT TOP 1 1 FROM StudentClassroom
+                        WHERE StudentId   = '{studentId}'
+                        AND   ClassroomId = '{lesson.ClassroomId}'
+                        AND   SchoolId    = '{schoolId}'
+                        AND   IsActive    = 1", new Dictionary<string, object>());
+
+					if (!enrolled.Any())
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You are not enrolled in this class",
+							Status = "failed"
+						};
+
+					assessmentSet = await ResolveAssessmentSet(lesson.Id, schoolId);
+				}
+
+				// ── Apply config ─────────────────────────────────────────────────
 				bool allowRetakes = assessmentSet?.AllowRetakes ?? false;
 				int maxAttempts = assessmentSet?.MaxAttempts ?? 1;
 				bool shuffle = assessmentSet?.ShuffleQuestions ?? false;
@@ -1241,7 +1436,7 @@ public class QuizService : IQuizService
 
 				// ── Check for existing InProgress attempt ──────────────────────────
 				var existingAttempt = await _attemptQuery.Get($@"
-                    SELECT TOP 1 Id, Status, AttemptNumber FROM QuizAttempt
+                SELECT TOP 1 Id, Status, AttemptNumber FROM QuizAttempt
                     WHERE  StudentId = '{studentId}'
                     AND    LessonId  = '{model.LessonId}'
                     AND    SchoolId  = '{schoolId}'

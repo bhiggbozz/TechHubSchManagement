@@ -3763,6 +3763,7 @@ namespace TechHub.Service.Service
 				var parameters = new Dictionary<string, object>
 				{
 					{ "UserName", userName.Trim().ToLower() },
+					{ "Email", email.Trim().ToLower() },
 					{ "SchoolId", schoolId }
 				};
 
@@ -3784,7 +3785,7 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				var query = "SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName AND SchoolId = @SchoolId";
+				var query = "SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR LOWER(Email) = @Email) AND SchoolId = @SchoolId";
 				var parameters = new Dictionary<string, object>
 				{
 					{ "UserName", userName.Trim().ToLower() },
