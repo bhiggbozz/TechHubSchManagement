@@ -24,6 +24,21 @@ public class CreateAssessmentViewModel
 	public string? Name { get; set; }
 }
 
+public class ConfigureQuizViewModel
+{
+	public string QuizCode { get; set; } = string.Empty;
+	public List<Guid> QuestionIds { get; set; } = new();
+	public Guid? AssessmentSetId { get; set; }
+}
+
+public class QuizConfiguredDto
+{
+	public string QuizCode { get; set; } = string.Empty;
+	public Guid? AssessmentSetId { get; set; }
+	public int QuestionCount { get; set; }
+	public string ModifiedAt { get; set; } = string.Empty;
+}
+
 public class AssessmentCreatedDto
 {
 	public string QuizCode { get; set; } = string.Empty;
@@ -144,7 +159,7 @@ public class StartQuizResponseDto
 // ── Student Quiz Display (before / during attempt) ─────────────────────────
 public class StudentQuizDisplayDto
 {
-	public Guid LessonId { get; set; }
+	public Guid? LessonId { get; set; }
 	public string QuizCode { get; set; } = string.Empty;
 	public QuizSettingsDisplayDto Config { get; set; } = new();
 	public AttemptStatusDisplayDto AttemptStatus { get; set; } = new();
