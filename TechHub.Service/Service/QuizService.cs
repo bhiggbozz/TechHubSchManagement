@@ -724,10 +724,11 @@ public class QuizService : IQuizService
 						{ "AllowBoardAnswer", model.AllowBoardAnswer },
 						{ "AllowAIAssistance", model.AllowAIAssistance },
 						{ "MaxAIAssistancePerQuestion", model.MaxAIAssistancePerQuestion },
-						{ "EasyMarks", model.EasyMarks },
-						{ "MediumMarks", model.MediumMarks },
-						{ "HardMarks", model.HardMarks },
-						{ "ExamLevelMarks", model.ExamLevelMarks },
+						{ "EasyMarks", model.StarMarkEasy },
+						{ "MediumMarks", model.StarMarkMedium },
+						{ "HardMarks", model.StarMarkHard },
+						{ "ExamLevelMarks", model.StarMarkExpert },
+						{ "DefaultAssessmentSetId", (object?)model.DefaultAssessmentSetId ?? DBNull.Value },
 						{ "ModifiedDate", now }
 					};
 
@@ -764,10 +765,11 @@ public class QuizService : IQuizService
 						{ "AllowBoardAnswer", model.AllowBoardAnswer },
 						{ "AllowAIAssistance", model.AllowAIAssistance },
 						{ "MaxAIAssistancePerQuestion", model.MaxAIAssistancePerQuestion },
-						{ "EasyMarks", model.EasyMarks },
-						{ "MediumMarks", model.MediumMarks },
-						{ "HardMarks", model.HardMarks },
-						{ "ExamLevelMarks", model.ExamLevelMarks },
+						{ "EasyMarks", model.StarMarkEasy },
+						{ "MediumMarks", model.StarMarkMedium },
+						{ "HardMarks", model.StarMarkHard },
+						{ "ExamLevelMarks", model.StarMarkExpert },
+						{ "DefaultAssessmentSetId", (object?)model.DefaultAssessmentSetId ?? DBNull.Value },
 						{ "CreatedBy", teacherId },
 						{ "CreationDate", now },
 						{ "ModifiedDate", now },
@@ -829,7 +831,7 @@ public class QuizService : IQuizService
                         TimeLimitMinutes, AutoSubmitOnTimeout, ShuffleQuestions,
                         ShowResultImmediately, ShowCorrectAnswers, AllowBoardAnswer,
                         AllowAIAssistance, MaxAIAssistancePerQuestion,
-                        EasyMarks, MediumMarks, HardMarks, ExamLevelMarks
+                        EasyMarks, MediumMarks, HardMarks, ExamLevelMarks, DefaultAssessmentSetId
                     FROM QuizConfig
                     WHERE TeacherId = '{teacherId}'
                     AND   SchoolId  = '{schoolId}'
@@ -857,10 +859,11 @@ public class QuizService : IQuizService
 							AllowBoardAnswer = config.AllowBoardAnswer,
 						AllowAIAssistance = config.AllowAIAssistance,
 						MaxAIAssistancePerQuestion = config.MaxAIAssistancePerQuestion,
-						EasyMarks = config.EasyMarks,
-						MediumMarks = config.MediumMarks,
-						HardMarks = config.HardMarks,
-						ExamLevelMarks = config.ExamLevelMarks
+						StarMarkEasy = config.EasyMarks,
+						StarMarkMedium = config.MediumMarks,
+						StarMarkHard = config.HardMarks,
+						StarMarkExpert = config.ExamLevelMarks,
+						DefaultAssessmentSetId = config.DefaultAssessmentSetId
 					}
 				};
 			}
@@ -886,10 +889,11 @@ public class QuizService : IQuizService
 					AllowBoardAnswer = true,
 					AllowAIAssistance = false,
 					MaxAIAssistancePerQuestion = 1000,
-					EasyMarks = 1,
-					MediumMarks = 2,
-					HardMarks = 3,
-					ExamLevelMarks = 5
+					StarMarkEasy = 1,
+					StarMarkMedium = 2,
+					StarMarkHard = 3,
+					StarMarkExpert = 5,
+					DefaultAssessmentSetId = null
 				}
 			};
 			}
