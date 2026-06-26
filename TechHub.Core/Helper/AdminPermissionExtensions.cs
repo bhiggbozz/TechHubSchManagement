@@ -10,10 +10,14 @@ namespace TechHub.Core.Helper;
 
 	public static class AdminPermissionExtensions
 	{
-		private static readonly HashSet<int> ValidPermissionValues = new HashSet<int>(
-            System.Enum.GetValues(typeof(AdminPermission)).Cast<int>()  // ✅ Cast<int>() is the key!
-        );
+		/// <summary>True when v is a power of two (single-bit flag), excluding 0.</summary>
+		private static bool IsSingleBitValue(int v) => v > 0 && (v & (v - 1)) == 0;
 
+		private static readonly HashSet<int> ValidPermissionValues = new HashSet<int>(
+			System.Enum.GetValues(typeof(AdminPermission))
+				.Cast<int>()
+				.Where(IsSingleBitValue)
+		);
 
 		public static AdminPermission ToAdminPermission(this List<int> permissionValues)
 		{
@@ -32,7 +36,7 @@ namespace TechHub.Core.Helper;
 
 		public static bool IsValidPermission(int value)
 		{
-			return ValidPermissionValues.Contains(value);
+			return IsSingleBitValue(value);
 		}
 
 		public static List<int> GetInvalidPermissions(this List<int> permissionValues)
@@ -46,9 +50,10 @@ namespace TechHub.Core.Helper;
 
 			foreach (AdminPermission value in System.Enum.GetValues(typeof(AdminPermission)))
 			{
-				if (value != AdminPermission.None && (permissions & value) == value)
+				int v = (int)value;
+				if (IsSingleBitValue(v) && (permissions & value) == value)
 				{
-					result.Add((int)value);
+					result.Add(v);
 				}
 			}
 
@@ -72,16 +77,25 @@ namespace TechHub.Core.Helper;
 
 		public static List<string> ToPermissionNames(this List<int> permissionValues)
 		{
-			var names = new List<string>();
-
+			AdminPermission combined = AdminPermission.None;
 			foreach (var value in permissionValues)
 			{
-				if (ValidPermissionValues.Contains(value))
+				combined |= (AdminPermission)value;
+			}
+			return combined.ToPermissionNames();
+		}
+
+		public static List<string> ToPermissionNames(this AdminPermission permissions)
+		{
+			var names = new List<string>();
+			foreach (AdminPermission value in System.Enum.GetValues(typeof(AdminPermission)))
+			{
+				int v = (int)value;
+				if (IsSingleBitValue(v) && (permissions & value) == value)
 				{
-					names.Add(((AdminPermission)value).ToString());
+					names.Add(value.ToString());
 				}
 			}
-
 			return names;
 		}
 	}

@@ -47,5 +47,6 @@ public interface IQuizService
 	Task<BaseResponse> GetAssessmentSet(Guid id, AuthenticatedUserClaims claims);
 	Task<BaseResponse> AttachAssessmentSetToLesson(Guid lessonId, AttachAssessmentSetViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetLessonAssessmentSet(Guid lessonId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetLessonAssessmentConfig(Guid lessonId, AuthenticatedUserClaims claims);
 }
 

@@ -18,7 +18,7 @@ public enum AdminPermission
 	ViewReports = 16,            // 0010000
 	ManageClassrooms = 32,       // 0100000
 	ManageSubjects = 64,         // 1000000
-	CreateUsers = 128,           // ✅ NEW: 1000000 - Can create users
+	CreateUsers = 128,           // ✅ NEW: 10000000 - Can create users
 
 	BasicAdmin = CreateClasses | ViewReports,  // = 18 (2 + 16)
 	FullAdmin = ApproveClasses | CreateClasses | ManageTeachers | ManageStudents | ViewReports | ManageClassrooms | ManageSubjects  // = 127
