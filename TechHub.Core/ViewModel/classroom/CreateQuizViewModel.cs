@@ -75,10 +75,11 @@ public class QuizConfigViewModel
 	public bool AllowBoardAnswer { get; set; } = true;
 	public bool AllowAIAssistance { get; set; } = false;
 	public int MaxAIAssistancePerQuestion { get; set; } = 1000;
-	public int EasyMarks { get; set; } = 1;
-	public int MediumMarks { get; set; } = 2;
-	public int HardMarks { get; set; } = 3;
-	public int ExamLevelMarks { get; set; } = 5;
+	public int StarMarkEasy { get; set; } = 1;
+	public int StarMarkMedium { get; set; } = 2;
+	public int StarMarkHard { get; set; } = 3;
+	public int StarMarkExpert { get; set; } = 5;
+	public Guid? DefaultAssessmentSetId { get; set; }
 }
 
 public class QuizConfigDto
@@ -96,10 +97,11 @@ public class QuizConfigDto
 	public bool AllowBoardAnswer { get; set; }
 	public bool AllowAIAssistance { get; set; }
 	public int MaxAIAssistancePerQuestion { get; set; }
-	public int EasyMarks { get; set; }
-	public int MediumMarks { get; set; }
-	public int HardMarks { get; set; }
-	public int ExamLevelMarks { get; set; }
+	public int StarMarkEasy { get; set; }
+	public int StarMarkMedium { get; set; }
+	public int StarMarkHard { get; set; }
+	public int StarMarkExpert { get; set; }
+	public Guid? DefaultAssessmentSetId { get; set; }
 }
 
 // ── Quiz Attempt (student) ─────────────────────────────────────────────────
