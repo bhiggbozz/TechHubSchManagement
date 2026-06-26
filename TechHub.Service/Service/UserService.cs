@@ -3467,7 +3467,7 @@ namespace TechHub.Service.Service
 								AdminName = $"{targetAdmin.FirstName} {targetAdmin.LastName}",
 								PermissionsValue = permissionsValue,
 								Permissions = model.Permissions,
-								PermissionNames = model.Permissions.ToPermissionNames()
+								PermissionNames = permissionsEnum.ToPermissionNames()
 							}
 						};
 					}
@@ -3507,7 +3507,7 @@ namespace TechHub.Service.Service
 								AdminName = $"{targetAdmin.FirstName} {targetAdmin.LastName}",
 								PermissionsValue = permissionsValue,
 								Permissions = model.Permissions,
-								PermissionNames = model.Permissions.ToPermissionNames()
+								PermissionNames = permissionsEnum.ToPermissionNames()
 							}
 						};
 					}

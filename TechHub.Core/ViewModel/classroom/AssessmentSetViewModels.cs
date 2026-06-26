@@ -75,3 +75,24 @@ public class AttachAssessmentSetViewModel
 {
 	public Guid AssessmentSetId { get; set; }
 }
+
+// ── Resolved config (merged AssessmentSet + QuizConfig defaults) ───────────
+public class ResolvedAssessmentConfigDto
+{
+	public Guid? AssessmentSetId { get; set; }
+	public string AssessmentSetName { get; set; } = "System Default";
+	public bool AllowRetakes { get; set; }
+	public int MaxAttempts { get; set; }
+	public int PassMarkPercent { get; set; }
+	public int? TimeLimitMinutes { get; set; }
+	public bool AutoSubmitOnTimeout { get; set; }
+	public bool ShuffleQuestions { get; set; }
+	public string ShowResultMode { get; set; } = "Immediate";
+	public bool ShowCorrectAnswers { get; set; }
+	public bool AllowBoardAnswer { get; set; }
+	public int EasyMarks { get; set; }
+	public int MediumMarks { get; set; }
+	public int HardMarks { get; set; }
+	public int ExamLevelMarks { get; set; }
+	public string Source { get; set; } = "default"; // "lesson-assessment-set" | "teacher-default" | "system-default"
+}

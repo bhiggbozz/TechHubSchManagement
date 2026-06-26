@@ -225,6 +225,15 @@ public class QuizController : ControllerBase
 		return MapResponse(response);
 	}
 
+	[HttpGet("lesson/{lessonId}/assessment-config")]
+	[Authorize]
+	public async Task<IActionResult> GetLessonAssessmentConfig(Guid lessonId)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetLessonAssessmentConfig(lessonId, claims);
+		return MapResponse(response);
+	}
+
 	// ═══════════════════════════════════════════════════════════════════════
 	// ANALYTICS
 	// ═══════════════════════════════════════════════════════════════════════

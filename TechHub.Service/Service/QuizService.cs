@@ -2722,6 +2722,127 @@ public class QuizService : IQuizService
 		}
 	}
 
+	/// <summary>
+	/// Returns the resolved assessment configuration for a lesson.
+	/// Resolution order: Lesson AssessmentSet → Teacher DefaultAssessmentSet → System defaults.
+	/// </summary>
+	public async Task<BaseResponse> GetLessonAssessmentConfig(Guid lessonId, AuthenticatedUserClaims claims)
+	{
+		using (LogContext.PushProperty("RequestedBy", claims.UserId))
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return Unauthorized();
+
+				var lesson = await _lessonQuery.Get($@"
+                    SELECT TOP 1 AssessmentSetId, CreatedBy
+                    FROM LessonContent
+                    WHERE Id = '{lessonId}' AND SchoolId = '{schoolId}'");
+
+				if (lesson is null)
+					return new BaseResponse { ResponseCode = ResponseCode.NotFound, ResponseMessage = "Lesson not found", Status = "failed" };
+
+				// ── Try lesson-level assessment set first ────────────────────
+				if (lesson.AssessmentSetId is not null)
+				{
+					var set = await _assessmentSetQuery.Get($@"
+                        SELECT TOP 1 *
+                        FROM AssessmentSet
+                        WHERE Id = '{lesson.AssessmentSetId}' AND IsActive = 1");
+
+					if (set is not null)
+					{
+						_logger.Information("Lesson assessment config resolved from lesson AssessmentSet - LessonId: {LessonId}, SetId: {SetId}", lessonId, set.Id);
+						return OkConfig(set, "lesson-assessment-set");
+					}
+				}
+
+				// ── Fallback to teacher's default assessment set ─────────────
+				var config = await _configQuery.Get($@"
+                    SELECT TOP 1 DefaultAssessmentSetId
+                    FROM QuizConfig
+                    WHERE TeacherId = '{lesson.CreatedBy}'
+                    AND   SchoolId  = '{schoolId}'
+                    AND   IsActive  = 1");
+
+				if (config?.DefaultAssessmentSetId is not null)
+				{
+					var set = await _assessmentSetQuery.Get($@"
+                        SELECT TOP 1 *
+                        FROM AssessmentSet
+                        WHERE Id = '{config.DefaultAssessmentSetId}' AND IsActive = 1");
+
+					if (set is not null)
+					{
+						_logger.Information("Lesson assessment config resolved from teacher default - LessonId: {LessonId}, SetId: {SetId}", lessonId, set.Id);
+						return OkConfig(set, "teacher-default");
+					}
+				}
+
+				// ── System defaults ──────────────────────────────────────────
+				_logger.Information("Lesson assessment config resolved from system defaults - LessonId: {LessonId}", lessonId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Assessment config retrieved (system defaults)",
+					Status = "successful",
+					Data = new ResolvedAssessmentConfigDto
+					{
+						AssessmentSetName = "System Default",
+						AllowRetakes = false,
+						MaxAttempts = 1,
+						PassMarkPercent = 50,
+						AutoSubmitOnTimeout = true,
+						ShuffleQuestions = false,
+						ShowResultMode = "Immediate",
+						ShowCorrectAnswers = false,
+						AllowBoardAnswer = true,
+						EasyMarks = 1,
+						MediumMarks = 2,
+						HardMarks = 3,
+						ExamLevelMarks = 5,
+						Source = "system-default"
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching lesson assessment config");
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred while fetching assessment config", Status = "failed" };
+			}
+		}
+	}
+
+	private BaseResponse OkConfig(AssessmentSet set, string source)
+	{
+		return new BaseResponse
+		{
+			ResponseCode = ResponseCode.successful,
+			ResponseMessage = "Assessment config retrieved",
+			Status = "successful",
+			Data = new ResolvedAssessmentConfigDto
+			{
+				AssessmentSetId = set.Id,
+				AssessmentSetName = set.Name,
+				AllowRetakes = set.AllowRetakes,
+				MaxAttempts = set.MaxAttempts,
+				PassMarkPercent = set.PassMarkPercent,
+				TimeLimitMinutes = set.TimeLimitMinutes,
+				AutoSubmitOnTimeout = set.AutoSubmitOnTimeout,
+				ShuffleQuestions = set.ShuffleQuestions,
+				ShowResultMode = set.ShowResultMode,
+				ShowCorrectAnswers = set.ShowCorrectAnswers,
+				AllowBoardAnswer = set.AllowBoardAnswer,
+				EasyMarks = set.EasyMarks,
+				MediumMarks = set.MediumMarks,
+				HardMarks = set.HardMarks,
+				ExamLevelMarks = set.ExamLevelMarks,
+				Source = source
+			}
+		};
+	}
+
 	// ═════════════════════════════════════════════════════════════════════════
 	// PRIVATE HELPERS
 	// ═════════════════════════════════════════════════════════════════════════

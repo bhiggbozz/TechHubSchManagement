@@ -13,6 +13,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
@@ -1192,7 +1193,7 @@ public class QuestionJobService : IQuestionJobService
 
 			var parameters = new MessageParameters
 			{
-				Model = "claude-sonnet-4-5",//AnthropicModels.Claude4Sonnet,
+				Model = AnthropicModels.Claude4Sonnet,
 				MaxTokens = 8192,
 				Messages = messages,
 				System = new List<SystemMessage>
@@ -1203,10 +1204,10 @@ public class QuestionJobService : IQuestionJobService
 
 			var response = await client.Messages.GetClaudeMessageAsync(parameters);
 
-			var rawJson = response.Content ?.OfType<TextContent>().FirstOrDefault()?.Text ?? string.Empty;
+			var rawJson = response.Content?.OfType<TextContent>().FirstOrDefault()?.Text ?? string.Empty;
 
-			// Strip markdown code fences if Claude wrapped in them
-			rawJson = rawJson.Replace("```json", "").Replace("```", "").Trim();
+			// Robust JSON extraction — handle markdown fences, preamble, trailing text
+			rawJson = ExtractJsonFromClaudeResponse(rawJson);
 
 			return ParseClaudeResponse(rawJson, questionType);
 		}
@@ -1219,6 +1220,46 @@ public class QuestionJobService : IQuestionJobService
 				ErrorMessage = $"Claude API error: {ex.Message}"
 			};
 		}
+	}
+
+	/// <summary>
+	/// Extracts the first JSON object or array from Claude's response.
+	/// Handles markdown fences, preamble text, and trailing explanations.
+	/// </summary>
+	private static string ExtractJsonFromClaudeResponse(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw))
+			return string.Empty;
+
+		// 1. Try to extract from markdown code fences first
+		var fencePattern = new Regex(@"```(?:json)?\s*([\s\S]*?)\s*```", RegexOptions.IgnoreCase);
+		var fenceMatch = fencePattern.Match(raw);
+		if (fenceMatch.Success)
+		{
+			var extracted = fenceMatch.Groups[1].Value.Trim();
+			if (!string.IsNullOrEmpty(extracted))
+				return extracted;
+		}
+
+		// 2. Find first { or [ and last matching } or ]
+		var firstBrace = raw.IndexOfAny(new[] { '{', '[' });
+		if (firstBrace >= 0)
+		{
+			char open = raw[firstBrace];
+			char close = open == '{' ? '}' : ']';
+			int depth = 0;
+			for (int i = firstBrace; i < raw.Length; i++)
+			{
+				if (raw[i] == open) depth++;
+				else if (raw[i] == close) depth--;
+
+				if (depth == 0)
+					return raw.Substring(firstBrace, i - firstBrace + 1);
+			}
+		}
+
+		// 3. Return as-is if nothing found
+		return raw.Trim();
 	}
 
 	// ═══════════════════════════════════════════════════════════
