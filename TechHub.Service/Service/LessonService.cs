@@ -1120,6 +1120,7 @@ public class LessonService : ILessonService
 					lc.AccessTime,
 					lc.DurationMinutes,
 					lc.AccessEndsAt,
+					lc.QuizCode       AS QuizCode,
 					s.Id          AS SubjectId,
 					s.Subject     AS SubjectName,
 					t.Id          AS TopicId,

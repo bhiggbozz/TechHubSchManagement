@@ -640,7 +640,9 @@ public class QuizService : IQuizService
                     q.MarksAllocation,
                     s.Subject         AS SubjectName,
                     t.Name            AS TopicName,
-                    qq.DisplayOrder
+                    qq.DisplayOrder,
+                    q.ImageUrl,
+                    q.SnapshotUrl     AS BoardSnapshotUrl
                 FROM   Quiz          qz
                 JOIN   QuizQuestion  qq ON qq.QuizId     = qz.Id
                 JOIN   Questions     q  ON q.Id          = qq.QuestionId
@@ -1016,7 +1018,9 @@ public class QuizService : IQuizService
                         q.MarksAllocation,
                         s.Subject         AS SubjectName,
                         t.Name            AS TopicName,
-                        qq.DisplayOrder
+                        qq.DisplayOrder,
+                        q.ImageUrl,
+                        q.SnapshotUrl     AS BoardSnapshotUrl
                     FROM   Quiz          qz
                     JOIN   QuizQuestion  qq ON qq.QuizId     = qz.Id
                     JOIN   Questions     q  ON q.Id          = qq.QuestionId
@@ -1198,21 +1202,38 @@ public class QuizService : IQuizService
 
 					lessonId = lesson.Id;
 
-					// ── Verify student enrollment ────────────────────────────────
-					var enrolled = await _quizQuery.QueryAsync<int>($@"
-                        SELECT TOP 1 1 FROM StudentClassroom
-                        WHERE StudentId   = '{studentId}'
-                        AND   ClassroomId = '{lesson.ClassroomId}'
-                        AND   SchoolId    = '{schoolId}'
-                        AND   IsActive    = 1", new Dictionary<string, object>());
-
-					if (!enrolled.Any())
-						return new BaseResponse
+					// ── Verify student enrollment (teachers/admins bypass) ────────
+					bool isTeacherOrAdmin = false;
+					if (Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
+					{
+						isTeacherOrAdmin = role switch
 						{
-							ResponseCode = ResponseCode.Forbidden,
-							ResponseMessage = "You are not enrolled in this class",
-							Status = "failed"
+							UserRole.Administrator or UserRole.SuperAdministrator
+								or UserRole.HeadTeacher or UserRole.SubjectTeacher
+								or UserRole.ClassTeacher => true,
+							_ => false
 						};
+					}
+
+					bool isLessonCreator = lesson.CreatedBy == studentId;
+
+					if (!isTeacherOrAdmin && !isLessonCreator)
+					{
+						var enrolled = await _quizQuery.QueryAsync<int>($@"
+                            SELECT TOP 1 1 FROM StudentClassroom
+                            WHERE StudentId   = '{studentId}'
+                            AND   ClassroomId = '{lesson.ClassroomId}'
+                            AND   SchoolId    = '{schoolId}'
+                            AND   IsActive    = 1", new Dictionary<string, object>());
+
+						if (!enrolled.Any())
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Forbidden,
+								ResponseMessage = "You are not enrolled in this class",
+								Status = "failed"
+							};
+					}
 
 					assessmentSet = await ResolveAssessmentSet(lesson.Id, schoolId);
 				}
@@ -1267,7 +1288,9 @@ public class QuizService : IQuizService
                         q.MarksAllocation,
                         s.Subject         AS SubjectName,
                         t.Name            AS TopicName,
-                        qq.DisplayOrder
+                        qq.DisplayOrder,
+                        q.ImageUrl,
+                        q.SnapshotUrl     AS BoardSnapshotUrl
                     FROM   Quiz          qz
                     JOIN   QuizQuestion  qq ON qq.QuizId     = qz.Id
                     JOIN   Questions     q  ON q.Id          = qq.QuestionId
@@ -1658,29 +1681,29 @@ public class QuizService : IQuizService
 					decimal maxMarks = ResolveDifficultyMarks(assessmentSet, q.DifficultyLevel, q.MarksAllocation);
 					totalMarks += maxMarks;
 
-					var answerDict = new Dictionary<string, object>
-					{
-						{ "Id", Guid.NewGuid() },
-						{ "AttemptId", attemptId },
-						{ "QuestionId", q.Id },
-						{ "SchoolId", schoolId },
-						{ "QuestionType", q.QuestionType },
-						{ "SelectedOptionId", (object?)submitted?.SelectedOptionId ?? DBNull.Value },
-						{ "IsCorrect", DBNull.Value },
-						{ "AutoMarksObtained", DBNull.Value },
-						{ "TypedAnswer", (object?)submitted?.TypedAnswer ?? DBNull.Value },
-						{ "BoardSessionId", (object?)submitted?.BoardSessionId ?? DBNull.Value },
-						{ "AudioUrl", (object?)submitted?.AudioUrl ?? DBNull.Value },
-						{ "ManualMarksObtained", DBNull.Value },
-						{ "TeacherFeedback", DBNull.Value },
-						{ "GradedBy", DBNull.Value },
-						{ "GradedAt", DBNull.Value },
-						{ "MaxMarks", maxMarks },
-						{ "TimeTakenMs", (object?)submitted?.TimeTakenMs ?? DBNull.Value },
-						{ "IsSkipped", isSkipped },
-						{ "CreationDate", now },
-						{ "ModifiedDate", now }
-					};
+				var answerDict = new Dictionary<string, object>
+				{
+					{ "Id", Guid.NewGuid() },
+					{ "AttemptId", attemptId },
+					{ "QuestionId", q.Id },
+					{ "SchoolId", schoolId },
+					{ "QuestionType", q.QuestionType },
+					{ "SelectedOptionId", submitted?.SelectedOptionId },
+					{ "IsCorrect", null },
+					{ "AutoMarksObtained", null },
+					{ "TypedAnswer", submitted?.TypedAnswer },
+					{ "BoardSessionId", submitted?.BoardSessionId },
+					{ "AudioUrl", submitted?.AudioUrl },
+					{ "ManualMarksObtained", null },
+					{ "TeacherFeedback", null },
+					{ "GradedBy", null },
+					{ "GradedAt", null },
+					{ "MaxMarks", maxMarks },
+					{ "TimeTakenMs", submitted?.TimeTakenMs },
+					{ "IsSkipped", isSkipped },
+					{ "CreationDate", now },
+					{ "ModifiedDate", now }
+				};
 
 					if (isSkipped)
 					{
@@ -1753,7 +1776,7 @@ public class QuizService : IQuizService
 				var updateDict = new Dictionary<string, object>
 				{
 					{ "SubmittedAt", now },
-					{ "TimeTakenSeconds", (object?)model.TimeTakenSeconds ?? DBNull.Value },
+					{ "TimeTakenSeconds", model.TimeTakenSeconds },
 					{ "TotalQuestions", questions.Count },
 					{ "TotalAutoGraded", totalAutoGraded },
 					{ "TotalManualGraded", totalManualGraded },
@@ -1763,8 +1786,8 @@ public class QuizService : IQuizService
 					{ "AutoMarksObtained", autoMarksObtained },
 					{ "ManualMarksObtained", 0m },
 					{ "TotalMarks", totalMarks },
-					{ "FinalScorePercent", (object?)finalScorePercent ?? DBNull.Value },
-					{ "IsPassed", (object?)isPassed ?? DBNull.Value },
+					{ "FinalScorePercent", finalScorePercent },
+					{ "IsPassed", isPassed },
 					{ "Status", finalStatus },
 					{ "ModifiedDate", now }
 				};
@@ -1776,8 +1799,11 @@ public class QuizService : IQuizService
 						await _answerCommand.CreateBatchAsync(scope.Transaction, scope.Connection, answerDicts);
 
 					await _attemptCommand.UpdateTableColumnById(
+						scope.Transaction,
+						scope.Connection,
 						updateDict,
-						new KeyValuePair<string, object>("Id", attemptId));
+						new KeyValuePair<string, object>("Id", attemptId),
+						DatabaseTarget.Core);
 
 					await scope.CommitAsync();
 				}
@@ -3042,6 +3068,283 @@ public class QuizService : IQuizService
 		};
 	}
 
+	public async Task<BaseResponse> GetQuizAttemptStatusByCode(string quizCode, AuthenticatedUserClaims claims)
+	{
+		using (LogContext.PushProperty("RequestedBy", claims.UserId))
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.UserId, out var studentId))
+					return Unauthorized();
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return Unauthorized();
+
+				// ── Find quiz by code ────────────────────────────────────────────
+				var quiz = await _quizQuery.Get($@"
+                    SELECT TOP 1 Id, AssessmentSetId
+                    FROM   Quiz
+                    WHERE  Code     = '{quizCode}'
+                    AND    SchoolId = '{schoolId}'
+                    AND    IsActive = 1");
+
+				if (quiz is null)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Quiz not found",
+						Status = "failed"
+					};
+
+				// ── Resolve assessment config ─────────────────────────────────────
+				AssessmentSet assessmentSet = null;
+
+				if (quiz.AssessmentSetId.HasValue)
+				{
+					assessmentSet = await _assessmentSetQuery.Get($@"
+                        SELECT TOP 1
+                            Id, Name, Label, TeacherId, SchoolId, AllowRetakes, MaxAttempts,
+                            PassMarkPercent, TimeLimitMinutes, AutoSubmitOnTimeout, ShuffleQuestions,
+                            ShowResultMode, ShowCorrectAnswers, AllowBoardAnswer,
+                            EasyMarks, MediumMarks, HardMarks, ExamLevelMarks,
+                            IsActive, CreationDate, ModifiedDate
+                        FROM AssessmentSet
+                        WHERE Id = '{quiz.AssessmentSetId}' AND IsActive = 1");
+				}
+				else
+				{
+					var lesson = await _lessonQuery.Get($@"
+                        SELECT TOP 1 Id, CreatedBy
+                        FROM LessonContent
+                        WHERE  QuizCode  = '{quizCode}'
+                        AND    SchoolId  = '{schoolId}'
+                        AND    Status    = '{LessonStatus.Published}'");
+
+					if (lesson != null)
+						assessmentSet = await ResolveAssessmentSet(lesson.Id, schoolId);
+				}
+
+				bool allowRetakes = assessmentSet?.AllowRetakes ?? false;
+				int maxAttempts = assessmentSet?.MaxAttempts ?? 1;
+
+				// ── Check for existing InProgress attempt ────────────────────────
+				var existingAttempt = await _attemptQuery.Get($@"
+                    SELECT TOP 1 Id, Status FROM QuizAttempt
+                    WHERE  QuizCode  = '{quizCode}'
+                    AND    StudentId = '{studentId}'
+                    AND    SchoolId  = '{schoolId}'
+                    AND    Status    = '{QuizAttemptStatus.InProgress}'
+                    ORDER  BY CreationDate DESC");
+
+				bool hasInProgress = existingAttempt != null;
+
+				// ── Count completed attempts ─────────────────────────────────────
+				var completedCountResult = await _quizQuery.QueryAsync<int>($@"
+                    SELECT COUNT(*) FROM QuizAttempt
+                    WHERE  QuizCode  = '{quizCode}'
+                    AND    StudentId = '{studentId}'
+                    AND    SchoolId  = '{schoolId}'
+                    AND    Status    IN ('{QuizAttemptStatus.Submitted}','{QuizAttemptStatus.PartiallyGraded}','{QuizAttemptStatus.FullyGraded}')",
+					new Dictionary<string, object>());
+
+				int completedAttempts = completedCountResult.FirstOrDefault();
+				bool maxReached = (!allowRetakes && completedAttempts >= 1)
+								  || completedAttempts >= maxAttempts;
+
+				_logger.Information(
+					"Quiz attempt status - QuizCode: {QuizCode}, StudentId: {StudentId}, " +
+					"Completed: {Completed}, MaxAttempts: {MaxAttempts}, AllowRetakes: {AllowRetakes}",
+					quizCode, studentId, completedAttempts, maxAttempts, allowRetakes);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Attempt status retrieved",
+					Status = "successful",
+					Data = new AttemptStatusDisplayDto
+					{
+						HasInProgressAttempt = hasInProgress,
+						InProgressAttemptId = existingAttempt?.Id,
+						CompletedAttempts = completedAttempts,
+						MaxAttemptsReached = maxReached,
+						CanStart = !maxReached && !hasInProgress
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching quiz attempt status - QuizCode: {QuizCode}", quizCode);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching attempt status",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
+	public async Task<BaseResponse> GetSubjectQuizzes(Guid subjectId, AuthenticatedUserClaims claims)
+	{
+		using (LogContext.PushProperty("RequestedBy", claims.UserId))
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.UserId, out var studentId))
+					return Unauthorized();
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return Unauthorized();
+
+				var lessons = await _quizQuery.QueryAsync<SubjectLessonDto>($@"
+                    SELECT
+                        lc.Id,
+                        lc.Aim           AS LessonTitle,
+                        lc.QuizCode,
+                        lc.CreatedBy
+                    FROM   LessonContent lc
+                    WHERE  lc.SubjectId  = '{subjectId}'
+                    AND    lc.SchoolId   = '{schoolId}'
+                    AND    lc.Status     = '{LessonStatus.Published}'
+                    AND    lc.QuizCode   IS NOT NULL",
+				new Dictionary<string, object>());
+
+				var lessonList = lessons?.ToList() ?? new List<SubjectLessonDto>();
+				var result = new List<SubjectQuizSummaryDto>();
+
+				foreach (var lesson in lessonList)
+				{
+					string quizCode = lesson.QuizCode;
+					Guid lessonId = lesson.Id;
+					string lessonTitle = lesson.LessonTitle;
+
+					var qCount = await _quizQuery.QueryAsync<QuestionCountDto>($@"
+                        SELECT
+                            COUNT(*)        AS Count,
+                            COALESCE(SUM(q.MarksAllocation), 0) AS TotalMarks
+                        FROM   Quiz          qz
+                        JOIN   QuizQuestion  qq ON qq.QuizId     = qz.Id
+                        JOIN   Questions     q  ON q.Id          = qq.QuestionId
+                        WHERE  qz.Code      = '{quizCode}'
+                        AND    qz.SchoolId  = '{schoolId}'
+                        AND    qq.IsActive  = 1
+                        AND    q.IsActive   = 1",
+						new Dictionary<string, object>());
+
+					var qc = qCount.FirstOrDefault();
+					int totalQuestions = qc?.Count ?? 0;
+					decimal totalMarks = qc?.TotalMarks ?? 0;
+
+					AssessmentSet assessmentSet = null;
+
+					var quiz = await _quizQuery.Get($@"
+                        SELECT TOP 1 Id, AssessmentSetId
+                        FROM   Quiz
+                        WHERE  Code     = '{quizCode}'
+                        AND    SchoolId = '{schoolId}'
+                        AND    IsActive = 1");
+
+					if (quiz?.AssessmentSetId != null)
+					{
+						assessmentSet = await _assessmentSetQuery.Get($@"
+                            SELECT TOP 1
+                                Id, Name, Label, TeacherId, SchoolId, AllowRetakes, MaxAttempts,
+                                PassMarkPercent, TimeLimitMinutes, AutoSubmitOnTimeout, ShuffleQuestions,
+                                ShowResultMode, ShowCorrectAnswers, AllowBoardAnswer,
+                                EasyMarks, MediumMarks, HardMarks, ExamLevelMarks,
+                                IsActive, CreationDate, ModifiedDate
+                            FROM AssessmentSet
+                            WHERE Id = '{quiz.AssessmentSetId}' AND IsActive = 1");
+					}
+					else
+					{
+						assessmentSet = await ResolveAssessmentSet(lessonId, schoolId);
+					}
+
+					bool allowRetakes = assessmentSet?.AllowRetakes ?? false;
+					int maxAttempts = assessmentSet?.MaxAttempts ?? 1;
+
+					var existingAttempt = await _attemptQuery.Get($@"
+                        SELECT TOP 1 Id FROM QuizAttempt
+                        WHERE  QuizCode  = '{quizCode}'
+                        AND    StudentId = '{studentId}'
+                        AND    SchoolId  = '{schoolId}'
+                        AND    Status    = '{QuizAttemptStatus.InProgress}'
+                        ORDER  BY CreationDate DESC");
+
+					bool hasInProgress = existingAttempt != null;
+
+				var completedAgg = await _quizQuery.QueryAsync<CompletedAggDto>($@"
+                        SELECT
+                            COUNT(*) AS CompletedCount,
+                            MAX(FinalScorePercent) AS BestScore,
+                            MAX(CAST(IsPassed AS INT)) AS BestPassed
+                        FROM QuizAttempt
+                        WHERE  QuizCode  = '{quizCode}'
+                        AND    StudentId = '{studentId}'
+                        AND    SchoolId  = '{schoolId}'
+                        AND    Status    IN ('{QuizAttemptStatus.Submitted}','{QuizAttemptStatus.PartiallyGraded}','{QuizAttemptStatus.FullyGraded}')",
+					new Dictionary<string, object>());
+
+				var agg = completedAgg?.FirstOrDefault();
+					int completedAttempts = agg?.CompletedCount ?? 0;
+					bool maxReached = (!allowRetakes && completedAttempts >= 1)
+									  || completedAttempts >= maxAttempts;
+
+					result.Add(new SubjectQuizSummaryDto
+					{
+						QuizCode = quizCode,
+						LessonTitle = lessonTitle,
+						TotalQuestions = totalQuestions,
+						TotalMarks = totalMarks,
+						Config = new QuizSettingsDisplayDto
+						{
+							AllowRetakes = allowRetakes,
+							MaxAttempts = maxAttempts,
+							PassMarkPercent = assessmentSet?.PassMarkPercent ?? 50,
+							TimeLimitMinutes = assessmentSet?.TimeLimitMinutes,
+							AutoSubmitOnTimeout = assessmentSet?.AutoSubmitOnTimeout ?? true,
+							ShuffleQuestions = assessmentSet?.ShuffleQuestions ?? false,
+							ShowResultMode = assessmentSet?.ShowResultMode ?? "Immediate",
+							ShowCorrectAnswers = assessmentSet?.ShowCorrectAnswers ?? false,
+							AllowBoardAnswer = assessmentSet?.AllowBoardAnswer ?? true,
+							EasyMarks = assessmentSet?.EasyMarks ?? 1,
+							MediumMarks = assessmentSet?.MediumMarks ?? 2,
+							HardMarks = assessmentSet?.HardMarks ?? 3,
+							ExamLevelMarks = assessmentSet?.ExamLevelMarks ?? 5
+						},
+						AttemptStatus = new AttemptStatusDisplayDto
+						{
+							HasInProgressAttempt = hasInProgress,
+							InProgressAttemptId = existingAttempt?.Id,
+							CompletedAttempts = completedAttempts,
+							MaxAttemptsReached = maxReached,
+							CanStart = !maxReached && !hasInProgress
+						},
+						BestScorePercent = agg?.BestScore,
+						BestIsPassed = agg?.BestPassed > 0
+					});
+				}
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = $"{result.Count} quiz(zes) found",
+					Status = "successful",
+					Data = result
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching subject quizzes - SubjectId: {SubjectId}", subjectId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching quizzes",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
 	// ═════════════════════════════════════════════════════════════════════════
 	// PRIVATE HELPERS
 	// ═════════════════════════════════════════════════════════════════════════
@@ -3100,6 +3403,27 @@ public class QuizService : IQuizService
 	private class QuestionCorrectAnswerDto
 	{
 		public string CorrectAnswer { get; set; } = string.Empty;
+	}
+
+	private class QuestionCountDto
+	{
+		public int Count { get; set; }
+		public decimal TotalMarks { get; set; }
+	}
+
+	private class CompletedAggDto
+	{
+		public int CompletedCount { get; set; }
+		public decimal? BestScore { get; set; }
+		public int BestPassed { get; set; }
+	}
+
+	private class SubjectLessonDto
+	{
+		public Guid Id { get; set; }
+		public string LessonTitle { get; set; } = string.Empty;
+		public string QuizCode { get; set; } = string.Empty;
+		public Guid CreatedBy { get; set; }
 	}
 
 	public static class QuizCodeGenerator

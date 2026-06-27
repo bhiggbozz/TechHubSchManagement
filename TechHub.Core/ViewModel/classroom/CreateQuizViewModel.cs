@@ -59,6 +59,8 @@ public class QuizQuestionDto
 	public string SubjectName { get; set; }
 	public string TopicName { get; set; }
 	public int DisplayOrder { get; set; }
+	public string? ImageUrl { get; set; }
+	public string? BoardSnapshotUrl { get; set; }
 }
 
 // ── Quiz Config ────────────────────────────────────────────────────────────
@@ -170,6 +172,18 @@ public class StudentQuizDisplayDto
 	public decimal TotalMarks { get; set; }
 }
 
+public class SubjectQuizSummaryDto
+{
+	public string QuizCode { get; set; } = string.Empty;
+	public string LessonTitle { get; set; } = string.Empty;
+	public int TotalQuestions { get; set; }
+	public decimal TotalMarks { get; set; }
+	public QuizSettingsDisplayDto Config { get; set; } = new();
+	public AttemptStatusDisplayDto AttemptStatus { get; set; } = new();
+	public decimal? BestScorePercent { get; set; }
+	public bool? BestIsPassed { get; set; }
+}
+
 public class QuizSettingsDisplayDto
 {
 	public bool AllowRetakes { get; set; }
@@ -211,6 +225,8 @@ public class StudentQuizQuestionDto
 	public string SubjectName { get; set; } = string.Empty;
 	public string TopicName { get; set; } = string.Empty;
 	public List<QuizOptionDto> Options { get; set; } = new();
+	public string? ImageUrl { get; set; }
+	public string? BoardSnapshotUrl { get; set; }
 }
 
 // ── Grading (teacher) ──────────────────────────────────────────────────────
