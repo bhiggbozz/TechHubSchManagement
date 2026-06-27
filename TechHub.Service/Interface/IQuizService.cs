@@ -26,6 +26,8 @@ public interface IQuizService
 	Task<BaseResponse> StartQuizAttempt(StartQuizViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> SubmitQuizAttempt(Guid attemptId, SubmitQuizViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetQuizResult(Guid attemptId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetQuizAttemptStatusByCode(string quizCode, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetSubjectQuizzes(Guid subjectId, AuthenticatedUserClaims claims);
 
 	// ── Assessments ──────────────────────────────────────────────────────────
 	Task<BaseResponse> CreateAssessment(CreateAssessmentViewModel model, AuthenticatedUserClaims claims);

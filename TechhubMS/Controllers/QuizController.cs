@@ -74,6 +74,15 @@ public class QuizController : ControllerBase
 	// QUIZ CONFIG
 	// ═══════════════════════════════════════════════════════════════════════
 
+	[HttpGet("subject/{subjectId}")]
+	[Authorize]
+	public async Task<IActionResult> GetSubjectQuizzes(Guid subjectId)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetSubjectQuizzes(subjectId, claims);
+		return MapResponse(response);
+	}
+
 	[HttpPost("config")]
 	[Authorize]
 	public async Task<IActionResult> SaveQuizConfig([FromBody] QuizConfigViewModel model)
@@ -111,6 +120,15 @@ public class QuizController : ControllerBase
 	{
 		var claims = GetUserClaims();
 		var response = await _quizService.GetStudentQuizDisplayByCode(quizCode, claims);
+		return MapResponse(response);
+	}
+
+	[HttpGet("code/{quizCode}/attempt-status")]
+	[Authorize]
+	public async Task<IActionResult> GetQuizAttemptStatusByCode(string quizCode)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetQuizAttemptStatusByCode(quizCode, claims);
 		return MapResponse(response);
 	}
 

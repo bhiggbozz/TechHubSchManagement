@@ -27,6 +27,7 @@ public class AdminLessonItemDto
 	public string TeacherName { get; set; }
 	public string? ApprovedByName { get; set; }
 	public int MediaCount { get; set; }
+	public string? QuizCode { get; set; }
 	public DateTime? AccessDate { get; set; }  
 	public TimeSpan? AccessTime { get; set; }  
 	public int? DurationMinutes { get; set; }  

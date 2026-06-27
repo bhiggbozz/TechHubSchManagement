@@ -18,6 +18,7 @@ public class BoardSyncWorker : BackgroundService
     private readonly ILogger _logger;
     private IConnection? _connection;
     private IModel? _channel;
+    private readonly object _lock = new();
 
     public BoardSyncWorker(IOptions<RabbitMQSettings> settings, IBoardSessionRepository repository, ILogger logger)
     {
@@ -32,55 +33,62 @@ public class BoardSyncWorker : BackgroundService
         {
 			_logger.Information("BoardSyncWorker starting...");
 
-			//await Task.Yield();
-
 			try
 			{
 				InitializeRabbitMQ();
 				await ConsumeMessages(stoppingToken);
-               // break;
+			}
+			catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+			{
+				break;
 			}
 			catch (Exception ex)
 			{
-				_logger.Fatal(ex, "BoardSyncWorker encountered a fatal error");
+				_logger.Error(ex, "BoardSyncWorker encountered an error, reconnecting in 10s");
+				Cleanup();
 				await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
-				//throw;
 			}
 		}
-			
+    }
+
+    private void Cleanup()
+    {
+        lock (_lock)
+        {
+            try { _channel?.Close(); } catch { }
+            try { _channel?.Dispose(); } catch { }
+            try { _connection?.Close(); } catch { }
+            try { _connection?.Dispose(); } catch { }
+            _channel = null;
+            _connection = null;
+        }
     }
 
     private void InitializeRabbitMQ()
     {
-		//var factory = new ConnectionFactory
-		//{
-		//    HostName = _settings.Host,
-		//    Port = _settings.Port,
-		//    UserName = _settings.Username,
-		//    Password = _settings.Password,
-		//    AutomaticRecoveryEnabled = true,
-		//    NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
-		//    DispatchConsumersAsync = true
-		//};
+        Cleanup();
 
 		var factory = new ConnectionFactory
 		{
 			Uri = new Uri(_settings.AmqpUrl),
 			AutomaticRecoveryEnabled = true,
-			DispatchConsumersAsync = true  // ← required for AsyncEventingBasicConsumer
+			DispatchConsumersAsync = true
 		};
 
-		_connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
+        lock (_lock)
+        {
+            _connection = factory.CreateConnection();
+            _channel = _connection.CreateModel();
 
-        _channel.QueueDeclare(
-            queue: _settings.BoardBatchQueue,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            arguments: null);
+            _channel.QueueDeclare(
+                queue: _settings.BoardBatchQueue,
+                durable: true,
+                exclusive: false,
+                autoDelete: false,
+                arguments: null);
 
-        _channel.BasicQos(prefetchSize: 0, prefetchCount: 10, global: false);
+            _channel.BasicQos(prefetchSize: 0, prefetchCount: 10, global: false);
+        }
 
         _logger.Information(
             "BoardSyncWorker connected to RabbitMQ, Queue: {Queue}",
@@ -89,10 +97,20 @@ public class BoardSyncWorker : BackgroundService
 
     private async Task ConsumeMessages(CancellationToken stoppingToken)
     {
-        var consumer = new AsyncEventingBasicConsumer(_channel);
+        IModel? channel;
+        lock (_lock) { channel = _channel; }
+
+        if (channel is null)
+            throw new InvalidOperationException("Channel not initialized");
+
+        var consumer = new AsyncEventingBasicConsumer(channel);
 
         consumer.Received += async (model, ea) =>
         {
+            IModel? ch;
+            lock (_lock) { ch = _channel; }
+            if (ch is null) return;
+
             var body = ea.Body.ToArray();
             var messageJson = Encoding.UTF8.GetString(body);
 
@@ -103,7 +121,7 @@ public class BoardSyncWorker : BackgroundService
                 if (message == null)
                 {
                     _logger.Warning("Received null message, acknowledging and skipping");
-                    _channel.BasicAck(ea.DeliveryTag, multiple: false);
+                    ch.BasicAck(ea.DeliveryTag, multiple: false);
                     return;
                 }
 
@@ -121,13 +139,13 @@ public class BoardSyncWorker : BackgroundService
                         message.SessionId,
                         message.BatchIndex);
 
-                    _channel.BasicAck(ea.DeliveryTag, multiple: false);
+                    ch.BasicAck(ea.DeliveryTag, multiple: false);
                     return;
                 }
 
                 await _repository.SaveBatchAsync(message);
 
-                _channel.BasicAck(ea.DeliveryTag, multiple: false);
+                ch.BasicAck(ea.DeliveryTag, multiple: false);
 
                 _logger.Information(
                     "Successfully processed batch {BatchIndex} for session {SessionId}",
@@ -137,36 +155,28 @@ public class BoardSyncWorker : BackgroundService
             catch (JsonException jsonEx)
             {
                 _logger.Error(jsonEx, "Failed to deserialize message, acknowledging to prevent requeue loop");
-                _channel.BasicAck(ea.DeliveryTag, multiple: false);
+                try { ch.BasicAck(ea.DeliveryTag, multiple: false); } catch { }
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Error processing message, nacking with requeue");
-                _channel.BasicNack(ea.DeliveryTag, multiple: false, requeue: true);
+                try { ch.BasicNack(ea.DeliveryTag, multiple: false, requeue: true); } catch { }
             }
         };
 
-        _channel.BasicConsume(
+        channel.BasicConsume(
             queue: _settings.BoardBatchQueue,
             autoAck: false,
             consumer: consumer);
 
         _logger.Information("BoardSyncWorker is now consuming messages");
 
-        stoppingToken.Register(() =>
-        {
-            _logger.Information("BoardSyncWorker stopping...");
-            _channel?.Close();
-            _connection?.Close();
-        });
-
-		await Task.Delay(Timeout.Infinite, stoppingToken);
+        await Task.Delay(Timeout.Infinite, stoppingToken);
 	}
 
 	public override void Dispose()
     {
-        _channel?.Dispose();
-        _connection?.Dispose();
+        Cleanup();
         base.Dispose();
     }
 }

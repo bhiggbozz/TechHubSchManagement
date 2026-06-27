@@ -294,9 +294,9 @@ public class QuestionService : IQuestionService
 				{
 					await _questionCommandRepo.Create(scope.Transaction, scope.Connection, question);
 
-					if (model.QuestionType == QuestionType.MultipleChoice && model.Options?.Any() == true)
-					{
-						foreach (var optionModel in model.Options)
+				if (model.Options?.Any() == true)
+				{
+					foreach (var optionModel in model.Options)
 						{
 							var option = new QuestionOptions
 							{
@@ -488,7 +488,7 @@ public class QuestionService : IQuestionService
 	///    - Apply changes to question fields
 	///    - Update ModifiedDate
 	///
-	/// 8. UPDATE OPTIONS (MCQ only)
+	/// 8. UPDATE OPTIONS
 	///    - Delete existing options
 	///    - Insert fresh options
 	///    - Simplest approach — avoids partial update bugs
@@ -812,7 +812,7 @@ public class QuestionService : IQuestionService
 				// Insert fresh set from the update model
 				// Avoids partial update bugs and ordering issues
 
-				if (model.QuestionType == QuestionType.MultipleChoice && model.Options != null && model.Options.Any())
+				if (model.Options != null && model.Options.Any())
 				{
 					// Delete existing options
 					//var deleteQuery = $@"
