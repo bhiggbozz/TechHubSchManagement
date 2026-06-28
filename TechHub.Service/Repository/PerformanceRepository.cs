@@ -51,6 +51,12 @@ public class PerformanceRepository : IPerformanceRepository
             Builders<PerformanceSnapshot>.Filter.Eq(s => s.StudentId, snapshot.StudentId)
         );
 
+        var existing = await _collection.Find(filter).FirstOrDefaultAsync();
+        if (existing != null)
+        {
+            snapshot.Id = existing.Id;
+        }
+
         var options = new ReplaceOptions { IsUpsert = true };
         await _collection.ReplaceOneAsync(filter, snapshot, options);
     }
