@@ -1062,36 +1062,36 @@ public class QuizService : IQuizService
 						_ => "Unknown"
 					};
 
-					if (q.QuestionType == 1) // MultipleChoice
-					{
-						var optSql = $@"
-                            SELECT
-                                Id          AS OptionId,
-                                OptionLabel,
-                                OptionText
-                            FROM QuestionOptions
-                            WHERE QuestionId = '{q.QuestionId}'
-                            AND   IsActive   = 1
-                            AND   IsDeleted  = 0
-                            ORDER BY OrderIndex ASC";
-						var opts = await _quizQuery.QueryAsync<QuizOptionDto>(optSql, new Dictionary<string, object>());
-						q.Options = opts.ToList();
-					}
-				}
-
-				if (shuffle)
-					questionList = ShuffleList(questionList);
-
-				_logger.Information(
-					"Student quiz display - LessonId: {LessonId}, StudentId: {StudentId}, Questions: {Count}",
-					lessonId, studentId, questionList.Count);
-
-				return new BaseResponse
+				if (q.QuestionType == 1 || q.QuestionType == 4 || q.QuestionType == 6 || q.QuestionType == 7)
 				{
-					ResponseCode = ResponseCode.successful,
-					ResponseMessage = "Quiz ready",
-					Status = "successful",
-					Data = new StudentQuizDisplayDto
+					var optSql = $@"
+                        SELECT
+                            Id          AS OptionId,
+                            OptionLabel,
+                            OptionText
+                        FROM QuestionOptions
+                        WHERE QuestionId = '{q.QuestionId}'
+                        AND   IsActive   = 1
+                        AND   IsDeleted  = 0
+                        ORDER BY OrderIndex ASC";
+					var opts = await _quizQuery.QueryAsync<QuizOptionDto>(optSql, new Dictionary<string, object>());
+					q.Options = opts.ToList();
+				}
+			}
+
+			if (shuffle)
+				questionList = ShuffleList(questionList);
+
+			_logger.Information(
+				"Student quiz display - LessonId: {LessonId}, StudentId: {StudentId}, Questions: {Count}",
+				lessonId, studentId, questionList.Count);
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = "Quiz ready",
+				Status = "successful",
+				Data = new StudentQuizDisplayDto
 					{
 						LessonId = lessonId,
 						QuizCode = lesson.QuizCode,
@@ -1331,7 +1331,7 @@ public class QuizService : IQuizService
 						_ => "Unknown"
 					};
 
-					if (q.QuestionType == 1) // MultipleChoice
+					if (q.QuestionType == 1 || q.QuestionType == 4 || q.QuestionType == 6 || q.QuestionType == 7)
 					{
 						var optSql = $@"
                             SELECT
@@ -2465,7 +2465,7 @@ public class QuizService : IQuizService
 
 		foreach (var q in questions)
 		{
-			if (q.QuestionType == 1) // MultipleChoice
+			if (q.QuestionType == 1 || q.QuestionType == 4 || q.QuestionType == 6 || q.QuestionType == 7)
 			{
 				var optSql = $@"
                     SELECT

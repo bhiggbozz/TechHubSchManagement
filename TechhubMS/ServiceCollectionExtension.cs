@@ -13,6 +13,7 @@ using TechHub.Core.Entities;
 using TechHub.Core.Utilities;
 using TechHub.QuestionBank.Services;
 using TechHub.Service.Interface;
+using TechHub.Service.Repository;
 using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
 using TechHub.Service.util;
@@ -60,6 +61,9 @@ namespace TechhubMS
 
 			services.AddScoped<IEmailService, EmailService>();
 			services.AddScoped<ILessonService, LessonService>();
+			services.AddScoped<IPerformanceAggregationService, PerformanceAggregationService>();
+			services.AddScoped<IPerformanceDashboardService, PerformanceDashboardService>();
+			services.AddSingleton<IPerformanceRepository, PerformanceRepository>();
 			//services.AddScoped<IRefreshTokenService, RefreshTokenService>();
 
 

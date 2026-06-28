@@ -105,6 +105,7 @@ try
 	builder.Services.Configure<CloudinarySettings>(
 	builder.Configuration.GetSection("Cloudinary"));
 	builder.Services.AddHostedService<QuestionJobWorker>();
+	builder.Services.AddHostedService<PerformanceAggregationWorker>();
 
 	// Multi-tenant services
 	builder.Services.AddMultiTenantServices(builder.Configuration);
