@@ -15,6 +15,9 @@ public class PerformanceSnapshot
     public string? ClassroomName { get; set; }
     public Guid? SubjectId { get; set; }
     public string? SubjectName { get; set; }
+    public Guid? TopicId { get; set; }
+    public string? TopicName { get; set; }
+    public string? SubTopicName { get; set; }
     public Guid? TeacherId { get; set; }
     public string? TeacherName { get; set; }
     public Guid? StudentId { get; set; }
@@ -25,6 +28,7 @@ public class PerformanceSnapshot
     public int InProgressAttempts { get; set; }
     public int PartiallyGradedAttempts { get; set; }
     public decimal AverageScorePercent { get; set; }
+    public decimal TotalScoreSum { get; set; }
     public decimal PassRate { get; set; }
     public int StudentCount { get; set; }
     public decimal TotalMarksSum { get; set; }

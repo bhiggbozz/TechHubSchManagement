@@ -35,6 +35,7 @@ public interface IQuizService
 
 	// ── Grading (teacher) ────────────────────────────────────────────────────
 	Task<BaseResponse> GetPendingGrades(AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetGradingDetailAsync(AuthenticatedUserClaims claims);
 	Task<BaseResponse> GradeAnswer(Guid answerId, GradeAnswerViewModel model, AuthenticatedUserClaims claims);
 
 	// ── Analytics ─────────────────────────────────────────────────────────────

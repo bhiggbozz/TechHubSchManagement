@@ -54,6 +54,9 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> UpdateStudentMinorSubjects(Guid studentId, UpdateStudentMinorSubjectViewModel model, AuthenticatedUserClaims claims);
 
 		Task<BaseResponse> UpdateStudentAssignment(Guid studentId, UpdateStudentAssignmentViewModel model, AuthenticatedUserClaims claims);
+		Task<BaseResponse> GetStudentsByClassroom(Guid classroomId, AuthenticatedUserClaims claims);
+		Task<BaseResponse> GetStudentsBySubject(Guid subjectId, AuthenticatedUserClaims claims);
+		Task<BaseResponse> GetTeacherStudents(AuthenticatedUserClaims claims);
 	}
 		
 }

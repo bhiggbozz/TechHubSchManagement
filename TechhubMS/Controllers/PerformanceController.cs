@@ -56,6 +56,22 @@ public class PerformanceController : ControllerBase
         return MapResponse(response);
     }
 
+    [HttpGet("subject/{subjectId}/classrooms")]
+    public async Task<IActionResult> GetSubjectClassrooms(Guid subjectId)
+    {
+        var claims = GetUserClaims();
+        var response = await _dashboardService.GetSubjectClassroomsAsync(subjectId, claims);
+        return MapResponse(response);
+    }
+
+    [HttpGet("subject/{subjectId}/topics")]
+    public async Task<IActionResult> GetSubjectTopics(Guid subjectId)
+    {
+        var claims = GetUserClaims();
+        var response = await _dashboardService.GetSubjectTopicsAsync(subjectId, claims);
+        return MapResponse(response);
+    }
+
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh()
     {

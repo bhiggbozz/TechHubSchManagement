@@ -63,6 +63,7 @@ namespace TechhubMS
 			services.AddScoped<ILessonService, LessonService>();
 			services.AddScoped<IPerformanceAggregationService, PerformanceAggregationService>();
 			services.AddScoped<IPerformanceDashboardService, PerformanceDashboardService>();
+			services.AddScoped<IPerformanceIncrementalService, PerformanceIncrementalService>();
 			services.AddSingleton<IPerformanceRepository, PerformanceRepository>();
 			//services.AddScoped<IRefreshTokenService, RefreshTokenService>();
 
