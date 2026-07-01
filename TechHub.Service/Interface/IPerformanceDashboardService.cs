@@ -10,4 +10,6 @@ public interface IPerformanceDashboardService
     Task<BaseResponse> GetDashboardAsync(AuthenticatedUserClaims claims);
     Task<BaseResponse> GetClassroomDetailAsync(Guid classroomId, AuthenticatedUserClaims claims);
     Task<BaseResponse> GetSubjectDetailAsync(Guid subjectId, AuthenticatedUserClaims claims);
+    Task<BaseResponse> GetSubjectClassroomsAsync(Guid subjectId, AuthenticatedUserClaims claims);
+    Task<BaseResponse> GetSubjectTopicsAsync(Guid subjectId, AuthenticatedUserClaims claims);
 }

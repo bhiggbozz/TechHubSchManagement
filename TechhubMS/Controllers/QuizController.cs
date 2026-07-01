@@ -174,6 +174,15 @@ public class QuizController : ControllerBase
 		return MapResponse(response);
 	}
 
+	[HttpGet("grading/detail")]
+	[Authorize]
+	public async Task<IActionResult> GetGradingDetail()
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetGradingDetailAsync(claims);
+		return MapResponse(response);
+	}
+
 	[HttpPost("grading/{answerId}/grade")]
 	[Authorize]
 	public async Task<IActionResult> GradeAnswer(

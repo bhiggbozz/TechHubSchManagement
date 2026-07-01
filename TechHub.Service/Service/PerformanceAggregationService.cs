@@ -58,7 +58,6 @@ public class PerformanceAggregationService : IPerformanceAggregationService
         var nowStr = now.ToString("yyyy-MM-dd HH:mm:ss");
         var logId = Guid.NewGuid();
 
-        // ── Create log entry (non-critical — skip if table missing) ──────
         var logged = await TryCreateLog(logId, schoolId, nowStr);
 
         try
@@ -75,6 +74,8 @@ public class PerformanceAggregationService : IPerformanceAggregationService
             var snapshots = new List<PerformanceSnapshot>();
 
             snapshots.AddRange(AggregateByClassroomSubject(rows, now));
+            snapshots.AddRange(AggregateByClassroomSubjectTopic(rows, now));
+            snapshots.AddRange(AggregateByClassroomSubjectSubTopic(rows, now));
             snapshots.AddRange(AggregateByStudent(rows, now));
             snapshots.AddRange(AggregateByTeacher(rows, now));
             snapshots.Add(AggregateSchool(rows, schoolId, now));
@@ -179,6 +180,9 @@ public class PerformanceAggregationService : IPerformanceAggregationService
                 ISNULL(c.Name, 'Unknown')    AS ClassroomName,
                 lc.SubjectId,
                 ISNULL(s.Subject, 'Unknown') AS SubjectName,
+                lc.TopicId,
+                ISNULL(t.Name, 'Unknown')    AS TopicName,
+                ISNULL(lc.SubTopic, '')      AS SubTopicName,
                 lc.CreatedBy                 AS TeacherId,
                 ISNULL(CONCAT(tchr.FirstName, ' ', tchr.LastName), 'Unknown')
                                              AS TeacherName,
@@ -202,6 +206,7 @@ public class PerformanceAggregationService : IPerformanceAggregationService
             JOIN LessonContent        lc  WITH(NOLOCK) ON lc.Id  = qa.LessonId
             JOIN Classroom            c   WITH(NOLOCK) ON c.Id   = lc.ClassroomId
             LEFT JOIN Subjects        s   WITH(NOLOCK) ON s.Id   = lc.SubjectId
+            LEFT JOIN Topic           t   WITH(NOLOCK) ON t.Id   = lc.TopicId
             LEFT JOIN Users           tchr  WITH(NOLOCK) ON tchr.Id  = lc.CreatedBy
             LEFT JOIN Users           stud  WITH(NOLOCK) ON stud.Id  = qa.StudentId
             WHERE qa.SchoolId = '{schoolId}'
@@ -222,8 +227,8 @@ public class PerformanceAggregationService : IPerformanceAggregationService
         {
             var completed = g.Where(r => r.Status != "InProgress").ToList();
             var passed = completed.Count(r => r.IsPassed == true);
-            var scores = completed.Where(r => r.FinalScorePercent.HasValue)
-                                  .Select(r => r.FinalScorePercent!.Value).ToList();
+            var completedWithScore = completed.Where(r => r.FinalScorePercent.HasValue).ToList();
+            var scores = completedWithScore.Select(r => r.FinalScorePercent!.Value).ToList();
             var avgTime = completed.Where(r => r.TimeTakenSeconds.HasValue)
                                    .Select(r => (double)r.TimeTakenSeconds!.Value).ToList();
 
@@ -260,6 +265,7 @@ public class PerformanceAggregationService : IPerformanceAggregationService
                 InProgressAttempts = g.Count(r => r.Status == "InProgress"),
                 PartiallyGradedAttempts = g.Count(r => r.Status == "PartiallyGraded"),
                 AverageScorePercent = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+                TotalScoreSum = scores.Sum(),
                 PassRate = completed.Any() ? Math.Round((decimal)passed / completed.Count * 100, 1) : 0m,
                 StudentCount = g.Select(r => r.StudentId).Distinct().Count(),
                 TotalMarksSum = completed.Sum(r => r.TotalMarks),
@@ -276,6 +282,115 @@ public class PerformanceAggregationService : IPerformanceAggregationService
         return snapshots;
     }
 
+    private List<PerformanceSnapshot> AggregateByClassroomSubjectTopic(List<AttemptRawRow> rows, DateTime now)
+    {
+        var groups = rows
+            .Where(r => r.ClassroomId != Guid.Empty && r.SubjectId != Guid.Empty && r.TopicId != Guid.Empty)
+            .GroupBy(r => new
+            {
+                r.ClassroomId,
+                r.ClassroomName,
+                r.SubjectId,
+                r.SubjectName,
+                r.TopicId,
+                r.TopicName
+            });
+
+        var snapshots = new List<PerformanceSnapshot>();
+
+        foreach (var g in groups)
+        {
+            var completed = g.Where(r => r.Status != "InProgress").ToList();
+            var passed = completed.Count(r => r.IsPassed == true);
+            var completedWithScore = completed.Where(r => r.FinalScorePercent.HasValue).ToList();
+            var scores = completedWithScore.Select(r => r.FinalScorePercent!.Value).ToList();
+            var avgTime = completed.Where(r => r.TimeTakenSeconds.HasValue)
+                                   .Select(r => (double)r.TimeTakenSeconds!.Value).ToList();
+
+            snapshots.Add(new PerformanceSnapshot
+            {
+                DocType = "classroom_subject_topic",
+                SchoolId = g.First().SchoolId,
+                ClassroomId = g.Key.ClassroomId,
+                ClassroomName = g.Key.ClassroomName,
+                SubjectId = g.Key.SubjectId,
+                SubjectName = g.Key.SubjectName,
+                TopicId = g.Key.TopicId,
+                TopicName = g.Key.TopicName,
+                TotalAttempts = g.Count(),
+                CompletedAttempts = completed.Count,
+                InProgressAttempts = g.Count(r => r.Status == "InProgress"),
+                PartiallyGradedAttempts = g.Count(r => r.Status == "PartiallyGraded"),
+                AverageScorePercent = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+                TotalScoreSum = scores.Sum(),
+                PassRate = completed.Any() ? Math.Round((decimal)passed / completed.Count * 100, 1) : 0m,
+                StudentCount = g.Select(r => r.StudentId).Distinct().Count(),
+                TotalMarksSum = completed.Sum(r => r.TotalMarks),
+                ObtainedMarksSum = completed.Sum(r => r.ObtainedMarks),
+                AverageTimeTakenSeconds = avgTime.Any() ? Math.Round(avgTime.Average(), 0) : null,
+                LastActivityDate = completed.Any() && completed.Max(r => r.SubmittedAtParsed).HasValue
+                    ? completed.Max(r => r.SubmittedAtParsed)!.Value
+                    : now,
+                ComputedAt = now
+            });
+        }
+
+        return snapshots;
+    }
+
+    private List<PerformanceSnapshot> AggregateByClassroomSubjectSubTopic(List<AttemptRawRow> rows, DateTime now)
+    {
+        var groups = rows
+            .Where(r => r.ClassroomId != Guid.Empty && r.SubjectId != Guid.Empty && r.TopicId != Guid.Empty
+                        && !string.IsNullOrEmpty(r.SubTopicName))
+            .GroupBy(r => new
+            {
+                r.ClassroomId,
+                r.ClassroomName,
+                r.SubjectId,
+                r.SubjectName,
+                r.TopicId,
+                r.TopicName,
+                r.SubTopicName
+            });
+
+        var snapshots = new List<PerformanceSnapshot>();
+
+        foreach (var g in groups)
+        {
+            var completed = g.Where(r => r.Status != "InProgress").ToList();
+            var passed = completed.Count(r => r.IsPassed == true);
+            var completedWithScore = completed.Where(r => r.FinalScorePercent.HasValue).ToList();
+            var scores = completedWithScore.Select(r => r.FinalScorePercent!.Value).ToList();
+
+            snapshots.Add(new PerformanceSnapshot
+            {
+                DocType = "classroom_subject_subtopic",
+                SchoolId = g.First().SchoolId,
+                ClassroomId = g.Key.ClassroomId,
+                ClassroomName = g.Key.ClassroomName,
+                SubjectId = g.Key.SubjectId,
+                SubjectName = g.Key.SubjectName,
+                TopicId = g.Key.TopicId,
+                TopicName = g.Key.TopicName,
+                SubTopicName = g.Key.SubTopicName,
+                TotalAttempts = g.Count(),
+                CompletedAttempts = completed.Count,
+                InProgressAttempts = g.Count(r => r.Status == "InProgress"),
+                PartiallyGradedAttempts = g.Count(r => r.Status == "PartiallyGraded"),
+                AverageScorePercent = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+                TotalScoreSum = scores.Sum(),
+                PassRate = completed.Any() ? Math.Round((decimal)passed / completed.Count * 100, 1) : 0m,
+                StudentCount = g.Select(r => r.StudentId).Distinct().Count(),
+                TotalMarksSum = completed.Sum(r => r.TotalMarks),
+                ObtainedMarksSum = completed.Sum(r => r.ObtainedMarks),
+                ComputedAt = now
+            });
+        }
+
+        return snapshots;
+    }
+
     private List<PerformanceSnapshot> AggregateByStudent(List<AttemptRawRow> rows, DateTime now)
     {
         var groups = rows.GroupBy(r => new { r.StudentId, r.StudentName });
@@ -286,8 +401,8 @@ public class PerformanceAggregationService : IPerformanceAggregationService
         {
             var completed = g.Where(r => r.Status != "InProgress").ToList();
             var passed = completed.Count(r => r.IsPassed == true);
-            var scores = completed.Where(r => r.FinalScorePercent.HasValue)
-                                  .Select(r => r.FinalScorePercent!.Value).ToList();
+            var completedWithScore = completed.Where(r => r.FinalScorePercent.HasValue).ToList();
+            var scores = completedWithScore.Select(r => r.FinalScorePercent!.Value).ToList();
 
             snapshots.Add(new PerformanceSnapshot
             {
@@ -299,6 +414,7 @@ public class PerformanceAggregationService : IPerformanceAggregationService
                 CompletedAttempts = completed.Count,
                 InProgressAttempts = g.Count(r => r.Status == "InProgress"),
                 AverageScorePercent = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+                TotalScoreSum = scores.Sum(),
                 PassRate = completed.Any() ? Math.Round((decimal)passed / completed.Count * 100, 1) : 0m,
                 StudentCount = 1,
                 TotalMarksSum = completed.Sum(r => r.TotalMarks),
@@ -320,8 +436,8 @@ public class PerformanceAggregationService : IPerformanceAggregationService
         {
             var completed = g.Where(r => r.Status != "InProgress").ToList();
             var passed = completed.Count(r => r.IsPassed == true);
-            var scores = completed.Where(r => r.FinalScorePercent.HasValue)
-                                  .Select(r => r.FinalScorePercent!.Value).ToList();
+            var completedWithScore = completed.Where(r => r.FinalScorePercent.HasValue).ToList();
+            var scores = completedWithScore.Select(r => r.FinalScorePercent!.Value).ToList();
 
             snapshots.Add(new PerformanceSnapshot
             {
@@ -332,6 +448,7 @@ public class PerformanceAggregationService : IPerformanceAggregationService
                 TotalAttempts = g.Count(),
                 CompletedAttempts = completed.Count,
                 AverageScorePercent = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+                TotalScoreSum = scores.Sum(),
                 PassRate = completed.Any() ? Math.Round((decimal)passed / completed.Count * 100, 1) : 0m,
                 StudentCount = g.Select(r => r.StudentId).Distinct().Count(),
                 TotalMarksSum = completed.Sum(r => r.TotalMarks),
@@ -347,8 +464,8 @@ public class PerformanceAggregationService : IPerformanceAggregationService
     {
         var completed = rows.Where(r => r.Status != "InProgress").ToList();
         var passed = completed.Count(r => r.IsPassed == true);
-        var scores = completed.Where(r => r.FinalScorePercent.HasValue)
-                              .Select(r => r.FinalScorePercent!.Value).ToList();
+        var completedWithScore = completed.Where(r => r.FinalScorePercent.HasValue).ToList();
+        var scores = completedWithScore.Select(r => r.FinalScorePercent!.Value).ToList();
 
         return new PerformanceSnapshot
         {
@@ -359,6 +476,7 @@ public class PerformanceAggregationService : IPerformanceAggregationService
             InProgressAttempts = rows.Count(r => r.Status == "InProgress"),
             PartiallyGradedAttempts = rows.Count(r => r.Status == "PartiallyGraded"),
             AverageScorePercent = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+            TotalScoreSum = scores.Sum(),
             PassRate = completed.Any() ? Math.Round((decimal)passed / completed.Count * 100, 1) : 0m,
             StudentCount = rows.Select(r => r.StudentId).Distinct().Count(),
             TotalMarksSum = completed.Sum(r => r.TotalMarks),
@@ -374,6 +492,9 @@ public class PerformanceAggregationService : IPerformanceAggregationService
         public string ClassroomName { get; set; } = string.Empty;
         public Guid SubjectId { get; set; }
         public string SubjectName { get; set; } = string.Empty;
+        public Guid TopicId { get; set; }
+        public string TopicName { get; set; } = string.Empty;
+        public string SubTopicName { get; set; } = string.Empty;
         public Guid TeacherId { get; set; }
         public string TeacherName { get; set; } = string.Empty;
         public Guid AttemptId { get; set; }

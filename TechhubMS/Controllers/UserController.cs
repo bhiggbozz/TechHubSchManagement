@@ -402,7 +402,46 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		/// <summary>
+		/// Get students in a specific classroom (with roleData)
+		/// </summary>
+		[HttpGet("students")]
+		[Authorize]
+		public async Task<IActionResult> GetStudentsByClassroom([FromQuery] Guid? classroomId, [FromQuery] Guid? subjectId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
 
+			if (classroomId.HasValue)
+			{
+				var result = await _userService.GetStudentsByClassroom(classroomId.Value, claims);
+				return Ok(result);
+			}
+
+			if (subjectId.HasValue)
+			{
+				var result = await _userService.GetStudentsBySubject(subjectId.Value, claims);
+				return Ok(result);
+			}
+
+			return BadRequest(new BaseResponse
+			{
+				ResponseCode = ResponseCode.BadRequest,
+				ResponseMessage = "Provide either classroomId or subjectId query parameter",
+				Status = "failed"
+			});
+		}
+
+		/// <summary>
+		/// Get students for the logged-in teacher (auto-detected from JWT)
+		/// </summary>
+		[HttpGet("teacher/students")]
+		[Authorize]
+		public async Task<IActionResult> GetTeacherStudents()
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.GetTeacherStudents(claims);
+			return Ok(result);
+		}
 
 	}
 

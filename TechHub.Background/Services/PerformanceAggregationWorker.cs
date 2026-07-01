@@ -29,7 +29,9 @@ public class PerformanceAggregationWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger _logger;
 
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(30);
+    // Safety net: full re-aggregation once daily.
+    // Real-time updates happen incrementally on quiz submit / manual grade.
+    private static readonly TimeSpan Interval = TimeSpan.FromHours(24);
 
     public PerformanceAggregationWorker(IServiceScopeFactory scopeFactory, ILogger logger)
     {

@@ -2350,6 +2350,17 @@ namespace TechHub.Service.Service
 					ModifiedDate = u.ModifiedDate
 				}).ToList();
 
+				// Populate roleData for students
+				if (roleId.GetValueOrDefault() == (int)UserRole.Student)
+				{
+					var studentIds = paginatedUsers.Select(u => u!.Id).ToList();
+					var roleDataMap = await GetStudentRoleDataBatch(studentIds, schoolId);
+					foreach (var dto in userDtos)
+					{
+						dto.RoleData = roleDataMap.GetValueOrDefault((Guid)dto.Id);
+					}
+				}
+
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.successful,
@@ -2379,6 +2390,361 @@ namespace TechHub.Service.Service
 					Status = "failed"
 				};
 			}
+		}
+
+		public async Task<BaseResponse> GetStudentsByClassroom(Guid classroomId, AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Invalid school context",
+							Status = "failed"
+						};
+
+					var sql = $@"
+						SELECT
+							u.Id,
+							u.FirstName,
+							u.LastName,
+							u.UserName,
+							u.EmailAddress,
+							u.IsActive,
+							u.CreationDate
+						FROM   StudentClassroom sc
+						JOIN   Users            u  ON u.Id = sc.StudentId
+						WHERE  sc.ClassroomId = '{classroomId}'
+						AND    sc.SchoolId    = '{schoolId}'
+						AND    sc.IsActive    = 1
+						AND    u.IsActive     = 1
+						ORDER  BY u.FirstName ASC";
+
+					var rows = await _queryrepositoryUser.QueryAsync<StudentRowDto>(sql, new Dictionary<string, object>());
+					var students = rows.ToList();
+					var studentIds = students.Select(s => s.Id).ToList();
+
+					// Fetch roleData for all returned students
+					var roleDataMap = await GetStudentRoleDataBatch(studentIds, schoolId);
+
+					var result = students.Select(s => new
+					{
+						s.Id,
+						s.FirstName,
+						s.LastName,
+						s.UserName,
+						s.EmailAddress,
+						s.IsActive,
+						RoleData = roleDataMap.GetValueOrDefault(s.Id)
+					}).ToList();
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = students.Any()
+							? $"{students.Count} student(s) found"
+							: "No students found in this classroom",
+						Status = "success",
+						Data = result
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error fetching students by classroom - ClassroomId: {ClassroomId}", classroomId);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching students",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		public async Task<BaseResponse> GetStudentsBySubject(Guid subjectId, AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Invalid school context",
+							Status = "failed"
+						};
+
+					// Students can take a subject as major (via classroom) or minor
+					var sql = $@"
+						SELECT DISTINCT
+							u.Id,
+							u.FirstName,
+							u.LastName,
+							u.UserName,
+							u.EmailAddress,
+							u.IsActive,
+							u.CreationDate
+						FROM   (
+							SELECT sc.StudentId
+							FROM   StudentClassroom sc
+							JOIN   ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+							WHERE  cs.SubjectId = '{subjectId}'
+							AND    sc.SchoolId  = '{schoolId}'
+							AND    sc.IsActive  = 1
+							AND    cs.IsActive  = 1
+							UNION
+							SELECT sms.StudentId
+							FROM   StudentMinorSubject sms
+							WHERE  sms.SubjectId = '{subjectId}'
+							AND    sms.SchoolId  = '{schoolId}'
+						) src
+						JOIN   Users u ON u.Id = src.StudentId
+						WHERE  u.IsActive = 1
+						ORDER  BY u.FirstName ASC";
+
+					var rows = await _queryrepositoryUser.QueryAsync<StudentRowDto>(sql, new Dictionary<string, object>());
+					var students = rows.ToList();
+					var studentIds = students.Select(s => s.Id).ToList();
+
+					var roleDataMap = await GetStudentRoleDataBatch(studentIds, schoolId);
+
+					var result = students.Select(s => new
+					{
+						s.Id,
+						s.FirstName,
+						s.LastName,
+						s.UserName,
+						s.EmailAddress,
+						s.IsActive,
+						RoleData = roleDataMap.GetValueOrDefault(s.Id)
+					}).ToList();
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = students.Any()
+							? $"{students.Count} student(s) found"
+							: "No students found for this subject",
+						Status = "success",
+						Data = result
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error fetching students by subject - SubjectId: {SubjectId}", subjectId);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching students",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		public async Task<BaseResponse> GetTeacherStudents(AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Invalid school context",
+							Status = "failed"
+						};
+
+					if (!Guid.TryParse(claims.UserId, out var teacherId))
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Unauthorized,
+							ResponseMessage = "Invalid user identity",
+							Status = "failed"
+						};
+
+					if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role) ||
+						(role != UserRole.SubjectTeacher && role != UserRole.ClassTeacher && role != UserRole.HeadTeacher))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "Only teachers can access this endpoint",
+							Status = "failed"
+						};
+					}
+
+					// Get teacher's classrooms and subjects
+					var classroomIds = await _teacherClassroomQueryRespository
+						.QueryAsync<Guid>($@"SELECT ClassroomId FROM ClassroomTeacher WHERE TeacherId = '{teacherId}' AND IsActive = 1",
+							new Dictionary<string, object>());
+					var classroomIdList = classroomIds.ToList();
+
+					var subjectIds = await _teacherSubjectQueryRespository
+						.QueryAsync<Guid>($@"SELECT SubjectId FROM TeacherSubject WHERE TeacherId = '{teacherId}'",
+							new Dictionary<string, object>());
+					var subjectIdList = subjectIds.ToList();
+
+					if (!classroomIdList.Any() && !subjectIdList.Any())
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.successful,
+							ResponseMessage = "No students found",
+							Status = "success",
+							Data = new List<object>()
+						};
+					}
+
+					// Build a query to get students in teacher's classrooms OR taking teacher's subjects
+					var conditions = new List<string>();
+					if (classroomIdList.Any())
+					{
+						var cIds = string.Join(",", classroomIdList.Select(id => $"'{id}'"));
+						conditions.Add($"(sc.ClassroomId IN ({cIds}) AND sc.IsActive = 1)");
+					}
+					if (subjectIdList.Any())
+					{
+						var sIds = string.Join(",", subjectIdList.Select(id => $"'{id}'"));
+						conditions.Add($"(sms.SubjectId IN ({sIds}))");
+					}
+
+					var whereClause = string.Join(" OR ", conditions);
+
+					var sql = $@"
+						SELECT DISTINCT
+							u.Id,
+							u.FirstName,
+							u.LastName,
+							u.UserName,
+							u.EmailAddress,
+							u.IsActive,
+							u.CreationDate
+						FROM   Users u
+						LEFT JOIN StudentClassroom sc ON sc.StudentId = u.Id
+						LEFT JOIN StudentMinorSubject sms ON sms.StudentId = u.Id
+						WHERE  u.SchoolId = '{schoolId}'
+						AND    u.RoleId  = {(int)UserRole.Student}
+						AND    u.IsActive = 1
+						AND    ({whereClause})
+						ORDER  BY u.FirstName ASC";
+
+					var rows = await _queryrepositoryUser.QueryAsync<StudentRowDto>(sql, new Dictionary<string, object>());
+					var students = rows.ToList();
+					var studentIds = students.Select(s => s.Id).ToList();
+
+					var roleDataMap = await GetStudentRoleDataBatch(studentIds, schoolId);
+
+					var result = students.Select(s => new
+					{
+						s.Id,
+						s.FirstName,
+						s.LastName,
+						s.UserName,
+						s.EmailAddress,
+						s.IsActive,
+						RoleData = roleDataMap.GetValueOrDefault(s.Id)
+					}).ToList();
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = students.Any()
+							? $"{students.Count} student(s) found"
+							: "No students found",
+						Status = "success",
+						Data = result
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error fetching teacher's students - TeacherId: {TeacherId}", claims.UserId);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "An error occurred while fetching students",
+						Status = "failed"
+					};
+				}
+			}
+		}
+
+		private async Task<Dictionary<Guid, StudentRoleDataDto?>> GetStudentRoleDataBatch(List<Guid> studentIds, Guid schoolId)
+		{
+			var result = new Dictionary<Guid, StudentRoleDataDto?>();
+			if (!studentIds.Any()) return result;
+
+			foreach (var id in studentIds) result[id] = null;
+
+			var studentIdStr = string.Join(",", studentIds.Select(id => $"'{id}'"));
+
+			var classroomQuery = $@"
+				SELECT sc.StudentId, sc.ClassroomId, c.Name AS ClassName
+				FROM StudentClassroom sc
+				JOIN Classroom c ON c.Id = sc.ClassroomId
+				WHERE sc.StudentId IN ({studentIdStr})
+				AND sc.SchoolId = '{schoolId}'
+				AND sc.IsActive = 1";
+			var classroomLookup = (await _queryrepositoryUser.QueryAsync<StudentClassroomRow>(classroomQuery, new Dictionary<string, object>()))
+				.GroupBy(r => r.StudentId).ToDictionary(g => g.Key, g => g.First());
+
+			var majorQuery = $@"
+				SELECT sc.StudentId, s.Id AS SubjectId, s.Subject AS SubjectName
+				FROM StudentClassroom sc
+				JOIN ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+				JOIN Subjects s ON s.Id = cs.SubjectId
+				WHERE sc.StudentId IN ({studentIdStr})
+				AND sc.SchoolId = '{schoolId}'
+				AND sc.IsActive = 1
+				AND cs.IsActive = 1";
+			var majorLookup = (await _queryrepositoryUser.QueryAsync<StudentMajorSubjectRow>(majorQuery, new Dictionary<string, object>()))
+				.GroupBy(r => r.StudentId).ToDictionary(g => g.Key, g => g.ToList());
+
+			var minorQuery = $@"
+				SELECT sms.StudentId, s.Id AS SubjectId, s.Subject AS SubjectName
+				FROM StudentMinorSubject sms
+				JOIN Subjects s ON s.Id = sms.SubjectId
+				WHERE sms.StudentId IN ({studentIdStr})
+				AND sms.SchoolId = '{schoolId}'";
+			var minorLookup = (await _queryrepositoryUser.QueryAsync<StudentMajorSubjectRow>(minorQuery, new Dictionary<string, object>()))
+				.GroupBy(r => r.StudentId).ToDictionary(g => g.Key, g => g.ToList());
+
+			foreach (var sid in studentIds)
+			{
+				StudentClassroomRow? classroom = null;
+				if (classroomLookup.TryGetValue(sid, out var cr)) classroom = cr;
+
+				var majors = majorLookup.TryGetValue(sid, out var mj) ? mj : new List<StudentMajorSubjectRow>();
+				var minors = minorLookup.TryGetValue(sid, out var mn) ? mn : new List<StudentMajorSubjectRow>();
+
+				if (classroom == null && majors.Count == 0 && minors.Count == 0) continue;
+
+				result[sid] = new StudentRoleDataDto
+				{
+					Classroom = classroom != null ? new ClassroomInfo
+					{
+						ClassroomId = classroom.ClassroomId,
+						ClassName = classroom.ClassName
+					} : null,
+					MajorSubjects = majors.Select(m => new SubjectInfo
+					{
+						SubjectId = m.SubjectId,
+						SubjectName = m.SubjectName
+					}).ToList(),
+					MinorSubjects = minors.Select(m => new SubjectInfo
+					{
+						SubjectId = m.SubjectId,
+						SubjectName = m.SubjectName
+					}).ToList()
+				};
+			}
+
+			return result;
 		}
 
 		public async Task<BaseResponse> GetTeachers(AuthenticatedUserClaims userClaims,int pageNumber,int pageSize)
@@ -2910,11 +3276,25 @@ namespace TechHub.Service.Service
 
 			try
 			{
-				// Lesson gets its rich payload — everything else is JsonElement
-				// Frontend handles rendering based on OperationType either way
-				dto.Payload = r.OperationType == OperationType.SubmitLesson
-					? JsonSerializer.Deserialize<LessonApprovalPayload>(r.Payload)
-					: JsonSerializer.Deserialize<JsonElement>(r.Payload);
+				if (r.OperationType == OperationType.SubmitLesson)
+				{
+					var lessonPayload = JsonSerializer.Deserialize<LessonApprovalPayload>(r.Payload);
+					dto.Payload = lessonPayload;
+					dto.Lesson = new LessonSummaryDto
+					{
+						LessonId = lessonPayload.LessonId,
+						Aim = lessonPayload.Aim,
+						Description = lessonPayload.Description,
+						SubjectName = lessonPayload.SubjectName,
+						TopicName = lessonPayload.TopicName,
+						ClassName = lessonPayload.ClassName,
+						MediaCount = lessonPayload.MediaCount
+					};
+				}
+				else
+				{
+					dto.Payload = JsonSerializer.Deserialize<JsonElement>(r.Payload);
+				}
 			}
 			catch
 			{
@@ -3759,7 +4139,7 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				var query = "SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR LOWER(Email) = @Email) AND SchoolId = @SchoolId";
+				var query = "SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR LOWER(EmailAddress) = @Email) AND SchoolId = @SchoolId";
 				var parameters = new Dictionary<string, object>
 				{
 					{ "UserName", userName.Trim().ToLower() },
@@ -3785,7 +4165,7 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				var query = "SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR LOWER(Email) = @Email) AND SchoolId = @SchoolId";
+				var query = "SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR LOWER(EmailAddress) = @Email) AND SchoolId = @SchoolId";
 				var parameters = new Dictionary<string, object>
 				{
 					{ "UserName", userName.Trim().ToLower() },
@@ -6093,5 +6473,6 @@ namespace TechHub.Service.Service
 		public object GuardianName { get; set; }
 		public object CreatedDate { get; set; }
 		public object ModifiedDate { get; set; }
+		public object? RoleData { get; set; }
 	}
 }

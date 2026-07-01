@@ -465,6 +465,111 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         return Success(dtos);
     }
 
+    public async Task<BaseResponse> GetSubjectClassroomsAsync(Guid subjectId, AuthenticatedUserClaims claims)
+    {
+        if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+            return Unauthorized();
+        if (!Guid.TryParse(claims.UserId, out var userId))
+            return Unauthorized();
+        if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
+            return Unauthorized();
+
+        try
+        {
+            if (!await CanAccessSubject(userId, subjectId, role))
+                return Forbidden("You do not have access to this subject");
+
+            var snapshots = await _perfRepo.GetBySubjectAsync(schoolId, subjectId);
+            var dtos = snapshots
+                .Where(s => s.DocType == "classroom_subject")
+                .Select(s => new SubjectClassroomPerformanceDto
+                {
+                    ClassroomId = s.ClassroomId ?? Guid.Empty,
+                    ClassroomName = s.ClassroomName ?? "Unknown",
+                    StudentCount = s.StudentCount,
+                    TotalAttempts = s.TotalAttempts,
+                    CompletedAttempts = s.CompletedAttempts,
+                    AverageScorePercent = s.AverageScorePercent,
+                    PassRate = s.PassRate,
+                    LastActivityDate = s.LastActivityDate,
+                    ComputedAt = s.ComputedAt
+                })
+                .OrderByDescending(d => d.AverageScorePercent)
+                .ToList();
+
+            return Success(dtos);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Error getting subject classrooms {SubjectId}", subjectId);
+            return Error();
+        }
+    }
+
+    public async Task<BaseResponse> GetSubjectTopicsAsync(Guid subjectId, AuthenticatedUserClaims claims)
+    {
+        if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+            return Unauthorized();
+        if (!Guid.TryParse(claims.UserId, out var userId))
+            return Unauthorized();
+        if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
+            return Unauthorized();
+
+        try
+        {
+            if (!await CanAccessSubject(userId, subjectId, role))
+                return Forbidden("You do not have access to this subject");
+
+            var topicSnapshots = await _perfRepo.GetBySubjectTopicAsync(schoolId, subjectId);
+            var subTopicSnapshots = await _perfRepo.GetBySubjectSubTopicAsync(schoolId, subjectId);
+
+            var subTopicLookup = subTopicSnapshots
+                .GroupBy(s => s.TopicId)
+                .ToDictionary(
+                    g => g.Key ?? Guid.Empty,
+                    g => g.Select(s => new SubjectSubTopicPerformanceDto
+                    {
+                        SubTopicName = s.SubTopicName ?? "Unknown",
+                        StudentCount = s.StudentCount,
+                        TotalAttempts = s.TotalAttempts,
+                        CompletedAttempts = s.CompletedAttempts,
+                        AverageScorePercent = s.AverageScorePercent,
+                        PassRate = s.PassRate
+                    }).ToList()
+                );
+
+            var dtos = topicSnapshots
+                .GroupBy(s => new { s.TopicId, s.TopicName })
+                .Select(g =>
+                {
+                    var first = g.First();
+                    return new SubjectTopicPerformanceDto
+                    {
+                        TopicId = g.Key.TopicId ?? Guid.Empty,
+                        TopicName = g.Key.TopicName ?? "Unknown",
+                        StudentCount = g.Sum(s => s.StudentCount),
+                        TotalAttempts = g.Sum(s => s.TotalAttempts),
+                        CompletedAttempts = g.Sum(s => s.CompletedAttempts),
+                        AverageScorePercent = g.Where(s => s.TotalAttempts > 0)
+                            .Select(s => s.AverageScorePercent).DefaultIfEmpty(0).Average(),
+                        PassRate = g.Where(s => s.TotalAttempts > 0)
+                            .Select(s => s.PassRate).DefaultIfEmpty(0).Average(),
+                        ComputedAt = g.Max(s => s.ComputedAt),
+                        SubTopics = subTopicLookup.GetValueOrDefault(g.Key.TopicId ?? Guid.Empty, new())
+                    };
+                })
+                .OrderByDescending(d => d.AverageScorePercent)
+                .ToList();
+
+            return Success(dtos);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Error getting subject topics {SubjectId}", subjectId);
+            return Error();
+        }
+    }
+
     private async Task<bool> CanAccessClassroom(Guid userId, Guid classroomId, UserRole role)
     {
         if (role is UserRole.Administrator or UserRole.SuperAdministrator or UserRole.HeadTeacher)
@@ -564,4 +669,5 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         ResponseMessage = "An error occurred",
         Status = "failed"
     };
+
 }

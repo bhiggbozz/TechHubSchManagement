@@ -232,7 +232,8 @@ public class StudentQuizQuestionDto
 // ── Grading (teacher) ──────────────────────────────────────────────────────
 public class GradeAnswerViewModel
 {
-	public decimal ManualMarksObtained { get; set; }
+	public int? StarCount { get; set; }
+	public decimal? ManualMarksObtained { get; set; }
 	public string? TeacherFeedback { get; set; }
 }
 
@@ -251,6 +252,17 @@ public class PendingGradeDto
 	public string? AudioUrl { get; set; }
 	public decimal MaxMarks { get; set; }
 	public string? SubmittedAt { get; set; }
+}
+
+public class PendingGradeDetailDto : PendingGradeDto
+{
+	public int DifficultyLevel { get; set; }
+	public string? QuestionTitle { get; set; }
+	public string? QuestionTextContent { get; set; }
+	public int StarMarkEasy { get; set; }
+	public int StarMarkMedium { get; set; }
+	public int StarMarkHard { get; set; }
+	public int StarMarkExpert { get; set; }
 }
 
 // ── Results & Analytics ────────────────────────────────────────────────────

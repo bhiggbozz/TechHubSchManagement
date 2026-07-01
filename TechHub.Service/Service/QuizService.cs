@@ -36,6 +36,7 @@ public class QuizService : IQuizService
 	private readonly ICommandRespository<AssessmentSet> _assessmentSetCommand;
 
 	private readonly IDbTransactionScopeFactory _scopeFactory;
+	private readonly IPerformanceIncrementalService _perfIncremental;
 	private readonly ILogger _logger;
 
 	public QuizService(
@@ -54,6 +55,7 @@ public class QuizService : IQuizService
 		IQueryRepository<AssessmentSet> assessmentSetQuery,
 		ICommandRespository<AssessmentSet> assessmentSetCommand,
 		IDbTransactionScopeFactory scopeFactory,
+		IPerformanceIncrementalService perfIncremental,
 		ILogger logger)
 	{
 		_quizCommand = quizCommand;
@@ -71,6 +73,7 @@ public class QuizService : IQuizService
 		_assessmentSetQuery = assessmentSetQuery;
 		_assessmentSetCommand = assessmentSetCommand;
 		_scopeFactory = scopeFactory;
+		_perfIncremental = perfIncremental;
 		_logger = logger;
 	}
 
@@ -1818,6 +1821,13 @@ public class QuizService : IQuizService
 					"Quiz submitted - AttemptId: {AttemptId}, StudentId: {StudentId}, Status: {Status}",
 					attemptId, studentId, finalStatus);
 
+				if (totalManualGraded == 0 && isPassed.HasValue)
+				{
+					await _perfIncremental.OnAttemptCompletedAsync(
+						schoolId, attempt.LessonId, studentId, attempt.QuizCode,
+						finalScorePercent, isPassed.Value);
+				}
+
 				if (showResultImmediately && totalManualGraded == 0)
 				{
 					return new BaseResponse
@@ -2062,6 +2072,99 @@ public class QuizService : IQuizService
 		}
 	}
 
+	public async Task<BaseResponse> GetGradingDetailAsync(AuthenticatedUserClaims claims)
+	{
+		using (LogContext.PushProperty("RequestedBy", claims.UserId))
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.UserId, out var teacherId))
+					return Unauthorized();
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return Unauthorized();
+
+				var sql = $@"
+                    SELECT
+                        qa.Id            AS AnswerId,
+                        qa.AttemptId     AS AttemptId,
+                        qa.QuestionId    AS QuestionId,
+                        att.StudentId    AS StudentId,
+                        u.FirstName + ' ' + u.LastName AS StudentName,
+                        qz.Code          AS QuizCode,
+                        lc.Aim           AS LessonTitle,
+                        qa.QuestionType  AS QuestionType,
+                        qa.TypedAnswer   AS TypedAnswer,
+                        qa.BoardSessionId AS BoardSessionId,
+                        qa.AudioUrl      AS AudioUrl,
+                        qa.MaxMarks      AS MaxMarks,
+                        att.SubmittedAt  AS SubmittedAt,
+                        ISNULL(qc.EasyMarks, 1)       AS StarMarkEasy,
+                        ISNULL(qc.MediumMarks, 2)     AS StarMarkMedium,
+                        ISNULL(qc.HardMarks, 3)       AS StarMarkHard,
+                        ISNULL(qc.ExamLevelMarks, 5)  AS StarMarkExpert
+                    FROM QuizAttemptAnswer qa
+                    JOIN QuizAttempt att ON att.Id = qa.AttemptId
+                    JOIN Quiz qz ON qz.Code = att.QuizCode
+                    JOIN LessonContent lc ON lc.Id = att.LessonId
+                    JOIN Users u ON u.Id = att.StudentId
+                    LEFT JOIN QuizConfig qc ON qc.TeacherId = qz.CreatedBy AND qc.IsActive = 1
+                    WHERE qa.SchoolId = '{schoolId}'
+                    AND   qz.SchoolId = '{schoolId}'
+                    AND   qz.CreatedBy = '{teacherId}'
+                    AND   qa.QuestionType IN (2, 3, 5, 6, 7, 8)
+                    AND   qa.ManualMarksObtained IS NULL
+                    AND   qa.IsSkipped = 0
+                    AND   att.Status IN ('{QuizAttemptStatus.Submitted}','{QuizAttemptStatus.PartiallyGraded}')
+                    ORDER BY att.SubmittedAt DESC";
+
+				var rows = await _answerQuery.QueryAsync<PendingGradeDetailDto>(sql, new Dictionary<string, object>());
+				var list = rows.ToList();
+
+				if (list.Count > 0)
+				{
+					var questionIds = list.Select(r => r.QuestionId).Distinct().ToList();
+					var idList = string.Join(",", questionIds.Select(id => $"'{id}'"));
+
+					var questionRows = await _quizQuery.QueryAsync<QuestionGradingDto>($@"
+                        SELECT Id, Title, TextContent, DifficultyLevel FROM Questions
+                        WHERE Id IN ({idList})",
+						new Dictionary<string, object>(),
+						DatabaseTarget.QuestionBank);
+
+					var questionLookup = questionRows.ToDictionary(q => q.Id, q => q);
+
+					foreach (var item in list)
+					{
+						if (questionLookup.TryGetValue(item.QuestionId, out var q))
+						{
+							item.QuestionTitle = q.Title;
+							item.QuestionTextContent = q.TextContent;
+							item.DifficultyLevel = q.DifficultyLevel;
+						}
+					}
+				}
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = $"{list.Count} pending answer(s) found",
+					Status = "successful",
+					Data = list
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching grading detail");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching grading detail",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
 	public async Task<BaseResponse> GradeAnswer(Guid answerId, GradeAnswerViewModel model, AuthenticatedUserClaims claims)
 	{
 		using (LogContext.PushProperty("RequestedBy", claims.UserId))
@@ -2073,16 +2176,8 @@ public class QuizService : IQuizService
 				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
 					return Unauthorized();
 
-				if (model.ManualMarksObtained < 0)
-					return new BaseResponse
-					{
-						ResponseCode = ResponseCode.BadRequest,
-						ResponseMessage = "Marks cannot be negative",
-						Status = "failed"
-					};
-
 				var answer = await _answerQuery.Get($@"
-                    SELECT TOP 1 Id, AttemptId, MaxMarks FROM QuizAttemptAnswer
+                    SELECT TOP 1 Id, AttemptId, QuestionId, MaxMarks FROM QuizAttemptAnswer
                     WHERE  Id       = '{answerId}'
                     AND    SchoolId = '{schoolId}'");
 
@@ -2094,7 +2189,72 @@ public class QuizService : IQuizService
 						Status = "failed"
 					};
 
-				if (model.ManualMarksObtained > answer.MaxMarks)
+				decimal marksObtained;
+
+				if (model.StarCount.HasValue)
+				{
+					if (model.StarCount < 1 || model.StarCount > 5)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "Star count must be between 1 and 5",
+							Status = "failed"
+						};
+
+					var questionRows = await _quizQuery.QueryAsync<QuestionDifficultyDto>($@"
+                        SELECT TOP 1 DifficultyLevel, MarksAllocation FROM Questions
+                        WHERE Id = '{answer.QuestionId}'",
+						new Dictionary<string, object>(),
+						DatabaseTarget.QuestionBank);
+
+					var question = questionRows.FirstOrDefault();
+					if (question is null)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Question not found in question bank",
+							Status = "failed"
+						};
+
+					var config = await _configQuery.Get($@"
+                        SELECT TOP 1 EasyMarks, MediumMarks, HardMarks, ExamLevelMarks
+                        FROM QuizConfig
+                        WHERE TeacherId = '{teacherId}' AND IsActive = 1");
+
+					int starValue = question.DifficultyLevel switch
+					{
+						1 => config?.EasyMarks ?? 1,
+						2 => config?.MediumMarks ?? 2,
+						3 => config?.HardMarks ?? 3,
+						4 => config?.ExamLevelMarks ?? 5,
+						_ => 1
+					};
+
+					marksObtained = model.StarCount.Value * starValue;
+				}
+				else if (model.ManualMarksObtained.HasValue)
+				{
+					marksObtained = model.ManualMarksObtained.Value;
+				}
+				else
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Either StarCount or ManualMarksObtained is required",
+						Status = "failed"
+					};
+				}
+
+				if (marksObtained < 0)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Marks cannot be negative",
+						Status = "failed"
+					};
+
+				if (marksObtained > answer.MaxMarks)
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.BadRequest,
@@ -2105,7 +2265,7 @@ public class QuizService : IQuizService
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 				var updateDict = new Dictionary<string, object>
 				{
-					{ "ManualMarksObtained", model.ManualMarksObtained },
+					{ "ManualMarksObtained", marksObtained },
 					{ "TeacherFeedback", (object?)model.TeacherFeedback ?? DBNull.Value },
 					{ "GradedBy", teacherId },
 					{ "GradedAt", now },
@@ -2132,7 +2292,7 @@ public class QuizService : IQuizService
 					// ── Finalize attempt ────────────────────────────────────────
 					var attempt = await _attemptQuery.Get($@"
                         SELECT TOP 1
-                            AutoMarksObtained, TotalMarks, LessonId
+                            AutoMarksObtained, TotalMarks, LessonId, StudentId, QuizCode
                         FROM QuizAttempt
                         WHERE Id = '{answer.AttemptId}'
                         AND   SchoolId = '{schoolId}'");
@@ -2171,11 +2331,16 @@ public class QuizService : IQuizService
 					_logger.Information(
 						"Attempt fully graded - AttemptId: {AttemptId}, FinalScore: {FinalScore}",
 						answer.AttemptId, finalScore);
+
+					// ── Update performance snapshots ──────────────────────────────
+					await _perfIncremental.OnAttemptCompletedAsync(
+						schoolId, attempt.LessonId, attempt.StudentId, attempt.QuizCode,
+						finalScore, isPassed);
 				}
 
 				_logger.Information(
 					"Answer graded - AnswerId: {AnswerId}, Marks: {Marks}, TeacherId: {TeacherId}",
-					answerId, model.ManualMarksObtained, teacherId);
+					answerId, marksObtained, teacherId);
 
 				return new BaseResponse
 				{
@@ -3424,6 +3589,20 @@ public class QuizService : IQuizService
 		public string LessonTitle { get; set; } = string.Empty;
 		public string QuizCode { get; set; } = string.Empty;
 		public Guid CreatedBy { get; set; }
+	}
+
+	private class QuestionDifficultyDto
+	{
+		public int DifficultyLevel { get; set; }
+		public int MarksAllocation { get; set; }
+	}
+
+	private class QuestionGradingDto
+	{
+		public Guid Id { get; set; }
+		public string? Title { get; set; }
+		public string? TextContent { get; set; }
+		public int DifficultyLevel { get; set; }
 	}
 
 	public static class QuizCodeGenerator

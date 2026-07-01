@@ -80,28 +80,28 @@ namespace TechHub.BackgroundJobs.Services;
 			return jobId;
 		}
 
-		/// <summary>
-		/// NEW: Enqueue AI content analysis job
-		/// 
-		/// JOB DETAILS:
-		/// - Queue: "low" (low priority, can run later)
-		/// - Retry: 1 attempt (AI analysis not critical, expensive to retry)
-		/// - Delay: 2 minutes (let video processing finish first)
-		/// 
-		/// WHAT IT DOES:
-		/// 1. Analyze video content for inappropriate material
-		/// 2. Assess video/audio quality
-		/// 3. Detect key moments (intro, main content, summary)
-		/// 4. Extract topics/subjects
-		/// 5. Update database with analysis results
-		/// 
-		/// CALLED AFTER:
-		/// - ConfirmUpload (direct-to-CDN)
-		/// - UploadComplete webhook (server-side)
-		/// 
-		/// NOTE: Currently implements basic analysis
-		/// Can be enhanced with Azure Video Indexer or Cloudinary AI
-		/// </summary>
+	/// <summary>
+	/// NEW: Enqueue AI content analysis job
+	/// 
+	/// JOB DETAILS:
+	/// - Queue: "low" (low priority, can run later)
+	/// - Retry: 1 attempt (AI analysis not critical, expensive to retry)
+	/// - Delay: 2 minutes (let video processing finish first)
+	/// 
+	/// WHAT IT DOES:
+	/// 1. Analyze video content for inappropriate material
+	/// 2. Assess video/audio quality
+	/// 3. Detect key moments (intro, main content, summary)
+	/// 4. Extract topics/subjects
+	/// 5. Update database with analysis results
+	/// 
+	/// CALLED AFTER:
+	/// - ConfirmUpload (direct-to-CDN)
+	/// - UploadComplete webhook (server-side)
+	/// 
+	/// NOTE: Currently implements basic analysis
+	/// Can be enhanced with Azure Video Indexer or Cloudinary AI
+	/// </summary>
 		public string EnqueueAIContentAnalysis(Guid mediaId,string cdnUrl,decimal? duration)
 		{
 			// Schedule with 2-minute delay

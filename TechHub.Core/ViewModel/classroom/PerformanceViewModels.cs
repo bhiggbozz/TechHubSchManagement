@@ -119,3 +119,45 @@ public class StudentNavbarDto
     public decimal PassRate { get; set; }
     public int PendingQuizzes { get; set; }
 }
+
+// ═════════════════════════════════════════════════════════
+// TOPIC / SUBTOPIC PERFORMANCE DTOS
+// ═════════════════════════════════════════════════════════
+
+public class SubjectTopicPerformanceDto
+{
+    public Guid TopicId { get; set; }
+    public string TopicName { get; set; } = string.Empty;
+    public Guid? ClassroomId { get; set; }
+    public string? ClassroomName { get; set; }
+    public int StudentCount { get; set; }
+    public int TotalAttempts { get; set; }
+    public int CompletedAttempts { get; set; }
+    public decimal AverageScorePercent { get; set; }
+    public decimal PassRate { get; set; }
+    public DateTime ComputedAt { get; set; }
+    public List<SubjectSubTopicPerformanceDto> SubTopics { get; set; } = new();
+}
+
+public class SubjectSubTopicPerformanceDto
+{
+    public string SubTopicName { get; set; } = string.Empty;
+    public int StudentCount { get; set; }
+    public int TotalAttempts { get; set; }
+    public int CompletedAttempts { get; set; }
+    public decimal AverageScorePercent { get; set; }
+    public decimal PassRate { get; set; }
+}
+
+public class SubjectClassroomPerformanceDto
+{
+    public Guid ClassroomId { get; set; }
+    public string ClassroomName { get; set; } = string.Empty;
+    public int StudentCount { get; set; }
+    public int TotalAttempts { get; set; }
+    public int CompletedAttempts { get; set; }
+    public decimal AverageScorePercent { get; set; }
+    public decimal PassRate { get; set; }
+    public DateTime LastActivityDate { get; set; }
+    public DateTime ComputedAt { get; set; }
+}
