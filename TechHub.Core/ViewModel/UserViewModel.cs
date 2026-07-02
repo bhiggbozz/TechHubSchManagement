@@ -46,6 +46,13 @@ namespace TechHub.Core.ViewModel
 		public List<Guid> UserSubjects { get; set; } = new List<Guid>();
 		public List<Guid> RemoveSubjects { get; set; } = new List<Guid>();
 		public List<Guid> RemoveClassroom { get; set; } = new List<Guid>();
+		public List<SubjectClassroomAssignment> UserSubjectClassrooms { get; set; } = new List<SubjectClassroomAssignment>();
 
 	}
+}
+
+public class SubjectClassroomAssignment
+{
+	public Guid SubjectId { get; set; }
+	public Guid ClassroomId { get; set; }
 }

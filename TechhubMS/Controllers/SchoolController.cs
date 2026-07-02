@@ -249,10 +249,18 @@ namespace TechhubMS.Controllers
 		[HttpGet("subjects/{subjectId:guid}/curriculum")]
 		[Authorize]
 		[ProducesResponseType(typeof(BaseResponse), 200)]
-		public async Task<IActionResult> GetSubjectCurriculum(Guid subjectId)
+		public async Task<IActionResult> GetSubjectCurriculum(Guid subjectId, [FromQuery] Guid classroomId)
 		{
+			if (classroomId == Guid.Empty)
+				return BadRequest(new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = "classroomId query parameter is required",
+					Status = "failed"
+				});
+
 			var userClaims = User.GetAuthenticatedUserClaims();
-			var result = await _schoolService.GetSubjectCurriculum(subjectId, userClaims);
+			var result = await _schoolService.GetSubjectCurriculum(subjectId, classroomId, userClaims);
 			return Ok(result);
 		}
 

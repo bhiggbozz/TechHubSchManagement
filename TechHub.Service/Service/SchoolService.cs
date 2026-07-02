@@ -3848,7 +3848,7 @@ namespace TechHub.Service.Service
 			}
 		}
 
-		public async Task<BaseResponse> GetSubjectCurriculum(Guid subjectId,AuthenticatedUserClaims userClaims)
+		public async Task<BaseResponse> GetSubjectCurriculum(Guid subjectId, Guid classroomId, AuthenticatedUserClaims userClaims)
 		{
 			try
 			{
@@ -3874,14 +3874,15 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				// 1) Get all topics in one query.
+				// 1) Get all topics for this subject + classroom.
 				var topicsQuery = $@"
 					SELECT Id, Name, SubjectId, IsActive
 					FROM   Topic
-					WHERE  SubjectId = '{subjectId}'
-					  AND  SchoolId  = '{schoolId}'
-					  AND  IsDeleted = 0
-					  AND  IsActive  = 1
+					WHERE  SubjectId   = '{subjectId}'
+					  AND  SchoolId    = '{schoolId}'
+					  AND  ClassroomId = '{classroomId}'
+					  AND  IsDeleted   = 0
+					  AND  IsActive    = 1
 					ORDER BY Name ASC";
 
 				var topics = await _topicQueryRepository.GetByQuery(topicsQuery, DatabaseTarget.Core);
@@ -3898,10 +3899,11 @@ namespace TechHub.Service.Service
 					var subTopicsQuery = $@"
 						SELECT Id, TopicId, Name, IsActive
 						FROM   SubTopic
-						WHERE  TopicId IN ({topicIdsCsv})
-						  AND  SchoolId  = '{schoolId}'
-						  AND  IsDeleted = 0
-						  AND  IsActive  = 1
+						WHERE  TopicId      IN ({topicIdsCsv})
+						  AND  SchoolId     = '{schoolId}'
+						  AND  ClassroomId  = '{classroomId}'
+						  AND  IsDeleted    = 0
+						  AND  IsActive     = 1
 						ORDER BY Name ASC";
 
 					var subTopics = await _subTopicQueryRepository.GetByQuery(subTopicsQuery, DatabaseTarget.Core);
@@ -3931,8 +3933,8 @@ namespace TechHub.Service.Service
 				}).ToList<object>();
 
 				_logger.Information(
-					"Subject curriculum fetched - SubjectId: {SubjectId}, TopicCount: {Count}",
-					subjectId, topicsWithSubTopics.Count);
+					"Subject curriculum fetched - SubjectId: {SubjectId}, TopicCount: {Count}, ClassroomId: {ClassroomId}",
+					subjectId, topicsWithSubTopics.Count, classroomId);
 
 				return new BaseResponse
 				{
@@ -3945,6 +3947,7 @@ namespace TechHub.Service.Service
 						SubjectName = subject.Subject,
 						Category = subject.Category.ToString(),
 						ClassCategory = subject.ClassCategory.ToString(),
+						ClassroomId = classroomId,
 						Topics = topicsWithSubTopics
 					}
 				};
