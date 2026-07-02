@@ -4148,13 +4148,19 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				var query = "SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR LOWER(EmailAddress) = @Email) AND SchoolId = @SchoolId";
+				var emailCondition = string.IsNullOrWhiteSpace(email)
+					? "0=1"
+					: "LOWER(EmailAddress) = @Email";
+
+				var query = $"SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR {emailCondition}) AND SchoolId = @SchoolId";
 				var parameters = new Dictionary<string, object>
 				{
 					{ "UserName", userName.Trim().ToLower() },
-					{ "Email", email.Trim().ToLower() },
 					{ "SchoolId", schoolId }
 				};
+
+				if (!string.IsNullOrWhiteSpace(email))
+					parameters.Add("Email", email.Trim().ToLower());
 
 				var count = await _queryrepositoryUser.CountAsync(query, parameters);
 
@@ -4174,13 +4180,19 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				var query = "SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR LOWER(EmailAddress) = @Email) AND SchoolId = @SchoolId";
+				var emailCondition = string.IsNullOrWhiteSpace(email)
+					? "0=1"
+					: "LOWER(EmailAddress) = @Email";
+
+				var query = $"SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR {emailCondition}) AND SchoolId = @SchoolId";
 				var parameters = new Dictionary<string, object>
 				{
 					{ "UserName", userName.Trim().ToLower() },
-					{ "Email", email.Trim().ToLower() },
 					{ "SchoolId", schoolId }
 				};
+
+				if (!string.IsNullOrWhiteSpace(email))
+					parameters.Add("Email", email.Trim().ToLower());
 
 				var count = await _queryrepositoryUser.CountAsync(query, parameters);
 
