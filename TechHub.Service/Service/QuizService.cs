@@ -1008,7 +1008,7 @@ public class QuizService : IQuizService
                     new Dictionary<string, object>());
 				int completedAttempts = completedCountResult.FirstOrDefault();
 				bool maxReached = !allowRetakes && completedAttempts >= 1
-								  || completedAttempts >= maxAttempts;
+								  || allowRetakes && completedAttempts >= maxAttempts;
 
 				// ── Fetch all questions with resolved marks ──────────────────────
 				var sql = $@"
@@ -1278,7 +1278,7 @@ public class QuizService : IQuizService
                     new Dictionary<string, object>());
 				int completedAttempts = completedCountResult.FirstOrDefault();
 				bool maxReached = !allowRetakes && completedAttempts >= 1
-								  || completedAttempts >= maxAttempts;
+								  || allowRetakes && completedAttempts >= maxAttempts;
 
 				// ── Fetch all questions with resolved marks ──────────────────────
 				var sql = $@"
@@ -3312,8 +3312,8 @@ public class QuizService : IQuizService
 					new Dictionary<string, object>());
 
 				int completedAttempts = completedCountResult.FirstOrDefault();
-				bool maxReached = (!allowRetakes && completedAttempts >= 1)
-								  || completedAttempts >= maxAttempts;
+				bool maxReached = !allowRetakes && completedAttempts >= 1
+								  || allowRetakes && completedAttempts >= maxAttempts;
 
 				_logger.Information(
 					"Quiz attempt status - QuizCode: {QuizCode}, StudentId: {StudentId}, " +
@@ -3451,8 +3451,8 @@ public class QuizService : IQuizService
 
 				var agg = completedAgg?.FirstOrDefault();
 					int completedAttempts = agg?.CompletedCount ?? 0;
-					bool maxReached = (!allowRetakes && completedAttempts >= 1)
-									  || completedAttempts >= maxAttempts;
+					bool maxReached = !allowRetakes && completedAttempts >= 1
+									  || allowRetakes && completedAttempts >= maxAttempts;
 
 					result.Add(new SubjectQuizSummaryDto
 					{
