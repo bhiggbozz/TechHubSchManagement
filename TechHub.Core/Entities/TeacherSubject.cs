@@ -13,6 +13,7 @@ public class TeacherSubject
     public string ModifiedDate { get; set; } = DateTime.Now.ToString();
     public Guid TeacherId { get; set; }
     public Guid SubjectId { get; set; }
+    public Guid? ClassroomId { get; set; }
     public Guid SchoolId { get; set; }
     public bool IsActive { get; set; }
     public Guid CreatedBy { get; set; }

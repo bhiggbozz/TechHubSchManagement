@@ -34,7 +34,7 @@ CREATE INDEX IX_SubTopic_SchoolId  ON SubTopic(SchoolId);
 -- =====================================================
 -- PART 2: ALTER QUESTIONS TABLE
 -- Add new columns for AI pipeline
--- Existing columns untouched — backward compatible
+-- Existing columns untouched ï¿½ backward compatible
 -- =====================================================
  
 ALTER TABLE Questions
@@ -45,7 +45,7 @@ ADD SubTopicId      UNIQUEIDENTIFIER NULL,
     JobId           UNIQUEIDENTIFIER NULL,
     CorrectAnswer   NVARCHAR(10)     NULL;
 -- CorrectAnswer: used for TrueFalse only ("True" / "False")
--- SubTopicId: FK to SubTopic table — new questions use this
+-- SubTopicId: FK to SubTopic table ï¿½ new questions use this
 -- Topic + SubTopic strings kept for existing questions
  
 CREATE INDEX IX_Questions_SubTopicId ON Questions(SubTopicId);
@@ -82,7 +82,7 @@ CREATE TABLE QuestionJob (
     -- Objective | Theory | TrueFalse
  
     HasImages       BIT              NOT NULL DEFAULT 0,
-    -- Teacher declared upfront — drives upload pipeline
+    -- Teacher declared upfront ï¿½ drives upload pipeline
  
     TempImagePath   NVARCHAR(500)    NULL,
     -- Cloudinary temp folder path
@@ -374,3 +374,13 @@ DROP COLUMN QuizId;
 
 ALTER TABLE LessonContent
 ADD QuizCode NVARCHAR(20) NULL;
+
+-------------------------------------------------------------------------
+
+ALTER TABLE TeacherSubject ADD ClassroomId UNIQUEIDENTIFIER NULL;
+
+-- Drop old unique constraint (TeacherId + SubjectId) and replace with one including ClassroomId
+ALTER TABLE TeacherSubject DROP CONSTRAINT UC_TeacherSubject_UniqueActive;
+
+ALTER TABLE TeacherSubject ADD CONSTRAINT UC_TeacherSubject_UniqueActive
+    UNIQUE (TeacherId, SubjectId, ClassroomId, IsActive);

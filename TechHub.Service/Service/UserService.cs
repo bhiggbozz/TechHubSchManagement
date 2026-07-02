@@ -786,15 +786,17 @@ namespace TechHub.Service.Service
 						ResponseCode = ResponseCode.successful,
 						ResponseMessage = $"{userViewModel.Role} user created successfully",
 						Status = "successful",
-						Data = new
-						{
-							UserId = newUser.Id,
-							UserName = newUser.UserName,
-							Email = newUser.EmailAddress,
-							Role = userViewModel.Role.ToString(),
-							ClassroomsAssigned = userViewModel.UserClassroomsId.Count,
-							SubjectsAssigned = userViewModel.UserSubjects.Count
-						}
+					Data = new
+					{
+						UserId = newUser.Id,
+						UserName = newUser.UserName,
+						Email = newUser.EmailAddress,
+						Role = userViewModel.Role.ToString(),
+						ClassroomsAssigned = userViewModel.UserClassroomsId.Count,
+						SubjectsAssigned = userViewModel.UserSubjectClassrooms.Any()
+							? userViewModel.UserSubjectClassrooms.Count
+							: userViewModel.UserSubjects.Count
+					}
 					};
 				}
 				catch (SqlException ex)
@@ -3293,7 +3295,14 @@ namespace TechHub.Service.Service
 				}
 				else
 				{
-					dto.Payload = JsonSerializer.Deserialize<JsonElement>(r.Payload);
+					var element = JsonSerializer.Deserialize<JsonElement>(r.Payload);
+					dto.Payload = element;
+
+					if (element.TryGetProperty("subjectName", out var sn) ||
+					    element.TryGetProperty("SubjectName", out sn))
+					{
+						dto.Summary = JsonSerializer.Deserialize<ApprovalPayloadSummary>(r.Payload);
+					}
 				}
 			}
 			catch
@@ -4252,8 +4261,35 @@ namespace TechHub.Service.Service
 				await _commandRepositoryTeacherClassroom.CreateBatchAsync(scope.Transaction, scope.Connection, teacherClassrooms);
 			}
 
+			// Soft-delete existing active teacher-subject records to avoid
+			// UC_TeacherSubject_UniqueActive violations from orphan / retry records
+			var cleanSql = $@"
+				UPDATE TeacherSubject
+				SET    IsActive     = 0,
+				       ModifiedDate = '{now}'
+				WHERE  TeacherId    = '{teacherId}'
+				AND    IsActive     = 1";
+			await scope.Connection.ExecuteAsync(cleanSql, transaction: scope.Transaction);
+
 			// Create teacher-subject associations
-			if (userViewModel.UserSubjects.Any())
+			if (userViewModel.UserSubjectClassrooms.Any())
+			{
+				var teacherSubjects = userViewModel.UserSubjectClassrooms.Select(assignment => new Dictionary<string, object>
+					{
+						{ "Id", Guid.NewGuid() },
+						{ "CreationDate", now },
+						{ "ModifiedDate", now },
+						{ "TeacherId", teacherId },
+						{ "SubjectId", assignment.SubjectId },
+						{ "ClassroomId", assignment.ClassroomId },
+						{ "SchoolId", schoolId },
+						{ "IsActive", true },
+						{ "CreatedBy", createdBy }
+					}).ToList();
+
+				await _commandRepositoryTeacherSubject.CreateBatchAsync(scope.Transaction, scope.Connection, teacherSubjects);
+			}
+			else if (userViewModel.UserSubjects.Any())
 			{
 				var teacherSubjects = userViewModel.UserSubjects.Select(subjectId => new Dictionary<string, object>
 					{
@@ -4262,6 +4298,7 @@ namespace TechHub.Service.Service
 						{ "ModifiedDate", now },
 						{ "TeacherId", teacherId },
 						{ "SubjectId", subjectId },
+						{ "ClassroomId", DBNull.Value },
 						{ "SchoolId", schoolId },
 						{ "IsActive", true },
 						{ "CreatedBy", createdBy }
