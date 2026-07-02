@@ -224,6 +224,27 @@ public class LessonService : ILessonService
 				{
 					var expiryDays = int.Parse(_configuration["Approvals:ExpiryDays"] ?? "5");
 
+					var clsRoom = await _classroomQuery.Get(model.ClassroomId);
+					var subjectName = (await _userQuery.QueryAsync<string>(
+						$"SELECT TOP 1 Subject FROM Subjects WHERE Id = '{model.SubjectId}'",
+						new Dictionary<string, object>())).FirstOrDefault() ?? "Unknown";
+					var topicName = (await _userQuery.QueryAsync<string>(
+						$"SELECT TOP 1 Name FROM Topic WHERE Id = '{model.TopicId}'",
+						new Dictionary<string, object>())).FirstOrDefault() ?? "Unknown";
+
+					var lessonPayload = new LessonApprovalPayload
+					{
+						LessonId = lessonId,
+						Aim = model.Aim,
+						Description = model.Description,
+						SubjectName = subjectName,
+						TopicName = topicName,
+						SubTopic = model.SubTopic,
+						ClassName = clsRoom?.Name ?? "Unknown",
+						MediaCount = model.MediaFiles?.Count ?? 0,
+						HasRecording = false
+					};
+
 					var approvalDict = new Dictionary<string, object>
 					{
 						{ "Id",            approvalId },
@@ -233,8 +254,7 @@ public class LessonService : ILessonService
 						{ "OperationType", OperationType.SubmitLesson },
 						{ "EntityType",    "LessonContent" },
 						{ "EntityId",      lessonId },
-						{ "Payload",       System.Text.Json.JsonSerializer
-											   .Serialize(model) },
+						{ "Payload",       System.Text.Json.JsonSerializer.Serialize(lessonPayload) },
 						{ "Status",        ApprovalStatus.Pending },
 						{ "RejectionReason", DBNull.Value },
 						{ "CreatedAt",     now },
