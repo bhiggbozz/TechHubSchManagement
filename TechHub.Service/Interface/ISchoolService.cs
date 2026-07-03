@@ -55,7 +55,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetStudentsBySubject(Guid subjectId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> UpdateTeacherClassroom(Guid teacherId, UpdateTeacherClassroomViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> CreateTopicsWithSubTopics(CreateTopicsWithSubTopicsViewModel model, AuthenticatedUserClaims userClaims);
-
+		Task<BaseResponse> GetSubjectStatsAsync(Guid subjectId, Guid classroomId, AuthenticatedUserClaims userClaims);
 
 		//Task<SubjectDetailResponse> GetSubjectById(Guid subjectId, AuthenticatedUserClaims userInfo);
 	}

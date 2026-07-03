@@ -4926,6 +4926,73 @@ namespace TechHub.Service.Service
 				return null;
 			}
 		}
+		public async Task<BaseResponse> GetSubjectStatsAsync(Guid subjectId, Guid classroomId, AuthenticatedUserClaims userClaims)
+		{
+			try
+			{
+				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid school identification",
+						Status = "failed"
+					};
+				}
+
+				var subject = await _queryrepositorySubject.Get(subjectId);
+				if (subject is null || !subject.IsActive || subject.SchoolId != schoolId)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Subject not found",
+						Status = "failed"
+					};
+				}
+
+				var sql = $@"
+                    SELECT
+                        COUNT(*)                                          AS LessonCount,
+                        SUM(CASE WHEN QuizCode IS NOT NULL THEN 1 ELSE 0 END) AS QuizCount
+                    FROM LessonContent
+                    WHERE SubjectId   = '{subjectId}'
+                    AND   ClassroomId = '{classroomId}'
+                    AND   SchoolId    = '{schoolId}'
+                    AND   Status      = 'Published'";
+
+				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
+				conn.Open();
+				var stats = await conn.QueryFirstOrDefaultAsync(sql);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Subject stats retrieved successfully",
+					Status = "successful",
+					Data = new SubjectStatsDto
+					{
+						SubjectId = subjectId,
+						SubjectName = subject.Subject,
+						LessonCount = (int)(stats?.LessonCount ?? 0),
+						QuizCount = (int)(stats?.QuizCount ?? 0)
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex,
+					"Error fetching subject stats - SubjectId: {SubjectId}, ClassroomId: {ClassroomId}",
+					subjectId, classroomId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching subject stats",
+					Status = "failed"
+				};
+			}
+		}
+
 		public Task<BaseResponse> CreateStudentClass(CreateStudentClassViewModel createStudentClassViewModel, AuthenticatedUserClaims userInfo)
 		{
 			throw new NotImplementedException();
