@@ -30,7 +30,7 @@ public interface IQuizService
 	Task<BaseResponse> GetSubjectQuizzes(Guid subjectId, AuthenticatedUserClaims claims);
 
 	// ── Assessments ──────────────────────────────────────────────────────────
-	Task<BaseResponse> CreateAssessment(CreateAssessmentViewModel model, AuthenticatedUserClaims claims);
+	Task<BaseResponse> CreateAssessment(QuizAssessmentCreateViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> ConfigureQuiz(ConfigureQuizViewModel model, AuthenticatedUserClaims claims);
 
 	// ── Grading (teacher) ────────────────────────────────────────────────────

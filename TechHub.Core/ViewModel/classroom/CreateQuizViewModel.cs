@@ -17,7 +17,7 @@ public class AttachQuizViewModel
 	public string QuizCode { get; set; } = string.Empty;
 }
 
-public class CreateAssessmentViewModel
+public class QuizAssessmentCreateViewModel
 {
 	public List<Guid> QuestionIds { get; set; } = new();
 	public Guid? AssessmentSetId { get; set; }
@@ -290,7 +290,15 @@ public class QuizResultDto
 	public bool? IsPassed { get; set; }
 	public string Status { get; set; }
 	public string? SubmittedAt { get; set; }
-	public List<QuizAnswerResultDto> Answers { get; set; } = new();
+	public List<QuizAnswerResultDto> Answers { get; set; }
+}
+
+public class SubjectStatsDto
+{
+	public Guid SubjectId { get; set; }
+	public string SubjectName { get; set; }
+	public int LessonCount { get; set; }
+	public int QuizCount { get; set; }
 }
 
 public class LessonQuizResultDto

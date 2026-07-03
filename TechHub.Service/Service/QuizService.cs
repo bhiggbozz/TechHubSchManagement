@@ -275,7 +275,7 @@ public class QuizService : IQuizService
 		}
 	}
 
-	public async Task<BaseResponse> CreateAssessment(CreateAssessmentViewModel model, AuthenticatedUserClaims claims)
+	public async Task<BaseResponse> CreateAssessment(QuizAssessmentCreateViewModel model, AuthenticatedUserClaims claims)
 	{
 		try
 		{
@@ -384,7 +384,7 @@ public class QuizService : IQuizService
 				{ "Code",         code     },
 				{ "SchoolId",     schoolId },
 				{ "CreatedBy",    userId   },
-				{ "AssessmentSetId", resolvedSetId.HasValue ? (object)resolvedSetId.Value : DBNull.Value },
+				{ "AssessmentSetId", resolvedSetId.HasValue ? (object)resolvedSetId.Value : null },
 				{ "CreationDate", now      },
 				{ "ModifiedDate", now      },
 				{ "IsActive",     true     }
@@ -721,7 +721,7 @@ public class QuizService : IQuizService
 						{ "AllowRetakes", model.AllowRetakes },
 						{ "MaxAttempts", model.MaxAttempts },
 						{ "PassMarkPercent", model.PassMarkPercent },
-						{ "TimeLimitMinutes", (object?)model.TimeLimitMinutes ?? DBNull.Value },
+						{ "TimeLimitMinutes", (object?)model.TimeLimitMinutes ?? null },
 						{ "AutoSubmitOnTimeout", model.AutoSubmitOnTimeout },
 						{ "ShuffleQuestions", model.ShuffleQuestions },
 						{ "ShowResultImmediately", model.ShowResultImmediately },
@@ -762,7 +762,7 @@ public class QuizService : IQuizService
 						{ "AllowRetakes", model.AllowRetakes },
 						{ "MaxAttempts", model.MaxAttempts },
 						{ "PassMarkPercent", model.PassMarkPercent },
-						{ "TimeLimitMinutes", (object?)model.TimeLimitMinutes ?? DBNull.Value },
+						{ "TimeLimitMinutes", (object?)model.TimeLimitMinutes ?? null },
 						{ "AutoSubmitOnTimeout", model.AutoSubmitOnTimeout },
 						{ "ShuffleQuestions", model.ShuffleQuestions },
 						{ "ShowResultImmediately", model.ShowResultImmediately },
@@ -2266,7 +2266,7 @@ public class QuizService : IQuizService
 				var updateDict = new Dictionary<string, object>
 				{
 					{ "ManualMarksObtained", marksObtained },
-					{ "TeacherFeedback", (object?)model.TeacherFeedback ?? DBNull.Value },
+					{ "TeacherFeedback", model.TeacherFeedback },
 					{ "GradedBy", teacherId },
 					{ "GradedAt", now },
 					{ "ModifiedDate", now }
@@ -2724,7 +2724,7 @@ public class QuizService : IQuizService
 					{ "AllowRetakes", model.AllowRetakes },
 					{ "MaxAttempts", model.MaxAttempts },
 					{ "PassMarkPercent", model.PassMarkPercent },
-					{ "TimeLimitMinutes", (object?)model.TimeLimitMinutes ?? DBNull.Value },
+					{ "TimeLimitMinutes", (object?)model.TimeLimitMinutes ?? null },
 					{ "AutoSubmitOnTimeout", model.AutoSubmitOnTimeout },
 					{ "ShuffleQuestions", model.ShuffleQuestions },
 					{ "ShowResultMode", model.ShowResultMode },
@@ -2809,7 +2809,7 @@ public class QuizService : IQuizService
 					{ "AllowRetakes", model.AllowRetakes },
 					{ "MaxAttempts", model.MaxAttempts },
 					{ "PassMarkPercent", model.PassMarkPercent },
-					{ "TimeLimitMinutes", (object?)model.TimeLimitMinutes ?? DBNull.Value },
+					{ "TimeLimitMinutes", (object?)model.TimeLimitMinutes ?? null },
 					{ "AutoSubmitOnTimeout", model.AutoSubmitOnTimeout },
 					{ "ShuffleQuestions", model.ShuffleQuestions },
 					{ "ShowResultMode", model.ShowResultMode },

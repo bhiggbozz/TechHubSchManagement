@@ -282,6 +282,24 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		[HttpGet("subject/{subjectId}/classroom/{classroomId}/stats")]
+		[Authorize]
+		[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+		[ProducesResponseType(StatusCodes.Status404NotFound)]
+		public async Task<IActionResult> GetSubjectStats(Guid subjectId, Guid classroomId)
+		{
+			var userClaims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.GetSubjectStatsAsync(subjectId, classroomId, userClaims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
+		}
+
 		// POST api/topic/subtopics/add
 		[HttpPost("subtopics/add")]
 		[Authorize(Roles = "SubjectTeacher,HeadTeacher,ClassTeacher,Administrator,SuperAdministrator")]

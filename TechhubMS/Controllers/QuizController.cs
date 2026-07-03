@@ -34,7 +34,7 @@ public class QuizController : ControllerBase
 
 	[HttpPost("assessments")]
 	[Authorize]
-	public async Task<IActionResult> CreateAssessment([FromBody] CreateAssessmentViewModel model)
+	public async Task<IActionResult> CreateAssessment([FromBody] QuizAssessmentCreateViewModel model)
 	{
 		var claims = GetUserClaims();
 		var response = await _quizService.CreateAssessment(model, claims);

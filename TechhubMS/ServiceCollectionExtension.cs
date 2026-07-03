@@ -84,6 +84,19 @@ namespace TechhubMS
 			services.AddScoped<IQueryRepository<QuizConfig>, QueryRepositoryService<QuizConfig>>();
 			services.AddScoped<ICommandRespository<QuizConfig>, CommandRepositoryService<QuizConfig>>();
 
+			// Assessment module repositories
+			services.AddScoped<ICommandRespository<Assessment>, CommandRepositoryService<Assessment>>();
+			services.AddScoped<ICommandRespository<AssessmentConfig>, CommandRepositoryService<AssessmentConfig>>();
+			services.AddScoped<ICommandRespository<AssessmentQuestion>, CommandRepositoryService<AssessmentQuestion>>();
+			services.AddScoped<ICommandRespository<AssessmentAssignment>, CommandRepositoryService<AssessmentAssignment>>();
+			services.AddScoped<ICommandRespository<AssessmentAttempt>, CommandRepositoryService<AssessmentAttempt>>();
+			services.AddScoped<ICommandRespository<AssessmentAttemptAnswer>, CommandRepositoryService<AssessmentAttemptAnswer>>();
+			services.AddScoped<IQueryRepository<Assessment>, QueryRepositoryService<Assessment>>();
+			services.AddScoped<IQueryRepository<AssessmentConfig>, QueryRepositoryService<AssessmentConfig>>();
+			services.AddScoped<IQueryRepository<AssessmentAttempt>, QueryRepositoryService<AssessmentAttempt>>();
+			services.AddScoped<IQueryRepository<AssessmentAttemptAnswer>, QueryRepositoryService<AssessmentAttemptAnswer>>();
+			services.AddScoped<IAssessmentService, AssessmentService>();
+
 			// Register QuestionBank module
 			services.AddQuestionBankServices();
 
