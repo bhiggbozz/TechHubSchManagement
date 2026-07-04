@@ -15,9 +15,13 @@ public interface IAssessmentService
 	Task<BaseResponse> AssignAssessment(AssignAssessmentViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetStudentAssessments(AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetAssessmentDetail(Guid assessmentId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetAssessmentDetailByCode(string code, AuthenticatedUserClaims claims);
 	Task<BaseResponse> StartAttempt(Guid assessmentId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> SubmitAnswer(SubmitAssessmentAnswerViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> SubmitAttempt(Guid attemptId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetResult(Guid attemptId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetAttemptHistory(Guid assessmentId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetAssignedAssessments(AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetTeacherAssessments(AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetAssessmentAssignments(Guid assessmentId, AuthenticatedUserClaims claims);
 }

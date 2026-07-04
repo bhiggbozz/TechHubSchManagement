@@ -14,6 +14,8 @@ public class AssessmentConfig
     public bool ShuffleQuestions { get; set; } = false;
     public int PassMarkPercent { get; set; } = 50;
     public bool ShowResultImmediately { get; set; } = true;
+    public bool ShowCorrectAnswers { get; set; } = false;
+    public DateTime? ExpiresAt { get; set; }
     public int EasyMarks { get; set; } = 1;
     public int MediumMarks { get; set; } = 2;
     public int HardMarks { get; set; } = 3;

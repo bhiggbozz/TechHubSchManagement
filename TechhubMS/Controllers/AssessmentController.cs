@@ -63,6 +63,42 @@ public class AssessmentController : ControllerBase
 		return MapResponse(result);
 	}
 
+	[HttpGet("assigned")]
+	[Authorize]
+	public async Task<IActionResult> GetAssignedAssessments()
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.GetAssignedAssessments(claims);
+		return MapResponse(result);
+	}
+
+	[HttpGet("teacher/list")]
+	[Authorize]
+	public async Task<IActionResult> GetTeacherAssessments()
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.GetTeacherAssessments(claims);
+		return MapResponse(result);
+	}
+
+	[HttpGet("{assessmentId}/assignments")]
+	[Authorize]
+	public async Task<IActionResult> GetAssessmentAssignments(Guid assessmentId)
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.GetAssessmentAssignments(assessmentId, claims);
+		return MapResponse(result);
+	}
+
+	[HttpGet("code/{code}/detail")]
+	[Authorize]
+	public async Task<IActionResult> GetAssessmentDetailByCode(string code)
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.GetAssessmentDetailByCode(code, claims);
+		return MapResponse(result);
+	}
+
 	[HttpGet("{assessmentId}/detail")]
 	[Authorize]
 	public async Task<IActionResult> GetAssessmentDetail(Guid assessmentId)
