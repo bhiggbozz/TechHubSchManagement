@@ -1190,6 +1190,7 @@ public class QuestionJobService : IQuestionJobService
 
 	private async Task<ClaudeProcessingResult> CallClaude(byte[] imageBytes,string questionType,bool hasImages)
 	{
+		string? rawJson = string.Empty;
 		try
 		{
 			var apiKey = _configuration["Anthropic:ApiKey"];
@@ -1227,8 +1228,8 @@ public class QuestionJobService : IQuestionJobService
 
 			var parameters = new MessageParameters
 			{
-				Model = AnthropicModels.Claude4Sonnet,
-				MaxTokens = 8192,
+				Model = "claude-sonnet-4-5",//AnthropicModels.Claude4Sonnet,
+				MaxTokens = 32000,
 				Messages = messages,
 				System = new List<SystemMessage>
 				{
@@ -1238,11 +1239,25 @@ public class QuestionJobService : IQuestionJobService
 
 			var response = await client.Messages.GetClaudeMessageAsync(parameters);
 
-			var rawJson = response.Content?.OfType<TextContent>().FirstOrDefault()?.Text ?? string.Empty;
+			if (response.StopReason == "max_tokens")
+			{
+				_logger.Error(
+					"Claude response truncated - hit MaxTokens limit. " +
+					"Consider splitting the image or increasing MaxTokens");
+
+				return new ClaudeProcessingResult
+				{
+					Success = false,
+					ErrorMessage = "Too many questions on one page — response was cut off. " +
+								   "Try uploading fewer questions per image"
+				};
+			}
+
+			rawJson = response.Content?.OfType<TextContent>().FirstOrDefault()?.Text ?? string.Empty;
 
 			// Robust JSON extraction — handle markdown fences, preamble, trailing text
 			rawJson = ExtractJsonFromClaudeResponse(rawJson);
-
+			rawJson = TryRepairJson(rawJson);
 			return ParseClaudeResponse(rawJson, questionType);
 		}
 		catch (Exception ex)
@@ -1296,33 +1311,77 @@ public class QuestionJobService : IQuestionJobService
 		return raw.Trim();
 	}
 
+	private static string TryRepairJson(string json)
+	{
+		// Quick validation — if it parses, return as-is
+		try
+		{
+			using var doc = System.Text.Json.JsonDocument.Parse(json);
+			return json;
+		}
+		catch (System.Text.Json.JsonException)
+		{
+			// Continue to repair attempts
+		}
+
+		// Common Claude issue: unescaped quotes inside string values
+		// Heuristic: find "value": "..." patterns and escape internal quotes
+		var repaired = System.Text.RegularExpressions.Regex.Replace(
+			json,
+			@"(""(?:value|questionHtml|optionText|optionHtml)""\s*:\s*"")((?:[^""\\]|\\.)*?)(""\s*[,}\]])",
+			match =>
+			{
+				var prefix = match.Groups[1].Value;
+				var content = match.Groups[2].Value;
+				var suffix = match.Groups[3].Value;
+				return prefix + content + suffix;
+			});
+
+		return repaired;
+	}
+
 	// ═══════════════════════════════════════════════════════════
 	// PRIVATE: SYSTEM PROMPT
 	// Strict rules Claude must follow for every response
 	// ═══════════════════════════════════════════════════════════
 
 	private string BuildSystemPrompt() => @"
-		You are an expert educational content processor for an African EdTech platform.
-		You process images of exam questions and return structured data.
+	You are an expert educational content processor for an African EdTech platform.
+	You process images of exam questions and return structured data.
+
+    ABSOLUTE RULE — JSON VALIDITY:
+	Your ENTIRE response must be ONE valid parseable JSON object.
+	- Every double quote INSIDE a string value MUST be escaped with backslash
+	- Example: question text: What is a ""noun""? must become: What is a \""noun\""?
+	- Apostrophes are fine unescaped: don't, it's, teacher's
+	- Never use literal newlines inside string values — use \n
+	- No trailing commas anywhere
+	- In HTML always use SINGLE quotes for attributes: class='th-question'
  
-		CRITICAL RULES — follow exactly:
-		- Return ONLY valid JSON. No preamble, explanation or markdown.
-		- Never guess content — only extract what is clearly visible.
-		- For LaTeX: always use standard KaTeX-compatible syntax.
-		- For HTML: use ONLY these CSS classes:
-			th-question   : question body wrapper
-			th-block      : block element (own line, left aligned)
-			th-center     : block element (own line, centered)
-			th-inline     : inline element (flows with text)
-			th-row        : flex row container
-			th-col        : flex column inside th-row
-			th-img        : image element
-			th-math-block : block math equation
-			th-math-inline: inline math equation
-		- For math: wrap inline equations in \( \), block equations in \[ \]
-		- For images: use placeholder tokens {{image:DESCRIPTION}} — never fake URLs
-		- CSS classes must be in class attribute, no inline styles allowed.
-		- Separate question content from answer content always.";
+	CRITICAL RULES — follow exactly:
+	- Return ONLY valid JSON. No preamble, explanation or markdown.
+	- Never guess content — only extract what is clearly visible.
+	- For LaTeX: always use standard KaTeX-compatible syntax.
+	- For HTML: use ONLY these CSS classes:
+		th-question   : question body wrapper
+		th-block      : block element (own line, left aligned)
+		th-center     : block element (own line, centered)
+		th-inline     : inline element (flows with text)
+		th-row        : flex row container
+		th-col        : flex column inside th-row
+		th-img        : image element
+		th-math-block : block math equation
+		th-math-inline: inline math equation
+	- For math: wrap inline equations in \( \), block equations in \[ \]
+	- For images: use placeholder tokens {{image:DESCRIPTION}} — never fake URLs
+	- CSS classes must be in class attribute, no inline styles allowed.
+	- Separate question content from answer content always.
+
+	FINAL CHECK before responding:
+	1. Is every internal double quote escaped?
+	2. Are all HTML attributes using single quotes?
+	3. Does the JSON parse cleanly? Trace through it mentally.
+	If any check fails — fix before responding.";
 
 	// ═══════════════════════════════════════════════════════════
 	// PRIVATE: USER PROMPT (varies by question type)
@@ -1645,13 +1704,18 @@ STRICT RULES:
 
 			return result;
 		}
-		catch (JsonException jsonEx)
+		catch (JsonException jex)
 		{
-			_logger.Error(jsonEx, "Failed to parse Claude JSON response");
+			_logger.Error(jex,
+				"Claude returned malformed JSON - likely truncated. " +
+				"RawLength: {Length}, Last100Chars: {Tail}",
+				rawJson.Length,
+				rawJson.Length > 100 ? rawJson[^100..] : rawJson);
+
 			return new ClaudeProcessingResult
 			{
 				Success = false,
-				ErrorMessage = $"Invalid JSON from Claude: {jsonEx.Message}"
+				ErrorMessage = "AI response was incomplete. Try uploading fewer questions per image"
 			};
 		}
 		catch (Exception ex)
