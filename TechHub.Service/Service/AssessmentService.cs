@@ -118,6 +118,20 @@ public class AssessmentService : IAssessmentService
                         return Bad("Could not generate unique assessment code. Please try again.");
                 }
                 while (true);
+				// Generate unique code
+				
+				do
+				{
+					code = QuizService.QuizCodeGenerator.Generate("AS");
+					retries++;
+					var existing = await _assessmentQuery.Get($@"
+                        SELECT TOP 1 Id FROM Assessments
+                        WHERE Code = '{code}' AND IsActive = 1");
+					if (existing is null) break;
+					if (retries > 10)
+						return Bad("Could not generate unique assessment code. Please try again.");
+				}
+				while (true);
 
                 using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
                 try

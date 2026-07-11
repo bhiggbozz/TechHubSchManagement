@@ -15,13 +15,16 @@ public class PerformanceController : ControllerBase
 {
     private readonly IPerformanceDashboardService _dashboardService;
     private readonly IPerformanceAggregationService _aggregationService;
+    private readonly IStudentDashboardService _studentDashboardService;
 
     public PerformanceController(
         IPerformanceDashboardService dashboardService,
-        IPerformanceAggregationService aggregationService)
+        IPerformanceAggregationService aggregationService,
+        IStudentDashboardService studentDashboardService)
     {
         _dashboardService = dashboardService;
         _aggregationService = aggregationService;
+        _studentDashboardService = studentDashboardService;
     }
 
     [HttpGet("navbar")]
@@ -69,6 +72,22 @@ public class PerformanceController : ControllerBase
     {
         var claims = GetUserClaims();
         var response = await _dashboardService.GetSubjectTopicsAsync(subjectId, claims);
+        return MapResponse(response);
+    }
+
+    [HttpGet("student-summary")]
+    public async Task<IActionResult> GetStudentSummary()
+    {
+        var claims = GetUserClaims();
+        var response = await _studentDashboardService.GetStudentSummaryAsync(claims);
+        return MapResponse(response);
+    }
+
+    [HttpPost("lesson/{lessonId}/watch")]
+    public async Task<IActionResult> MarkLessonAsWatched(Guid lessonId)
+    {
+        var claims = GetUserClaims();
+        var response = await _studentDashboardService.MarkLessonAsWatchedAsync(lessonId, claims);
         return MapResponse(response);
     }
 
