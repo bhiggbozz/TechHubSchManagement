@@ -119,8 +119,7 @@ public class AssessmentService : IAssessmentService
                 }
                 while (true);
 				// Generate unique code
-				string code;
-				int retries = 0;
+				
 				do
 				{
 					code = QuizService.QuizCodeGenerator.Generate("AS");
