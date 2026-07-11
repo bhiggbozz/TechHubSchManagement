@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace TechHub.Core.Entities;
 
-public class Assessment
+public class Assessments
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Code { get; set; }

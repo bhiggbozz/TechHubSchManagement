@@ -85,13 +85,13 @@ namespace TechhubMS
 			services.AddScoped<ICommandRespository<QuizConfig>, CommandRepositoryService<QuizConfig>>();
 
 			// Assessment module repositories
-			services.AddScoped<ICommandRespository<Assessment>, CommandRepositoryService<Assessment>>();
+			services.AddScoped<ICommandRespository<Assessments>, CommandRepositoryService<Assessments>>();
 			services.AddScoped<ICommandRespository<AssessmentConfig>, CommandRepositoryService<AssessmentConfig>>();
 			services.AddScoped<ICommandRespository<AssessmentQuestion>, CommandRepositoryService<AssessmentQuestion>>();
 			services.AddScoped<ICommandRespository<AssessmentAssignment>, CommandRepositoryService<AssessmentAssignment>>();
 			services.AddScoped<ICommandRespository<AssessmentAttempt>, CommandRepositoryService<AssessmentAttempt>>();
 			services.AddScoped<ICommandRespository<AssessmentAttemptAnswer>, CommandRepositoryService<AssessmentAttemptAnswer>>();
-			services.AddScoped<IQueryRepository<Assessment>, QueryRepositoryService<Assessment>>();
+			services.AddScoped<IQueryRepository<Assessments>, QueryRepositoryService<Assessments>>();
 			services.AddScoped<IQueryRepository<AssessmentConfig>, QueryRepositoryService<AssessmentConfig>>();
 			services.AddScoped<IQueryRepository<AssessmentAttempt>, QueryRepositoryService<AssessmentAttempt>>();
 			services.AddScoped<IQueryRepository<AssessmentAttemptAnswer>, QueryRepositoryService<AssessmentAttemptAnswer>>();
