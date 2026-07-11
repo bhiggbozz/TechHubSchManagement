@@ -1,87 +1,373 @@
-# TechHub — Assessment Start Attempt Endpoint Analysis
+# TechHub — School Management & EdTech Platform
 
-## Endpoint
+## What It Is
+
+A multi-tenant ASP.NET Core 8 Web API for school management: administration, lesson planning, quizzes/assessments, digital whiteboard session recording, performance analytics, and AI-powered question bank creation.
+
+---
+
+## Solution Architecture
 
 ```
-POST /api/Assessment/{assessmentId}/start
+TechhubMS.sln
+├── TechhubMS                          (Web API / Presentation)
+├── TechHub.Core                       (Domain — Entities, Enums, DTOs, ViewModels, Interfaces)
+├── TechHub.Service                    (Application — Service implementations, Dapper repos)
+├── TechHub.Entity.Migration           (Data — EF Core DbContext for schema migrations)
+├── TechHub.Background                 (Background Workers — Hangfire jobs, hosted services)
+└── TeachHub.QuestionBank              (Modular feature — AI question scanning with Claude)
 ```
 
-## Response You Got
+---
+
+## Technologies
+
+| Technology | Version | Use |
+|------------|---------|-----|
+| .NET 8 | 8.0 | Framework |
+| Dapper | 2.1.66 | All runtime data access |
+| EF Core | 8.0.25 | Schema migrations only |
+| SQL Server | via Microsoft.Data.SqlClient 6.0.1 | Primary database |
+| MongoDB | Driver 2.28.0 | Board sessions + performance snapshots |
+| RabbitMQ | Client 6.8.1 | Board batch async processing |
+| JWT Bearer | 8.0.21 | Auth |
+| Hangfire | 1.8.23 | Background job scheduling |
+| Cloudinary | DotNet 1.28.0 | Media/CDN storage |
+| Serilog | 4.3.1 | Structured logging |
+| AutoMapper | 14.0.0 | DTO mapping |
+| Anthropic.SDK | 5.10.0 | AI question extraction (Claude API) |
+| SignalR | 8.0.24 | WebSocket |
+
+---
+
+## Two Separate Auth Systems
+
+### 1. School Users (Users table)
+
+- Roles: `Student`, `HeadTeacher`, `Administrator`, `SuperAdministrator`, `SubjectTeacher`, `ClassTeacher`
+- Login: `POST /api/User/login`
+- JWT claims: `ClaimTypes.NameIdentifier`, `ClaimTypes.Role`, `"SchoolId"`, `"TenantId"`, `"SchoolName"`
+- Token expiry: 1 hour
+- Belongs to a school (has SchoolId)
+
+### 2. Platform Users (PlatformUser table — separate system)
+
+- Roles: `PlatformAdmin`, `PlatformSuperAdmin`
+- Login: `POST /api/Platform/login`
+- JWT claims: `ClaimTypes.NameIdentifier`, `ClaimTypes.Role` (no SchoolId — not tied to any school)
+- Token expiry: 1 hour
+- Manages the platform, not individual schools
+
+### Platform Role Hierarchy
+
+| Role | Created By | Can Do |
+|------|-----------|--------|
+| `PlatformSuperAdmin` | Seeded in DB migration | Create PlatformAdmins, access all platform endpoints |
+| `PlatformAdmin` | PlatformSuperAdmin via `POST /api/Platform/admin/create` | Provision schools, manage platform operations |
+
+### AdminPermission Bit-Flag System (school-level)
+
+`[Flags]` enum stored as int in `AdminPermissions` table:
+
+| Permission | Value | Description |
+|------------|-------|-------------|
+| None | 0 | No permissions |
+| ApproveClasses | 1 | Approve class preparations |
+| CreateClasses | 2 | Create class preparations |
+| ManageTeachers | 4 | Manage teacher accounts |
+| ManageStudents | 8 | Manage student accounts |
+| ViewReports | 16 | View performance reports |
+| ManageClassrooms | 32 | Manage classrooms |
+| ManageSubjects | 64 | Manage subjects |
+| CreateUsers | 128 | Create user accounts |
+
+Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin = 127`
+
+---
+
+## Multi-Tenancy
+
+- Tenant resolved from `X-Tenant-ID` header or subdomain (e.g., `pearl.vluethub.com`)
+- `MultiTenantMiddleware` runs before authentication
+- Resolved tenant stored in `HttpContext.Items`
+- Shared database, `SchoolId` column on every entity
+
+---
+
+## Response Format
 
 ```json
 {
-    "responseMessage": "You have an active attempt. Resume it.",
+    "responseMessage": "...",
     "responseCode": "99000",
     "status": "successful",
-    "data": {
-        "attemptId": "5e27cecd-c008-4f2b-a055-b80539c54413",
-        "resume": true
-    }
+    "data": { ... }
 }
 ```
 
-## Flow (AssessmentService.StartAttempt, line 401)
+### Response Code → HTTP Status Mapping
 
-1. **Extract claims** — reads `UserId`, `SchoolId`, `Role` from JWT
-2. **Check active attempt** — queries `AssessmentAttempt` WHERE `AssessmentId = {assessmentId}`, `StudentId = {studentId}`, `SchoolId = {schoolId}`, `Status = 'InProgress'`
-3. **If InProgress exists** — returns immediately:
-   ```
-   Ok("You have an active attempt. Resume it.", new { AttemptId = inProgress.Id, Resume = true })
-   ```
-   This is what you are hitting — the student already has an active attempt (`5e27cecd...`).
-4. **If no InProgress** — counts existing completed attempts, creates new attempt, fetches questions + options, returns full attempt data with questions.
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `99000` | 200 | Success |
+| `99001` | 400 | Validation error |
+| `99101` | 500 | Server error |
+| `99134` | 404 | Not found |
+| `99107` | 401 | Unauthorized |
+| `AX1003` | 403 | Forbidden |
+| `99161` | 409 | Conflict |
 
-## Response Codes & HTTP Status Mapping (AssessmentController.MapResponse)
+---
 
-In the controller, response codes map to HTTP status codes:
+## Key Database Tables
 
-| ResponseCode | HTTP Status | Meaning |
-|---|---|---|
-| `"99000"` | `200 OK` | Success |
-| `"99134"` | `404 Not Found` | Resource not found |
-| `"AX1003"` | `403 Forbidden` | Not authorized for this action |
-| `"99107"` | `401 Unauthorized` | Bad token |
-| `"99161"` | `409 Conflict` | Resource conflict |
-| anything else | `400 Bad Request` | Validation error |
+### School Management
 
-## Why You See This
+| Table | Key Columns |
+|-------|-------------|
+| `School` | Id, SchoolName, Location, CountryId, StateId, Address, IsActive |
+| `SchoolCode` | SchoolId, Code (used for student registration codes) |
+| `TenantInfo` | Id, SchoolId, Identifier (subdomain), IsActive |
+| `Users` | Id, FirstName, LastName, EmailAddress, UserName, HashPassword (SHA256), SchoolId, RoleId, IsActive |
+| `Role` | Id, Name (Student/HeadTeacher/Administrator/SuperAdministrator/SubjectTeacher/ClassTeacher) |
+| `Classroom` | Id, Name, SchoolId, NoOfStudents |
+| `Subjects` | Id, Subject, Category (Major/Minor), ClassCategory (Primary/Secondary/Colleges), SchoolId |
+| `StudentClassroom` | StudentId, ClassroomId |
+| `TeacherSubject` | TeacherId, SubjectId |
+| `ClassroomTeacher` | TeacherId, ClassroomId |
+| `LoginHistory` | Id, UserId, RoleId, PasswordFailed, DeviceType, DeviceIp |
+| `RefreshTokens` | Id, UserId, Token, ExpiresAt |
+| `AdminPermissions` | Id, UserId, SchoolId, Permissions (int bitmask), CreatedBy, IsActive |
 
-The student (identified by JWT) has already started an attempt on this assessment (`db46f707-...`) that was never submitted. The system found a row in `AssessmentAttempt` with `Status = 'InProgress'` and returned the existing `attemptId`.
+### Platform Users
 
-## To Resume the Attempt
+| Table | Key Columns |
+|-------|-------------|
+| `PlatformUser` | Id, FirstName, LastName, Email, Username, PasswordHash (SHA256), Role (PlatformAdmin\|PlatformSuperAdmin), IsActive, IsDeleted, CreatedBy |
 
-- **Submit answers** → `POST /api/Assessment/answer` with body:
-  ```json
-  {
-    "attemptId": "5e27cecd-c008-4f2b-a055-b80539c54413",
-    "questionId": "...",
-    "selectedOptionId": "..."  // or "typedAnswer", "isSkipped"
-  }
-  ```
-- **Check attempt detail** (questions, options) → `GET /api/Assessment/{assessmentId}/detail`
-- **Submit the whole attempt** → `POST /api/Assessment/{attemptId}/submit`
-- **View result** → `GET /api/Assessment/result/{attemptId}`
-- **View history** → `GET /api/Assessment/{assessmentId}/history`
+### Lesson Planning
 
-## To Force a New Attempt (Discard InProgress)
+| Table | Key Columns |
+|-------|-------------|
+| `LessonContent` | Id, SchoolId, ClassroomId, SubjectId, TopicId, Aim, Description, Status (Draft\|PendingApproval\|Approved\|Rejected\|Published), QuizCode, CreatedBy |
+| `LessonMedia` | Id, LessonId, MediaUrl, MediaType |
+| `ClassPreparation` | Id, SchoolId, TeacherId, Status (Draft\|Pending\|Approved\|Rejected\|InProgress\|Completed), SubmittedAt, ApprovedAt |
+| `ClassPreparationMedia` | Id, ClassPreparationId, MediaUrl, MediaType |
 
-There is no "cancel attempt" endpoint. The `InProgress` row must be manually deleted from the `AssessmentAttempt` table, or its status changed to something else (`Abandoned`), before calling `start` again.
+### Quiz System
 
-## Key Tables
+| Table | Key Columns |
+|-------|-------------|
+| `Quiz` | Id, Code, LessonId, Title |
+| `QuizConfig` | Id, QuizCode, TimeLimitMinutes, PassMarkPercent, ShuffleQuestions, AllowRetakes, MaxAttempts |
+| `QuizQuestion` | Id, QuizCode, QuestionId, DisplayOrder |
+| `QuizAttempt` | Id, QuizCode, LessonId, StudentId, SchoolId, AttemptNumber, Status (InProgress\|Submitted\|PartiallyGraded\|FullyGraded), TotalCorrect, TotalWrong, FinalScorePercent, IsPassed, StartedAt, SubmittedAt |
+| `QuizAttemptAnswer` | Id, AttemptId, QuestionId, SelectedOptionId, IsCorrect, AutoMarksObtained, TypedAnswer, MaxMarks, IsSkipped |
+| `QuizAttemptStatus` | Constants: InProgress, Submitted, PartiallyGraded, FullyGraded, Abandoned |
 
-| Table | Columns |
-|---|---|
-| `Assessment` | Id, Code, Title, Description, SchoolId, CreatedBy, IsActive |
+### Assessment System
+
+| Table | Key Columns |
+|-------|-------------|
+| `Assessment` | Id, Code (AS-xxx), Title, Description, SchoolId, CreatedBy, IsActive |
 | `AssessmentConfig` | Id, AssessmentId, TimeLimitMinutes, ShuffleQuestions, PassMarkPercent, ShowResultImmediately, EasyMarks, MediumMarks, HardMarks, ExamLevelMarks |
-| `AssessmentQuestion` | Id, AssessmentId, QuestionId, SchoolId, DisplayOrder, IsActive |
-| `AssessmentAssignment` | Id, AssessmentId, TargetType (Student\|Subject\|Classroom), TargetId, SchoolId, IsActive |
-| `AssessmentAttempt` | Id, AssessmentId, StudentId, SchoolId, AttemptNumber, IsOfficial, AutoMarksObtained, ManualMarksObtained, TotalMarks, FinalScorePercent, IsPassed, Status (InProgress\|Submitted\|PartiallyGraded\|FullyGraded), StartedAt, SubmittedAt, TimeTakenSeconds |
-| `AssessmentAttemptAnswer` | Id, AttemptId, QuestionId, SchoolId, SelectedOptionId, IsCorrect, AutoMarksObtained, TypedAnswer, BoardSessionId, AudioUrl, MaxMarks, IsSkipped, TeacherFeedback, ManualMarksObtained |
+| `AssessmentQuestion` | Id, AssessmentId, QuestionId, DisplayOrder, IsActive |
+| `AssessmentAssignment` | Id, AssessmentId, TargetType (Student\|Subject\|Classroom), TargetId, SchoolId |
+| `AssessmentAttempt` | Id, AssessmentId, StudentId, SchoolId, AttemptNumber, IsOfficial, Status (InProgress\|Submitted\|PartiallyGraded\|FullyGraded), AutoMarksObtained, ManualMarksObtained, TotalMarks, FinalScorePercent, IsPassed, StartedAt, SubmittedAt, TimeTakenSeconds |
+| `AssessmentAttemptAnswer` | Id, AttemptId, QuestionId, SelectedOptionId, IsCorrect, AutoMarksObtained, TypedAnswer, BoardSessionId, AudioUrl, MaxMarks, IsSkipped |
 
-## Attempt Logic
+### Question Bank
 
-- Only **first attempt** is `IsOfficial = true` (counts for grading)
-- **AttemptNumber** auto-increments per student per assessment
-- Objective questions (SelectedOptionId) are **auto-graded immediately** on answer submission
-- Theory/essay questions require manual grading via `POST /api/Assessment/grading/{id}/grade`
-- Final score = `(AutoMarksObtained + ManualMarksObtained) / TotalMarks * 100`
+| Table | Key Columns |
+|-------|-------------|
+| `Questions` | Id, Title, TextContent, QuestionType (Objective\|Theory\|TrueFalse), DifficultyLevel, MarksAllocation, SchoolId, SubjectId, TopicId, Status |
+| `QuestionOptions` | Id, QuestionId, OptionLabel, OptionText, IsCorrect |
+| `QuestionImage` | Id, QuestionId, ImageUrl |
+| `ScanSession` | Id, TeacherId, SchoolId, Status |
+| `ScanToken` | Id, TeacherId, Remaining, ExpiresAt |
+| `QuestionJob` | Id, Status (Pending\|Processing\|Completed\|Failed), AIConfidenceScore |
+
+### Board Session (MongoDB)
+
+| Collection | Key Fields |
+|-----------|------------|
+| `BoardSession` | Id, LessonId, TeacherId, SchoolId, Status, StartedAt, EndedAt, TotalStrokes, TotalBatches |
+| `BoardStroke` | Id, SessionId, BatchIndex, Data (compressed stroke JSON) |
+| `BoardBatch` | Id, SessionId, BatchIndex, Strokes[], CreatedAt |
+| `PerformanceSnapshot` | DocType (school\|classroom_subject\|student\|teacher), AggregatedData |
+
+### Lesson Progress (Watched Lessons)
+
+| Table | Key Columns |
+|-------|-------------|
+| `StudentLessonProgress` | Id, StudentId, LessonId, SchoolId, WatchedAt |
+
+---
+
+## API Endpoints
+
+### Authentication & Users
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/User/login` | Anonymous | School user login (tenant-aware) |
+| POST | `/api/User/createUser` | JWT (Admin/SuperAdmin) | Create a school user |
+| POST | `/api/User/EditUser` | JWT | Edit user |
+| GET | `/api/User/GetStudents` | JWT | Paginated students |
+| POST | `/api/User/updatePassword` | JWT | Update password |
+| POST | `/api/User/update-password/newUser` | Anonymous | First-time password setup |
+| POST | `/api/User/AssignPermissions` | SuperAdmin | Assign admin bitmask permissions |
+| GET | `/api/User/GetAdminPermissions` | JWT | Get user's permissions |
+| POST | `/api/User/RevokePermissions` | SuperAdmin | Revoke permissions |
+| POST | `/api/User/refresh-token` | Anonymous | Refresh JWT |
+| POST | `/api/Platform/login` | Anonymous | Platform user login |
+| POST | `/api/Platform/admin/create` | PlatformSuperAdmin | Create PlatformAdmin |
+
+### School Management
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/School/createschool` | PlatformAdmin/SuperAdmin | Create school record |
+| POST | `/api/School/provision` | PlatformAdmin/SuperAdmin | **Full provision**: school + tenant + admin user + email |
+| POST | `/api/School/getState` | - | Get states by country |
+| POST | `/api/School/createschoolclassroom` | JWT | Create classroom |
+| POST | `/api/School/registersubject` | JWT | Register subject |
+| GET | `/api/School/getAllSchoolSubjects` | JWT | List subjects |
+| GET | `/api/School/GetAllClassrooms` | JWT | Paginated classrooms |
+| GET | `/api/School/GetAllSubjects` | JWT | Filtered subjects |
+| POST | `/api/School/AssignTeachers` | JWT | Assign teachers to classroom |
+| PUT | `/api/School/logo` | JWT | Update school logo |
+| POST | `/api/School/topics` | JWT | Create topic |
+| GET | `/api/School/topics/{subjectId}` | JWT | Topics by subject |
+| POST | `/api/School/subtopics` | JWT | Create subtopic |
+| GET | `/api/School/subtopics/{topicId}` | JWT | Subtopics by topic |
+| GET | `/api/School/classroom/{id}/curriculum` | JWT | Classroom curriculum |
+
+### Lessons
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/lessons/submit` | JWT | Submit lesson |
+| POST | `/api/lessons/draft` | JWT | Save draft |
+| GET | `/api/lessons/{id}` | JWT | Get lesson |
+| GET | `/api/lessons/classroom/{id}` | JWT | Lessons by classroom |
+| GET | `/api/lessons/student/classroom/{id}` | Student | Student's lessons (Published only) |
+| GET | `/api/lessons/my-lessons` | Teacher | Teacher's lessons |
+| POST | `/api/lessons/{id}/respond` | JWT | Approve/reject lesson |
+| GET | `/api/lessons/pending-approvals` | JWT | Pending approvals |
+
+### Quiz
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/quiz/create` | JWT | Create quiz |
+| POST | `/api/quiz/configure` | JWT | Configure quiz |
+| PATCH | `/api/quiz/lesson/{id}/attach` | JWT | Attach quiz to lesson |
+| GET | `/api/quiz/lesson/{id}` | JWT | Quiz by lesson |
+| GET | `/api/quiz/student/lesson/{id}/display` | Student | Quiz preview |
+| GET | `/api/quiz/code/{code}/display` | Student | Quiz by code |
+| POST | `/api/quiz/attempt/start` | Student | Start quiz attempt |
+| POST | `/api/quiz/attempt/{id}/submit` | Student | Submit quiz attempt |
+| GET | `/api/quiz/attempt/{id}/result` | Student | Get result |
+| GET | `/api/quiz/grading/pending` | Teacher | Pending manual grades |
+| POST | `/api/quiz/grading/{id}/grade` | Teacher | Grade answer |
+
+### Assessment
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/Assessment/create` | JWT | Create assessment |
+| POST | `/api/Assessment/assign` | JWT | Assign (Student/Subject/Classroom) |
+| GET | `/api/Assessment/student/list` | Student | List student's assessments |
+| GET | `/api/Assessment/{id}/detail` | JWT | Assessment with questions |
+| POST | `/api/Assessment/{id}/start` | Student | **Start or resume** attempt |
+| POST | `/api/Assessment/answer` | Student | Submit single answer |
+| POST | `/api/Assessment/{attemptId}/submit` | Student | Submit entire attempt |
+| GET | `/api/Assessment/result/{attemptId}` | Student | Get result |
+| GET | `/api/Assessment/{id}/history` | Student | Attempt history |
+
+### Performance & Dashboard
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/api/performance/navbar` | JWT | Role-specific navbar stats |
+| GET | `/api/performance/dashboard` | JWT | Role-specific dashboard |
+| GET | `/api/performance/classroom/{id}` | JWT | Classroom breakdown |
+| GET | `/api/performance/subject/{id}` | JWT | Subject breakdown |
+| GET | `/api/performance/student-summary` | Student | **New/unattempted assessments, quizzes, unwatched lessons** |
+| POST | `/api/performance/lesson/{lessonId}/watch` | Student | Mark lesson as watched |
+| POST | `/api/performance/refresh` | Admin | Trigger aggregation |
+
+### Board Session
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/board/session/{sessionId}/batch` | Teacher | Submit 1-min stroke batch |
+| POST | `/api/board/session/{sessionId}/manifest` | Teacher | Submit session manifest |
+| GET | `/api/board/session/{sessionId}` | JWT | Get session |
+| GET | `/api/board/session/{sessionId}/manifest` | Student | Get manifest for download |
+| GET | `/api/board/session/{sessionId}/batch/{indexKey}` | Student | Get stroke batch |
+
+### Question Bank
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/questions/createquestions` | JWT | Create question |
+| POST | `/api/questions/batch` | JWT | Batch create |
+| GET | `/api/questions/{id}` | JWT | Get question |
+| GET | `/api/questions/subjects/{id}` | JWT | Subject questions |
+| POST | `/api/questions/{id}/publish` | JWT | Publish question |
+| POST | `/api/questions/scan/token/request` | JWT | Request scan token |
+| POST | `/api/questions/scan/process/{tokenId}` | JWT | AI scan (SSE streaming) |
+| POST | `/api/questions/sync` | JWT | Sync offline questions |
+| POST | `/api/questionjob/submit` | JWT | Submit image for AI extraction |
+| GET | `/api/questionjob/{jobId}/status` | JWT | Poll job status |
+
+---
+
+## Key Design Patterns
+
+### Generic Repository (Dapper)
+- `ICommandRepository<T>` / `IQueryRepository<T>` → `CommandRepositoryService<T>` / `QueryRepositoryService<T>`
+- Table name derived from `typeof(T).Name`
+- Methods: `Create(entity)`, `Create(dict)`, `Create(transaction, connection, dict)`, `Get(sql)`, `GetAll(sql)`
+
+### Assessment Attempt Flow
+1. `POST /api/Assessment/{id}/start` — checks for existing `InProgress` attempt
+2. If exists → returns `{ resume: true, attemptId }` (no new attempt created)
+3. If none → creates new attempt, fetches shuffled questions + options
+4. `POST /api/Assessment/answer` — submit one answer at a time (auto-grades objective)
+5. `POST /api/Assessment/{attemptId}/submit` — finalizes, calculates score
+6. Only first attempt is `IsOfficial = true`
+
+### Quiz Attempt Flow
+- Similar to assessment but attached to a lesson via `QuizCode`
+- `StartQuizAttempt` → `SubmitQuizAttempt` → `GetQuizResult`
+
+### Direct-to-CDN Upload
+- Server generates signed Cloudinary upload token
+- Frontend uploads directly to Cloudinary
+- Frontend calls `confirm-upload` to update DB
+
+### Background Jobs (Hangfire)
+- `MediaUploadJob`, `MediaCleanupJob`, `AIContentAnalysisJob`, `ThumbnailGeneratorJob`, `PerformanceAggregationJob`
+
+### Background Workers (Hosted Services)
+- `QuestionJobWorker` (30s cycle) — processes AI extraction jobs
+- `PerformanceAggregationWorker` (24h cycle) — aggregates quiz/assessment data to MongoDB
+- `BoardSyncWorker` — consumes RabbitMQ board batches, stores in MongoDB
+
+### Board Session Recording
+- Teacher's whiteboard strokes captured in 1-minute batches
+- Batches published to RabbitMQ for async processing
+- `BoardSyncWorker` consumes and stores in MongoDB
+- Students can download session manifests + stroke batches
+
+---
+
+## Important Notes
+
+- **No cancellation endpoint exists** for in-progress assessment attempts. To force a fresh attempt, manually update `AssessmentAttempt.Status` to `Abandoned` or delete the row.
+- **Lesson "watched" tracking** uses the `StudentLessonProgress` table. The `POST /api/performance/lesson/{lessonId}/watch` endpoint creates a row there.
+- **First PlatformSuperAdmin is seeded** via `Scriptsv11_PlatformUsers.sql` with username `platformadmin` and password `Platform@123`.
+- **ProvisisonSchool flow**: Creates School → SchoolCode → TenantInfo → Users (Administrator) → AdminPermissions (FullAdmin) → sends welcome email, all in one transaction.
