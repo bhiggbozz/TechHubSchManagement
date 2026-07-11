@@ -62,7 +62,7 @@ public class StudentDashboardService : IStudentDashboardService
                         a.Id       AS AssessmentId,
                         a.Code,
                         a.Title
-                    FROM Assessment a
+                    FROM Assessments a
                     JOIN AssessmentAssignment aa ON aa.AssessmentId = a.Id AND aa.IsActive = 1
                     LEFT JOIN AssessmentAttempt at2 ON at2.AssessmentId = a.Id
                         AND at2.StudentId = '{studentId}'
@@ -87,7 +87,7 @@ public class StudentDashboardService : IStudentDashboardService
                         lc.Id         AS LessonId,
                         lc.Aim        AS LessonTitle,
                         lc.QuizCode,
-                        s.Name        AS SubjectName
+                        s.Subject        AS SubjectName
                     FROM LessonContent lc
                     JOIN Subjects s ON s.Id = lc.SubjectId
                     WHERE lc.ClassroomId IN (
@@ -109,7 +109,7 @@ public class StudentDashboardService : IStudentDashboardService
                     SELECT
                         lc.Id         AS LessonId,
                         lc.Aim        AS LessonTitle,
-                        s.Name        AS SubjectName
+                        s.Subject        AS SubjectName
                     FROM LessonContent lc
                     JOIN Subjects s ON s.Id = lc.SubjectId
                     WHERE lc.ClassroomId IN (
