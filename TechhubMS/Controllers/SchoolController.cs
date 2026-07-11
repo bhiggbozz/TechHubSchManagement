@@ -6,6 +6,7 @@ using TechHub.Core.Model;
 using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.classroom;
+using TechHub.Core.ViewModel.Platform;
 using TechHub.Core.ViewModel.school;
 using TechHub.QuestionBank.Core.Helpers;
 using TechHub.Service.Extension;
@@ -24,6 +25,7 @@ namespace TechhubMS.Controllers
 			_schoolService = schoolService;
 		}
 		[HttpPost("createschool")]
+		[Authorize(Roles = "PlatformSuperAdmin,PlatformAdmin")]
 		public async Task<ActionResult<BaseResponse>> CreateSchool(SchoolViewModel schoolViewModel)
 		{
 			var schoolIdClaim = User.GetAuthenticatedUserClaims();
@@ -393,6 +395,22 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		[HttpPost("provision")]
+		[Authorize(Roles = "PlatformAdmin,PlatformSuperAdmin")]
+		public async Task<IActionResult> ProvisionSchool([FromBody] ProvisionSchoolViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.ProvisionSchool(model, claims);
+			return result.ResponseCode switch
+			{
+				"99000" => Ok(result),
+				"99134" => NotFound(result),
+				"AX1003" => StatusCode(StatusCodes.Status403Forbidden, result),
+				"99107" => Unauthorized(result),
+				"99161" => StatusCode(StatusCodes.Status409Conflict, result),
+				_ => BadRequest(result)
+			};
+		}
 
 	}
 

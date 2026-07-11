@@ -103,7 +103,7 @@ public class AssessmentService : IAssessmentService
 					code = QuizService.QuizCodeGenerator.Generate("AS");
 					retries++;
 					var existing = await _assessmentQuery.Get($@"
-                        SELECT TOP 1 Id FROM Assessment
+                        SELECT TOP 1 Id FROM Assessments
                         WHERE Code = '{code}' AND IsActive = 1");
 					if (existing is null) break;
 					if (retries > 10)

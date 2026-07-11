@@ -9,6 +9,7 @@ using TechHub.Core.Model;
 using TechHub.Core.ResponseModel;
 using TechHub.Core.ViewModel;
 using TechHub.Core.ViewModel.classroom;
+using TechHub.Core.ViewModel.Platform;
 using TechHub.Core.ViewModel.school;
 using TechHub.QuestionBank.Core.DTO;
 
@@ -56,6 +57,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> UpdateTeacherClassroom(Guid teacherId, UpdateTeacherClassroomViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> CreateTopicsWithSubTopics(CreateTopicsWithSubTopicsViewModel model, AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> GetSubjectStatsAsync(Guid subjectId, Guid classroomId, AuthenticatedUserClaims userClaims);
+		Task<BaseResponse> ProvisionSchool(ProvisionSchoolViewModel model, AuthenticatedUserClaims claims);
 
 		//Task<SubjectDetailResponse> GetSubjectById(Guid subjectId, AuthenticatedUserClaims userInfo);
 	}

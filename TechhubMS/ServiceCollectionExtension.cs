@@ -96,6 +96,9 @@ namespace TechhubMS
 			services.AddScoped<IQueryRepository<AssessmentAttempt>, QueryRepositoryService<AssessmentAttempt>>();
 			services.AddScoped<IQueryRepository<AssessmentAttemptAnswer>, QueryRepositoryService<AssessmentAttemptAnswer>>();
 			services.AddScoped<IAssessmentService, AssessmentService>();
+			services.AddScoped<IStudentDashboardService, StudentDashboardService>();
+			services.AddScoped<IPlatformAuthService, PlatformAuthService>();
+			services.AddScoped<IPlatformAdminService, PlatformAdminService>();
 
 			// Register QuestionBank module
 			services.AddQuestionBankServices();
