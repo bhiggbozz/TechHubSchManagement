@@ -25,7 +25,7 @@ public class AssessmentService : IAssessmentService
     private readonly ICommandRespository<AssessmentAssignment> _assignmentCommand;
     private readonly ICommandRespository<AssessmentAttempt> _attemptCommand;
     private readonly ICommandRespository<AssessmentAttemptAnswer> _answerCommand;
-    private readonly ICommandRespository<AssessmentAttemptAnswerBoard> _answerBoardCommand;
+    // private readonly ICommandRespository<AssessmentAttemptAnswerBoard> _answerBoardCommand;
     private readonly IQueryRepository<Assessments> _assessmentQuery;
     private readonly IQueryRepository<AssessmentConfig> _configQuery;
     private readonly IQueryRepository<AssessmentAttempt> _attemptQuery;
@@ -42,7 +42,7 @@ public class AssessmentService : IAssessmentService
         ICommandRespository<AssessmentAssignment> assignmentCommand,
         ICommandRespository<AssessmentAttempt> attemptCommand,
         ICommandRespository<AssessmentAttemptAnswer> answerCommand,
-        ICommandRespository<AssessmentAttemptAnswerBoard> answerBoardCommand,
+        // ICommandRespository<AssessmentAttemptAnswerBoard> answerBoardCommand,
         IQueryRepository<Assessments> assessmentQuery,
         IQueryRepository<AssessmentConfig> configQuery,
         IQueryRepository<AssessmentAttempt> attemptQuery,
@@ -57,7 +57,7 @@ public class AssessmentService : IAssessmentService
         _assignmentCommand = assignmentCommand;
         _attemptCommand = attemptCommand;
         _answerCommand = answerCommand;
-        _answerBoardCommand = answerBoardCommand;
+        // _answerBoardCommand = answerBoardCommand;
         _assessmentQuery = assessmentQuery;
         _configQuery = configQuery;
         _attemptQuery = attemptQuery;
@@ -577,7 +577,7 @@ public class AssessmentService : IAssessmentService
                 bool isOfficial = existingAttempts == 0;
 
                 // Verify assessment exists and get config
-                var configSql = "SELECT TOP 1 TimeLimitMinutes, ShuffleQuestions FROM AssessmentConfig " +
+                var configSql = "SELECT TOP 1 TimeLimitMinutes, ShuffleQuestions, ExpiresAt FROM AssessmentConfig " +
                     "WHERE AssessmentId = @AssessmentId AND IsActive = 1";
 
                 var config = await _configQuery.SelectByColumns(configSql, new Dictionary<string, object>
@@ -587,6 +587,9 @@ public class AssessmentService : IAssessmentService
 
                 if (config is null)
                     return Bad("Assessment configuration not found", ResponseCode.NotFound);
+
+                if (config.ExpiresAt.HasValue && DateTime.UtcNow > config.ExpiresAt.Value)
+                    return Bad("Assessment has expired", ResponseCode.BadRequest);
 
                 // Create attempt
                 var attemptId = Guid.NewGuid();
@@ -691,7 +694,7 @@ public class AssessmentService : IAssessmentService
 
                 var attempt = await _attemptQuery.SelectByColumns(attemptSql, new Dictionary<string, object>
                 {
-                    { "AttemptId", model.AttemptId },
+                    { "Id", model.AttemptId },
                     { "StudentId", studentId },
                     { "SchoolId", schoolId }
                 });
@@ -758,28 +761,28 @@ public class AssessmentService : IAssessmentService
                         { "ModifiedDate", now }
                     });
 
-                    // Save multiple board session references (essay / short-answer)
-                    var boardsToSave = new List<AnswerBoardInput>();
-                    if (!string.IsNullOrWhiteSpace(model.BoardSessionId))
-                        boardsToSave.Add(new AnswerBoardInput { BoardSessionId = model.BoardSessionId });
-                    if (model.Boards?.Any() == true)
-                        boardsToSave.AddRange(model.Boards.Where(b => !string.IsNullOrWhiteSpace(b.BoardSessionId)));
+                    // // Save multiple board session references (essay / short-answer)
+                    // var boardsToSave = new List<AnswerBoardInput>();
+                    // if (!string.IsNullOrWhiteSpace(model.BoardSessionId))
+                    //     boardsToSave.Add(new AnswerBoardInput { BoardSessionId = model.BoardSessionId });
+                    // if (model.Boards?.Any() == true)
+                    //     boardsToSave.AddRange(model.Boards.Where(b => !string.IsNullOrWhiteSpace(b.BoardSessionId)));
 
-                    if (boardsToSave.Any())
-                    {
-                        foreach (var b in boardsToSave)
-                        {
-                            await _answerBoardCommand.Create(new Dictionary<string, object>
-                            {
-                                { "Id", Guid.NewGuid() },
-                                { "AnswerId", answerId },
-                                { "BoardSessionId", b.BoardSessionId.Trim() },
-                                { "BoardIndex", (object?)b.BoardIndex ?? DBNull.Value },
-                                { "BoardLabel", (object?)b.BoardLabel ?? DBNull.Value },
-                                { "CreatedAt", now }
-                            });
-                        }
-                    }
+                    // if (boardsToSave.Any())
+                    // {
+                    //     foreach (var b in boardsToSave)
+                    //     {
+                    //         await _answerBoardCommand.Create(new Dictionary<string, object>
+                    //         {
+                    //             { "Id", Guid.NewGuid() },
+                    //             { "AnswerId", answerId },
+                    //             { "BoardSessionId", b.BoardSessionId.Trim() },
+                    //             { "BoardIndex", (object?)b.BoardIndex ?? DBNull.Value },
+                    //             { "BoardLabel", (object?)b.BoardLabel ?? DBNull.Value },
+                    //             { "CreatedAt", now }
+                    //         });
+                    //     }
+                    // }
                 }
 
                 return Ok("Answer saved");

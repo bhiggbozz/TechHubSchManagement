@@ -4,6 +4,7 @@ using Serilog;
 using TechHub.Core.Configuration;
 using TechHub.Core.Entities.Board;
 using TechHub.Core.Messages;
+using TechHub.Core.ViewModels.Board;
 using TechHub.Core.ViewModels.Board.Manifest;
 using TechHub.Service.Interface;
 
@@ -297,5 +298,76 @@ public class BoardSessionRepository : IBoardSessionRepository
 	public async Task<BoardManifest?> GetSessionAsync(string sessionId, string schoolId)
 	{
 		return await GetManifestAsync(sessionId, schoolId);
+	}
+
+	public async Task<BoardBatchDocument?> GetStudentBatchAsync(string sessionId, int boardIndex)
+	{
+		var indexKey = $"{sessionId}_b{boardIndex}";
+		return await _batches
+			.Find(Builders<BoardBatchDocument>.Filter.Eq(b => b.Id, indexKey))
+			.FirstOrDefaultAsync();
+	}
+
+	public async Task SaveStudentBatchAsync(string sessionId, int boardIndex, List<StrokeViewModel> strokes, string schoolId, string studentId)
+	{
+		try
+		{
+			var indexKey = $"{sessionId}_b{boardIndex}";
+
+			var strokesList = strokes.Select(s => new BoardStroke
+			{
+				Id = s.Id,
+				SessionId = s.SessionId,
+				Type = s.Type,
+				Data = s.Data,
+				Color = s.Color,
+				Width = s.Width,
+				CurrentBoard = s.CurrentBoard,
+				Timestamp = s.Timestamp,
+				Duration = s.Duration,
+				StartTime = s.StartTime,
+				EndTime = s.EndTime
+			}).ToList();
+
+			var batchDoc = new BoardBatchDocument
+			{
+				Id = indexKey,
+				SessionId = sessionId,
+				SchoolId = schoolId,
+				BatchIndex = 0,
+				BoardIndex = boardIndex,
+				StrokeCount = strokesList.Count,
+				ReceivedAt = DateTime.UtcNow,
+				Strokes = strokesList
+			};
+
+			await _batches.ReplaceOneAsync(
+				Builders<BoardBatchDocument>.Filter.Eq(b => b.Id, indexKey),
+				batchDoc,
+				new ReplaceOptions { IsUpsert = true });
+
+			var manifestFilter = Builders<BoardManifest>.Filter.Eq(m => m.Id, sessionId);
+			var manifestUpdate = Builders<BoardManifest>.Update
+				.SetOnInsert(m => m.Id, sessionId)
+				.SetOnInsert(m => m.SchoolId, schoolId)
+				.SetOnInsert(m => m.TeacherId, studentId)
+				.SetOnInsert(m => m.Status, SessionStatus.InProgress)
+				.SetOnInsert(m => m.CreatedAt, DateTime.UtcNow)
+				.Set(m => m.UpdatedAt, DateTime.UtcNow);
+
+			await _manifests.UpdateOneAsync(
+				manifestFilter, manifestUpdate,
+				new UpdateOptions { IsUpsert = true });
+
+			_logger.Information(
+				"Student board batch saved - SessionId: {SessionId}, BoardIndex: {BoardIndex}, Strokes: {Count}",
+				sessionId, boardIndex, strokesList.Count);
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex,
+				"Failed to save student board batch - SessionId: {SessionId}", sessionId);
+			throw;
+		}
 	}
 }
