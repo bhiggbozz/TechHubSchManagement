@@ -19,4 +19,6 @@ public interface IPerformanceRepository
     Task<List<PerformanceSnapshot>> GetBySubjectSubTopicAsync(Guid schoolId, Guid subjectId);
     Task<PerformanceSnapshot?> GetSchoolAggregateAsync(Guid schoolId);
     Task DeleteAllBySchoolAsync(Guid schoolId);
+    Task<List<PerformanceSnapshot>> GetStudentSubjectScoresAsync(Guid studentId, Guid schoolId);
+    Task<List<PerformanceSnapshot>> GetStudentSubTopicScoresAsync(Guid studentId, Guid schoolId);
 }

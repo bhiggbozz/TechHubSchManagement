@@ -17,6 +17,7 @@ public class PerformanceSnapshot
     public string? SubjectName { get; set; }
     public Guid? TopicId { get; set; }
     public string? TopicName { get; set; }
+    public Guid? SubTopicId { get; set; }
     public string? SubTopicName { get; set; }
     public Guid? TeacherId { get; set; }
     public string? TeacherName { get; set; }
@@ -36,6 +37,12 @@ public class PerformanceSnapshot
     public double? AverageTimeTakenSeconds { get; set; }
     public DateTime LastActivityDate { get; set; }
     public DateTime ComputedAt { get; set; }
+
+    public int SubjectRank { get; set; }
+    public int TotalStudentsInSubject { get; set; }
+
+    public int SubTopicRank { get; set; }
+    public int TotalStudentsInSubTopic { get; set; }
 
     public List<QuizPerformanceItem> QuizBreakdown { get; set; } = new();
 }

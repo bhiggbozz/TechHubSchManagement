@@ -84,6 +84,19 @@ public class AssessmentService : IAssessmentService
         Data = null
     };
 
+    private static decimal ResolveDifficultyMarks(AssessmentConfig? config, int difficultyLevel, decimal fallbackMarks)
+    {
+        if (config is null) return fallbackMarks;
+        return difficultyLevel switch
+        {
+            1 => config.EasyMarks,
+            2 => config.MediumMarks,
+            3 => config.HardMarks,
+            4 => config.ExamLevelMarks,
+            _ => fallbackMarks
+        };
+    }
+
     public async Task<BaseResponse> CreateAssessment(CreateAssessmentViewModel model, AuthenticatedUserClaims claims)
     {
         using (LogContext.PushProperty("RequestedBy", claims.UserId))
@@ -501,6 +514,11 @@ public class AssessmentService : IAssessmentService
                 var configSql = "SELECT TOP 1 * FROM AssessmentConfig WHERE AssessmentId = @AssessmentId AND IsActive = 1";
                 var config = await _configQuery.SelectByColumns(configSql, new Dictionary<string, object> { { "AssessmentId", assessmentId } });
 
+                foreach (var q in questionList)
+                {
+                    q.MarksAllocation = ResolveDifficultyMarks(config, q.DifficultyLevel, q.MarksAllocation);
+                }
+
                 var dto = new AssessmentDetailDto
                 {
                     AssessmentId = assessment.Id,
@@ -577,7 +595,7 @@ public class AssessmentService : IAssessmentService
                 bool isOfficial = existingAttempts == 0;
 
                 // Verify assessment exists and get config
-                var configSql = "SELECT TOP 1 TimeLimitMinutes, ShuffleQuestions, ExpiresAt FROM AssessmentConfig " +
+                var configSql = "SELECT TOP 1 * FROM AssessmentConfig " +
                     "WHERE AssessmentId = @AssessmentId AND IsActive = 1";
 
                 var config = await _configQuery.SelectByColumns(configSql, new Dictionary<string, object>
@@ -635,6 +653,12 @@ public class AssessmentService : IAssessmentService
                     questions = questions.OrderBy(_ => rng.Next()).ToList();
                 }
 
+                // Resolve marks per question using assessment config difficulty levels
+                foreach (var q in questions)
+                {
+                    q.MarksAllocation = ResolveDifficultyMarks(config, q.DifficultyLevel, q.MarksAllocation);
+                }
+
                 // Fetch options
                 if (questions.Any())
                 {
@@ -687,7 +711,7 @@ public class AssessmentService : IAssessmentService
                 var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
                 var attemptSql = "SELECT TOP 1 Id, TotalMarks FROM AssessmentAttempt " +
-                    "WHERE Id = @AttemptId " +
+                    "WHERE Id = @Id " +
                     "AND StudentId = @StudentId " +
                     "AND SchoolId = @SchoolId " +
                     "AND Status = 'InProgress'";
@@ -705,6 +729,17 @@ public class AssessmentService : IAssessmentService
                 using var conn = new SqlConnection(_connString);
                 conn.Open();
 
+                // Resolve max marks from assessment config difficulty levels
+                var (difficultyLevel, questionMarks) = await conn.QueryFirstOrDefaultAsync<(int, decimal)>(
+                    "SELECT DifficultyLevel, MarksAllocation FROM Questions WHERE Id = @QuestionId",
+                    new { QuestionId = model.QuestionId });
+
+                var assessmentConfig = await _configQuery.SelectByColumns(
+                    "SELECT TOP 1 * FROM AssessmentConfig WHERE AssessmentId = (SELECT AssessmentId FROM AssessmentAttempt WHERE Id = @AttemptId) AND IsActive = 1",
+                    new Dictionary<string, object> { { "@AttemptId", model.AttemptId } });
+
+                var resolvedMaxMarks = ResolveDifficultyMarks(assessmentConfig, difficultyLevel, questionMarks);
+
                 // Auto-grade for objective questions
                 decimal autoMarks = 0;
                 bool? isCorrect = null;
@@ -717,17 +752,9 @@ public class AssessmentService : IAssessmentService
 
                     isCorrect = model.SelectedOptionId == correctOption;
 
-                    var maxMarks = await conn.QueryFirstOrDefaultAsync<decimal>(
-                        "SELECT MarksAllocation FROM Questions WHERE Id = @QuestionId",
-                        new { QuestionId = model.QuestionId });
-
                     if (isCorrect == true)
-                        autoMarks = maxMarks;
+                        autoMarks = resolvedMaxMarks;
                 }
-
-                var maxMarksValue = await conn.QueryFirstOrDefaultAsync<decimal>(
-                    "SELECT MarksAllocation FROM Questions WHERE Id = @QuestionId",
-                    new { QuestionId = model.QuestionId });
 
                 // Upsert answer
                 var existingSql = "SELECT TOP 1 Id FROM AssessmentAttemptAnswer " +
@@ -749,13 +776,13 @@ public class AssessmentService : IAssessmentService
                         { "QuestionId", model.QuestionId },
                         { "SchoolId", schoolId },
                         { "QuestionType", 0 },
-                        { "SelectedOptionId", (object?)model.SelectedOptionId ?? DBNull.Value },
-                        { "IsCorrect", (object?)isCorrect ?? DBNull.Value },
-                        { "AutoMarksObtained", autoMarks > 0 ? (object)autoMarks : DBNull.Value },
-                        { "TypedAnswer", (object?)model.TypedAnswer ?? DBNull.Value },
-                        { "BoardSessionId", (object?)model.BoardSessionId ?? DBNull.Value },
-                        { "AudioUrl", (object?)model.AudioUrl ?? DBNull.Value },
-                        { "MaxMarks", maxMarksValue },
+                        { "SelectedOptionId", model.SelectedOptionId },
+                        { "IsCorrect", isCorrect },
+                        { "AutoMarksObtained", autoMarks > 0 ? autoMarks : 0 },
+                        { "TypedAnswer", model.TypedAnswer },
+                        { "BoardSessionId", model.BoardSessionId},
+                        { "AudioUrl", model.AudioUrl },
+                        { "MaxMarks", resolvedMaxMarks },
                         { "IsSkipped", model.IsSkipped },
                         { "CreationDate", now },
                         { "ModifiedDate", now }
