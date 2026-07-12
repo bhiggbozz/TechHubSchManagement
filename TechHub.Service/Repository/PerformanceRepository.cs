@@ -190,4 +190,25 @@ public class PerformanceRepository : IPerformanceRepository
     {
         await _collection.DeleteManyAsync(s => s.SchoolId == schoolId);
     }
+
+    public async Task<List<PerformanceSnapshot>> GetStudentSubjectScoresAsync(Guid studentId, Guid schoolId)
+    {
+        return await _collection
+            .Find(s => s.StudentId == studentId
+                    && s.SchoolId == schoolId
+                    && s.DocType == "student_subject")
+            .Sort(Builders<PerformanceSnapshot>.Sort.Ascending(s => s.SubjectName))
+            .ToListAsync();
+    }
+
+    public async Task<List<PerformanceSnapshot>> GetStudentSubTopicScoresAsync(Guid studentId, Guid schoolId)
+    {
+        return await _collection
+            .Find(s => s.StudentId == studentId
+                    && s.SchoolId == schoolId
+                    && s.DocType == "student_subtopic")
+            .Sort(Builders<PerformanceSnapshot>.Sort.Ascending(s => s.SubjectName)
+                  .Ascending(s => s.SubTopicName))
+            .ToListAsync();
+    }
 }

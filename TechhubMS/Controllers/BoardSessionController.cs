@@ -101,6 +101,79 @@ public class BoardSessionController : ControllerBase
     }
 
 	/// <summary>
+	/// Receives board strokes from a student during an assessment answer.
+	/// Each submission includes a boardIndex to identify which board (1, 2, 3...).
+	/// Saves directly to MongoDB for playback by the assessor.
+	/// </summary>
+	[HttpPost("student/session/{sessionId}/batch")]
+	[Authorize(Roles = "Student")]
+	[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+	[ProducesResponseType(StatusCodes.Status400BadRequest)]
+	[ProducesResponseType(StatusCodes.Status401Unauthorized)]
+	public async Task<ActionResult<BaseResponse>> SubmitStudentBoardBatch(
+		[FromRoute] string sessionId,
+		[FromBody] StudentBoardBatchViewModel model)
+	{
+		var claims = User.GetAuthenticatedUserClaims();
+
+		if (claims == null || string.IsNullOrEmpty(claims.UserId))
+		{
+			return Unauthorized(new BaseResponse
+			{
+				ResponseCode = ResponseCode.Unauthorized,
+				ResponseMessage = "Invalid user claims",
+				Status = "failed"
+			});
+		}
+
+		var result = await _boardSessionService.SaveStudentBoardBatchAsync(sessionId, model, claims);
+
+		return result.ResponseCode switch
+		{
+			ResponseCode.successful => Ok(result),
+			ResponseCode.BadRequest => BadRequest(result),
+			ResponseCode.Unauthorized => Unauthorized(result),
+			_ => BadRequest(result)
+		};
+	}
+
+	/// <summary>
+	/// Retrieve saved board strokes for a student's assessment board.
+	/// Used when returning to edit a previously answered question.
+	/// </summary>
+	[HttpGet("student/session/{sessionId}/board/{boardIndex}")]
+	[Authorize(Roles = "Student")]
+	[ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
+	[ProducesResponseType(StatusCodes.Status404NotFound)]
+	[ProducesResponseType(StatusCodes.Status401Unauthorized)]
+	public async Task<ActionResult<BaseResponse>> GetStudentBoardBatch(
+		[FromRoute] string sessionId,
+		[FromRoute] int boardIndex)
+	{
+		var claims = User.GetAuthenticatedUserClaims();
+
+		if (claims == null || string.IsNullOrEmpty(claims.UserId))
+		{
+			return Unauthorized(new BaseResponse
+			{
+				ResponseCode = ResponseCode.Unauthorized,
+				ResponseMessage = "Invalid user claims",
+				Status = "failed"
+			});
+		}
+
+		var result = await _boardSessionService.GetStudentBoardBatchAsync(sessionId, boardIndex, claims);
+
+		return result.ResponseCode switch
+		{
+			ResponseCode.successful => Ok(result),
+			ResponseCode.NotFound => NotFound(result),
+			ResponseCode.Unauthorized => Unauthorized(result),
+			_ => BadRequest(result)
+		};
+	}
+
+	/// <summary>
 	/// Get a session by ID (for debugging/admin purposes)
 	/// </summary>
 	[HttpGet("session/{sessionId}")]
@@ -136,7 +209,7 @@ public class BoardSessionController : ControllerBase
 
 	/// <summary>
 	/// Get session manifest for student download.
-	/// Returns manifest with stroke batch references — no raw strokes.
+	/// Returns manifest with stroke batch references ï¿½ no raw strokes.
 	/// Student must be enrolled in the lesson's classroom.
 	/// </summary>
 	[HttpGet("session/{sessionId}/manifest")]
@@ -213,7 +286,7 @@ public class BoardSessionController : ControllerBase
 	
 
 	/// <summary>
-	/// Get a session by ID — admin and teacher use only.
+	/// Get a session by ID ï¿½ admin and teacher use only.
 	/// </summary>
 	//[HttpGet("session/{sessionId}")]
 	//[Authorize(Roles = "SubjectTeacher,HeadTeacher,Administrator,SuperAdministrator")]

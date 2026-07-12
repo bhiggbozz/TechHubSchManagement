@@ -77,6 +77,8 @@ public class PerformanceAggregationService : IPerformanceAggregationService
             snapshots.AddRange(AggregateByClassroomSubjectTopic(rows, now));
             snapshots.AddRange(AggregateByClassroomSubjectSubTopic(rows, now));
             snapshots.AddRange(AggregateByStudent(rows, now));
+            snapshots.AddRange(AggregateByStudentSubject(rows, now));
+            snapshots.AddRange(AggregateByStudentSubTopic(rows, now));
             snapshots.AddRange(AggregateByTeacher(rows, now));
             snapshots.Add(AggregateSchool(rows, schoolId, now));
 
@@ -182,6 +184,7 @@ public class PerformanceAggregationService : IPerformanceAggregationService
                 ISNULL(s.Subject, 'Unknown') AS SubjectName,
                 lc.TopicId,
                 ISNULL(t.Name, 'Unknown')    AS TopicName,
+                st.Id                        AS SubTopicId,
                 ISNULL(lc.SubTopic, '')      AS SubTopicName,
                 lc.CreatedBy                 AS TeacherId,
                 ISNULL(CONCAT(tchr.FirstName, ' ', tchr.LastName), 'Unknown')
@@ -207,6 +210,7 @@ public class PerformanceAggregationService : IPerformanceAggregationService
             JOIN Classroom            c   WITH(NOLOCK) ON c.Id   = lc.ClassroomId
             LEFT JOIN Subjects        s   WITH(NOLOCK) ON s.Id   = lc.SubjectId
             LEFT JOIN Topic           t   WITH(NOLOCK) ON t.Id   = lc.TopicId
+            LEFT JOIN SubTopic         st    WITH(NOLOCK) ON st.Name   = lc.SubTopic AND st.SchoolId = lc.SchoolId
             LEFT JOIN Users           tchr  WITH(NOLOCK) ON tchr.Id  = lc.CreatedBy
             LEFT JOIN Users           stud  WITH(NOLOCK) ON stud.Id  = qa.StudentId
             WHERE qa.SchoolId = '{schoolId}'
@@ -426,6 +430,137 @@ public class PerformanceAggregationService : IPerformanceAggregationService
         return snapshots;
     }
 
+    private List<PerformanceSnapshot> AggregateByStudentSubject(List<AttemptRawRow> rows, DateTime now)
+    {
+        var groups = rows
+            .Where(r => r.SubjectId != Guid.Empty)
+            .GroupBy(r => new { r.StudentId, r.StudentName, r.SubjectId, r.SubjectName, r.SchoolId });
+
+        var studentSubjectSnapshots = new List<PerformanceSnapshot>();
+
+        foreach (var g in groups)
+        {
+            var completed = g.Where(r => r.Status != "InProgress").ToList();
+            var completedWithScore = completed.Where(r => r.FinalScorePercent.HasValue).ToList();
+            var scores = completedWithScore.Select(r => r.FinalScorePercent!.Value).ToList();
+
+            studentSubjectSnapshots.Add(new PerformanceSnapshot
+            {
+                DocType = "student_subject",
+                SchoolId = g.Key.SchoolId,
+                StudentId = g.Key.StudentId,
+                StudentName = g.Key.StudentName,
+                SubjectId = g.Key.SubjectId,
+                SubjectName = g.Key.SubjectName,
+                TotalAttempts = g.Count(),
+                CompletedAttempts = completed.Count,
+                AverageScorePercent = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+                TotalScoreSum = scores.Sum(),
+                PassRate = completed.Any()
+                    ? Math.Round((decimal)completed.Count(r => r.IsPassed == true) / completed.Count * 100, 1)
+                    : 0m,
+                ComputedAt = now
+            });
+        }
+
+        // Second pass: rank students within each subject
+        var subjectGroups = studentSubjectSnapshots
+            .GroupBy(s => new { s.SubjectId, s.SubjectName, s.SchoolId });
+
+        var ranked = new List<PerformanceSnapshot>();
+
+        foreach (var sg in subjectGroups)
+        {
+            var ordered = sg
+                .OrderByDescending(s => s.AverageScorePercent)
+                .ThenBy(s => s.StudentName)
+                .ToList();
+
+            int total = ordered.Count;
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                ordered[i].SubjectRank = i + 1;
+                ordered[i].TotalStudentsInSubject = total;
+            }
+
+            ranked.AddRange(ordered);
+        }
+
+        return ranked;
+    }
+
+    private List<PerformanceSnapshot> AggregateByStudentSubTopic(List<AttemptRawRow> rows, DateTime now)
+    {
+        var groups = rows
+            .Where(r => r.SubjectId != Guid.Empty && !string.IsNullOrEmpty(r.SubTopicName))
+            .GroupBy(r => new
+            {
+                r.StudentId,
+                r.StudentName,
+                r.SubjectId,
+                r.SubjectName,
+                r.SubTopicName,
+                r.SchoolId
+            });
+
+        var studentSubTopicSnapshots = new List<PerformanceSnapshot>();
+
+        foreach (var g in groups)
+        {
+            var firstAttempts = g.Where(r => r.AttemptNumber == 1).ToList();
+            var completedFirst = firstAttempts.Where(r => r.Status != "InProgress").ToList();
+            var scores = completedFirst.Where(r => r.FinalScorePercent.HasValue)
+                                       .Select(r => r.FinalScorePercent!.Value).ToList();
+
+            var subTopicId = g.Select(r => r.SubTopicId).FirstOrDefault(id => id.HasValue);
+
+            studentSubTopicSnapshots.Add(new PerformanceSnapshot
+            {
+                DocType = "student_subtopic",
+                SchoolId = g.Key.SchoolId,
+                StudentId = g.Key.StudentId,
+                StudentName = g.Key.StudentName,
+                SubjectId = g.Key.SubjectId,
+                SubjectName = g.Key.SubjectName,
+                SubTopicId = subTopicId,
+                SubTopicName = g.Key.SubTopicName,
+                TotalAttempts = g.Count(),
+                CompletedAttempts = completedFirst.Count,
+                AverageScorePercent = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+                TotalScoreSum = scores.Sum(),
+                PassRate = completedFirst.Any()
+                    ? Math.Round((decimal)completedFirst.Count(r => r.IsPassed == true) / completedFirst.Count * 100, 1)
+                    : 0m,
+                ComputedAt = now
+            });
+        }
+
+        // Second pass: rank students within each subtopic
+        var subTopicGroups = studentSubTopicSnapshots
+            .GroupBy(s => new { s.SubjectId, s.SubTopicName, s.SchoolId });
+
+        var ranked = new List<PerformanceSnapshot>();
+
+        foreach (var sg in subTopicGroups)
+        {
+            var ordered = sg
+                .OrderByDescending(s => s.AverageScorePercent)
+                .ThenBy(s => s.StudentName)
+                .ToList();
+
+            int total = ordered.Count;
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                ordered[i].SubTopicRank = i + 1;
+                ordered[i].TotalStudentsInSubTopic = total;
+            }
+
+            ranked.AddRange(ordered);
+        }
+
+        return ranked;
+    }
+
     private List<PerformanceSnapshot> AggregateByTeacher(List<AttemptRawRow> rows, DateTime now)
     {
         var groups = rows.GroupBy(r => new { r.TeacherId, r.TeacherName });
@@ -494,6 +629,7 @@ public class PerformanceAggregationService : IPerformanceAggregationService
         public string SubjectName { get; set; } = string.Empty;
         public Guid TopicId { get; set; }
         public string TopicName { get; set; } = string.Empty;
+        public Guid? SubTopicId { get; set; }
         public string SubTopicName { get; set; } = string.Empty;
         public Guid TeacherId { get; set; }
         public string TeacherName { get; set; } = string.Empty;

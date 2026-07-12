@@ -83,6 +83,22 @@ public class PerformanceController : ControllerBase
         return MapResponse(response);
     }
 
+    [HttpGet("student/subject-scores")]
+    public async Task<IActionResult> GetStudentSubjectScores()
+    {
+        var claims = GetUserClaims();
+        var response = await _studentDashboardService.GetStudentSubjectScoresAsync(claims);
+        return MapResponse(response);
+    }
+
+    [HttpGet("student/subtopic-scores")]
+    public async Task<IActionResult> GetStudentSubTopicScores()
+    {
+        var claims = GetUserClaims();
+        var response = await _studentDashboardService.GetStudentSubTopicScoresAsync(claims);
+        return MapResponse(response);
+    }
+
     [HttpPost("lesson/{lessonId}/watch")]
     public async Task<IActionResult> MarkLessonAsWatched(Guid lessonId)
     {

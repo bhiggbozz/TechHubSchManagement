@@ -4,9 +4,11 @@ using Microsoft.Extensions.Configuration;
 using Serilog;
 using Serilog.Context;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using TechHub.Core;
+using TechHub.Core.Entities.Performance;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel.classroom;
 using TechHub.Service.Interface;
@@ -16,12 +18,14 @@ namespace TechHub.Service.Service;
 public class StudentDashboardService : IStudentDashboardService
 {
     private readonly IConfiguration _configuration;
+    private readonly IPerformanceRepository _perfRepo;
     private readonly ILogger _logger;
     private readonly string _connString;
 
-    public StudentDashboardService(IConfiguration configuration, ILogger logger)
+    public StudentDashboardService(IConfiguration configuration, IPerformanceRepository perfRepo, ILogger logger)
     {
         _configuration = configuration;
+        _perfRepo = perfRepo;
         _logger = logger;
         _connString = _configuration.GetConnectionString("DbConnectionString") ?? string.Empty;
     }
@@ -186,6 +190,74 @@ public class StudentDashboardService : IStudentDashboardService
             {
                 _logger.Error(ex, "Error marking lesson as watched");
                 return Bad("An error occurred while marking lesson", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
+    public async Task<BaseResponse> GetStudentSubjectScoresAsync(AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.UserId, out var studentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                var snapshots = await _perfRepo.GetStudentSubjectScoresAsync(studentId, schoolId);
+
+                var dtos = snapshots.Select(s => new StudentSubjectScoreDto
+                {
+                    SubjectId = s.SubjectId ?? Guid.Empty,
+                    SubjectName = s.SubjectName ?? "Unknown",
+                    AverageScore = s.AverageScorePercent,
+                    QuizCount = s.CompletedAttempts,
+                    Position = s.SubjectRank,
+                    TotalStudents = s.TotalStudentsInSubject
+                }).ToList();
+
+                return Ok("Student subject scores retrieved", dtos);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error fetching student subject scores");
+                return Bad("An error occurred while fetching subject scores", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
+    public async Task<BaseResponse> GetStudentSubTopicScoresAsync(AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.UserId, out var studentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                var snapshots = await _perfRepo.GetStudentSubTopicScoresAsync(studentId, schoolId);
+
+                var dtos = snapshots.Select(s => new StudentSubTopicScoreDto
+                {
+                    SubTopicId = s.SubTopicId,
+                    SubjectId = s.SubjectId ?? Guid.Empty,
+                    SubjectName = s.SubjectName ?? "Unknown",
+                    SubTopicName = s.SubTopicName ?? "Unknown",
+                    AverageScore = s.AverageScorePercent,
+                    QuizCount = s.CompletedAttempts,
+                    Position = s.SubTopicRank,
+                    TotalStudents = s.TotalStudentsInSubTopic
+                }).ToList();
+
+                return Ok("Student subtopic scores retrieved", dtos);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error fetching student subtopic scores");
+                return Bad("An error occurred while fetching subtopic scores", ResponseCode.ErrorOccured);
             }
         }
     }

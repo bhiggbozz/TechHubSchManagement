@@ -39,3 +39,25 @@ public class SummaryCounts
     public int UnattemptedQuizzes { get; set; }
     public int UnwatchedLessons { get; set; }
 }
+
+public class StudentSubjectScoreDto
+{
+    public Guid SubjectId { get; set; }
+    public string SubjectName { get; set; }
+    public decimal AverageScore { get; set; }
+    public int QuizCount { get; set; }
+    public int Position { get; set; }
+    public int TotalStudents { get; set; }
+}
+
+public class StudentSubTopicScoreDto
+{
+    public Guid? SubTopicId { get; set; }
+    public Guid SubjectId { get; set; }
+    public string SubjectName { get; set; }
+    public string SubTopicName { get; set; }
+    public decimal AverageScore { get; set; }
+    public int QuizCount { get; set; }
+    public int Position { get; set; }
+    public int TotalStudents { get; set; }
+}

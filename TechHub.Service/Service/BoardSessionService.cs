@@ -318,6 +318,78 @@ public class BoardSessionService : IBoardSessionService
 	};
 
 
+	public async Task<BaseResponse> GetStudentBoardBatchAsync(string sessionId, int boardIndex, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (string.IsNullOrWhiteSpace(claims.UserId))
+				return Unauthorized();
+
+			var batch = await _repository.GetStudentBatchAsync(sessionId, boardIndex);
+
+			if (batch is null)
+				return NotFound("No board data found for this session and board");
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = "Board batch retrieved successfully",
+				Status = "successful",
+				Data = batch
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex,
+				"Error retrieving student board batch - SessionId: {SessionId}, BoardIndex: {BoardIndex}",
+				sessionId, boardIndex);
+			return ServerError();
+		}
+	}
+
+	public async Task<BaseResponse> SaveStudentBoardBatchAsync(string routeSessionId, StudentBoardBatchViewModel model, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (routeSessionId != model.SessionId)
+				return BadRequest("Session ID in route does not match body");
+
+			if (string.IsNullOrWhiteSpace(claims.SchoolId))
+				return Unauthorized();
+
+			if (string.IsNullOrWhiteSpace(claims.UserId))
+				return Unauthorized();
+
+			if (model.Strokes == null || model.Strokes.Count == 0)
+				return BadRequest("At least one stroke is required");
+
+			await _repository.SaveStudentBatchAsync(
+				model.SessionId,
+				model.BoardIndex,
+				model.Strokes,
+				claims.SchoolId,
+				claims.UserId);
+
+			_logger.Information(
+				"Student board batch saved - SessionId: {SessionId}, BoardIndex: {BoardIndex}, Strokes: {Count}, StudentId: {StudentId}",
+				model.SessionId, model.BoardIndex, model.Strokes.Count, claims.UserId);
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = "Board batch saved successfully",
+				Status = "successful"
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex,
+				"Error saving student board batch - SessionId: {SessionId}",
+				routeSessionId);
+			return ServerError();
+		}
+	}
+
 	public async Task<BoardManifest?> GetSessionManifestAsync(string sessionId, string schoolId)
 	{
 		return await _repository.GetManifestAsync(sessionId, schoolId);

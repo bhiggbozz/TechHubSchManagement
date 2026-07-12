@@ -194,7 +194,8 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 | `BoardSession` | Id, LessonId, TeacherId, SchoolId, Status, StartedAt, EndedAt, TotalStrokes, TotalBatches |
 | `BoardStroke` | Id, SessionId, BatchIndex, Data (compressed stroke JSON) |
 | `BoardBatch` | Id, SessionId, BatchIndex, Strokes[], CreatedAt |
-| `PerformanceSnapshot` | DocType (school\|classroom_subject\|student\|teacher), AggregatedData |
+| `student_board_batches` | Id, SessionId (assessmentId_studentId_questionId), BoardIndex (1..N), Strokes[], CreatedAt |
+| `PerformanceSnapshot` | DocType (school\|classroom_subject\|student\|teacher\|student_subject), AggregatedData. `student_subject` includes SubjectRank, TotalStudentsInSubject |
 
 ### Lesson Progress (Watched Lessons)
 
@@ -295,6 +296,7 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 | GET | `/api/performance/classroom/{id}` | JWT | Classroom breakdown |
 | GET | `/api/performance/subject/{id}` | JWT | Subject breakdown |
 | GET | `/api/performance/student-summary` | Student | **New/unattempted assessments, quizzes, unwatched lessons** |
+| GET | `/api/performance/student/subject-scores` | Student | Per-subject averages + ranking (from MongoDB aggregation) |
 | POST | `/api/performance/lesson/{lessonId}/watch` | Student | Mark lesson as watched |
 | POST | `/api/performance/refresh` | Admin | Trigger aggregation |
 
@@ -307,6 +309,8 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 | GET | `/api/board/session/{sessionId}` | JWT | Get session |
 | GET | `/api/board/session/{sessionId}/manifest` | Student | Get manifest for download |
 | GET | `/api/board/session/{sessionId}/batch/{indexKey}` | Student | Get stroke batch |
+| POST | `/api/board/student/session/{sessionId}/batch` | Student | Submit assessment answer board stroke batch (upsert by boardIndex) |
+| GET | `/api/board/student/session/{sessionId}/board/{boardIndex}` | Student | Get assessment answer board strokes |
 
 ### Question Bank
 
@@ -322,6 +326,39 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 | POST | `/api/questions/sync` | JWT | Sync offline questions |
 | POST | `/api/questionjob/submit` | JWT | Submit image for AI extraction |
 | GET | `/api/questionjob/{jobId}/status` | JWT | Poll job status |
+
+---
+
+## Frontend Endpoint Reference: Student Subject Scores
+
+### `GET /api/performance/student/subject-scores`
+
+**Auth:** Student JWT
+
+**Request:**
+- Headers: `Authorization: Bearer <token>`, `X-Tenant-ID: <subdomain>`
+- Body: none
+
+**Response (200):**
+```json
+{
+    "responseMessage": "Student subject scores retrieved",
+    "responseCode": "99000",
+    "status": "successful",
+    "data": [
+        {
+            "subjectId": "guid",
+            "subjectName": "Mathematics",
+            "averageScore": 78.5,
+            "quizCount": 6,
+            "position": 5,
+            "totalStudents": 28
+        }
+    ]
+}
+```
+
+**Frontend usage:** Display per-subject average scores with ranking position. `position` is 1-based rank within the subject (higher average = lower number). `totalStudents` is the total number of students ranked in that subject.
 
 ---
 
@@ -371,3 +408,6 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 - **Lesson "watched" tracking** uses the `StudentLessonProgress` table. The `POST /api/performance/lesson/{lessonId}/watch` endpoint creates a row there.
 - **First PlatformSuperAdmin is seeded** via `Scriptsv11_PlatformUsers.sql` with username `platformadmin` and password `Platform@123`.
 - **ProvisisonSchool flow**: Creates School → SchoolCode → TenantInfo → Users (Administrator) → AdminPermissions (FullAdmin) → sends welcome email, all in one transaction.
+- **Assessment expiry**: `AssessmentConfig.ExpiresAt` is checked in `StartAttempt`. If expired, returns "Assessment has expired" error.
+- **Student board sessionId format**: `{assessmentId}_{studentId}_{questionId}` for assessment answer board strokes.
+- **Student subject scores** are pre-computed by `PerformanceAggregationWorker` (24h cycle) and stored as `student_subject` DocType in MongoDB — not queried live. Ranking uses `RANK() OVER (PARTITION BY SubjectId ORDER BY AvgScore DESC)`.

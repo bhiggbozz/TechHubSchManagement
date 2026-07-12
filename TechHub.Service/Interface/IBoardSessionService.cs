@@ -14,4 +14,6 @@ public interface IBoardSessionService
 	Task<BaseResponse> GetManifest(string sessionId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetBatch(string sessionId, string indexKey, AuthenticatedUserClaims claims);
 	Task<BoardManifest?> GetSessionManifestAsync(string sessionId, string schoolId);
+	Task<BaseResponse> SaveStudentBoardBatchAsync(string routeSessionId, StudentBoardBatchViewModel model, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetStudentBoardBatchAsync(string sessionId, int boardIndex, AuthenticatedUserClaims claims);
 }
