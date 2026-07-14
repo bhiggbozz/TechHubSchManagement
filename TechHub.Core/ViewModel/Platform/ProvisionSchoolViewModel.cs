@@ -9,7 +9,10 @@ public class ProvisionSchoolViewModel
     public string Address { get; set; }
     public bool HasBranch { get; set; }
     public string TenantIdentifier { get; set; }
+    public string SchoolCode { get; set; }
+    public string? LogoUrl { get; set; }
     public string AdminFirstName { get; set; }
+    public string? AdminMiddleName { get; set; }
     public string AdminLastName { get; set; }
     public string AdminEmail { get; set; }
     public string AdminUsername { get; set; }

@@ -5021,52 +5021,67 @@ namespace TechHub.Service.Service
 					if (model is null)
 						return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "object is empty", Status = "failed" };
 
-					if (string.IsNullOrWhiteSpace(model.TenantIdentifier))
-						return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "Tenant identifier is required", Status = "failed" };
+				if (string.IsNullOrWhiteSpace(model.TenantIdentifier))
+					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "Tenant identifier is required", Status = "failed" };
 
-					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-					var schoolId = Guid.NewGuid();
-					var adminUserId = Guid.NewGuid();
+				if (string.IsNullOrWhiteSpace(model.SchoolCode))
+					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "School code is required", Status = "failed" };
 
-					var insertDict = new Dictionary<string, object> {
-						{ "CreationDate", now }, { "ModifiedDate", now }, { "Id", schoolId },
-						{ "SchoolName", model.SchoolName }, { "Location", model.Location },
-						{ "CountryId", model.CountryId }, { "StateId", model.StateId },
-						{ "Address", model.Address }, { "HasBranch", model.HasBranch }, { "IsActive", true }
-					};
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+				var schoolId = Guid.NewGuid();
+				var adminUserId = Guid.NewGuid();
+
+				var insertDict = new Dictionary<string, object> {
+					{ "CreationDate", now }, { "ModifiedDate", now }, { "Id", schoolId },
+					{ "SchoolName", model.SchoolName }, { "Location", model.Location },
+					{ "CountryId", model.CountryId }, { "StateId", model.StateId },
+					{ "Address", model.Address }, { "HasBranch", model.HasBranch },
+					{ "LogoUrl", (object?)model.LogoUrl ?? DBNull.Value }, { "IsActive", true }
+				};
 
 					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
 
 					try
 					{
-						// Check tenant uniqueness
-						var existingTenant = await scope.Connection.QueryFirstOrDefaultAsync<Guid?>(
-							"SELECT TOP 1 Id FROM TenantInfo WHERE Identifier = @Identifier AND IsActive = 1",
-							new { Identifier = model.TenantIdentifier }, scope.Transaction);
+					// Check tenant uniqueness
+					var existingTenant = await scope.Connection.QueryFirstOrDefaultAsync<Guid?>(
+						"SELECT TOP 1 Id FROM TenantInfo WHERE Identifier = @Identifier AND IsActive = 1",
+						new { Identifier = model.TenantIdentifier }, scope.Transaction);
 
-						if (existingTenant is not null)
-						{
-							await scope.RollbackAsync();
-							return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "Tenant identifier already exists", Status = "failed" };
-						}
+					if (existingTenant is not null)
+					{
+						await scope.RollbackAsync();
+						return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "Tenant identifier already exists", Status = "failed" };
+					}
 
-						// Check admin username uniqueness
-						var existingUser = await scope.Connection.QueryFirstOrDefaultAsync<Guid?>(
-							"SELECT TOP 1 Id FROM Users WHERE UserName = @Username AND SchoolId = @SchoolId",
-							new { Username = model.AdminUsername, SchoolId = schoolId }, scope.Transaction);
+					// Check school code uniqueness
+					var existingCode = await scope.Connection.QueryFirstOrDefaultAsync<Guid?>(
+						"SELECT TOP 1 SchoolId FROM SchoolCode WHERE Code = @Code",
+						new { Code = model.SchoolCode }, scope.Transaction);
 
-						if (existingUser is not null)
-						{
-							await scope.RollbackAsync();
-							return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "Admin username already exists for this school", Status = "failed" };
-						}
+					if (existingCode is not null)
+					{
+						await scope.RollbackAsync();
+						return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "School code already exists", Status = "failed" };
+					}
 
-						// 1. Insert School
-						await _schCommandRespository.Create(scope.Transaction, scope.Connection, insertDict);
+					// Check admin username uniqueness (global)
+					var existingUser = await scope.Connection.QueryFirstOrDefaultAsync<Guid?>(
+						"SELECT TOP 1 Id FROM Users WHERE UserName = @Username",
+						new { Username = model.AdminUsername }, scope.Transaction);
 
-						// 2. Insert SchoolCode
-						await _schCodeCommandRespository.Create(scope.Transaction, scope.Connection,
-							new Dictionary<string, object> { { "SchoolId", schoolId }, { "Code", schoolId } });
+					if (existingUser is not null)
+					{
+						await scope.RollbackAsync();
+						return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "Admin username already exists", Status = "failed" };
+					}
+
+					// 1. Insert School
+					await _schCommandRespository.Create(scope.Transaction, scope.Connection, insertDict);
+
+					// 2. Insert SchoolCode
+					await _schCodeCommandRespository.Create(scope.Transaction, scope.Connection,
+						new Dictionary<string, object> { { "SchoolId", schoolId }, { "Code", model.SchoolCode } });
 
 						// 3. Insert TenantInfo
 						await scope.Connection.ExecuteAsync(@"
@@ -5075,26 +5090,27 @@ namespace TechHub.Service.Service
 							new { Id = Guid.NewGuid(), SchoolId = schoolId, Identifier = model.TenantIdentifier, Now = DateTime.UtcNow },
 							scope.Transaction);
 
-						// 4. Insert Admin User (Administrator role)
-						var passwordHash = HashPassword(model.AdminPassword);
-						await scope.Connection.ExecuteAsync(@"
-							INSERT INTO Users (Id, CreationDate, ModifiedDate, FirstName, LastName, EmailAddress, HashPassword,
-								IsActive, HasAccess, UserName, SchoolId, RoleId, CreatedBy)
-							VALUES (@Id, @Now, @Now, @FirstName, @LastName, @Email, @PasswordHash,
-								1, 1, @Username, @SchoolId, 2, @CreatedBy)",
-							new
-							{
-								Id = adminUserId,
-								Now = now,
-								FirstName = model.AdminFirstName,
-								LastName = model.AdminLastName,
-								Email = model.AdminEmail,
-								PasswordHash = passwordHash,
-								Username = model.AdminUsername,
-								SchoolId = schoolId,
-								CreatedBy = platformUserId
-							},
-							scope.Transaction);
+					// 4. Insert Admin User (Administrator role)
+					var passwordHash = HashPassword(model.AdminPassword);
+					await scope.Connection.ExecuteAsync(@"
+						INSERT INTO Users (Id, CreationDate, ModifiedDate, FirstName, MiddleName, LastName, EmailAddress, HashPassword,
+							IsActive, HasAccess, UserName, SchoolId, RoleId, CreatedBy)
+						VALUES (@Id, @Now, @Now, @FirstName, @MiddleName, @LastName, @Email, @PasswordHash,
+							1, 1, @Username, @SchoolId, 2, @CreatedBy)",
+						new
+						{
+							Id = adminUserId,
+							Now = now,
+							FirstName = model.AdminFirstName,
+							MiddleName = (object?)model.AdminMiddleName ?? DBNull.Value,
+							LastName = model.AdminLastName,
+							Email = model.AdminEmail,
+							PasswordHash = passwordHash,
+							Username = model.AdminUsername,
+							SchoolId = schoolId,
+							CreatedBy = platformUserId
+						},
+						scope.Transaction);
 
 						// 5. Insert AdminPermissions (FullAdmin = 127)
 						await scope.Connection.ExecuteAsync(@"
@@ -5133,6 +5149,7 @@ namespace TechHub.Service.Service
 									<h3>School Details</h3>
 									<ul>
 										<li><strong>School:</strong> {model.SchoolName}</li>
+										<li><strong>School Code:</strong> {model.SchoolCode}</li>
 										<li><strong>Tenant ID:</strong> {model.TenantIdentifier}</li>
 										<li><strong>Location:</strong> {model.Location}</li>
 									</ul>
@@ -5155,24 +5172,26 @@ namespace TechHub.Service.Service
 						}
 					});
 
-					_logger.Information(
-						"School provisioned - SchoolId: {SchoolId}, Name: {Name}, Tenant: {Tenant}, Admin: {Admin}",
-						schoolId, model.SchoolName, model.TenantIdentifier, model.AdminUsername);
+_logger.Information(
+					"School provisioned - SchoolId: {SchoolId}, Code: {Code}, Name: {Name}, Tenant: {Tenant}, Admin: {Admin}",
+					schoolId, model.SchoolCode, model.SchoolName, model.TenantIdentifier, model.AdminUsername);
 
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.successful,
 						ResponseMessage = "School provisioned successfully",
 						Status = "successful",
-						Data = new
-						{
-							SchoolId = schoolId,
-							SchoolName = model.SchoolName,
-							TenantIdentifier = model.TenantIdentifier,
-							AdminUserId = adminUserId,
-							AdminUsername = model.AdminUsername,
-							AdminEmail = model.AdminEmail
-						}
+				Data = new
+					{
+						SchoolId = schoolId,
+						SchoolName = model.SchoolName,
+						SchoolCode = model.SchoolCode,
+						TenantIdentifier = model.TenantIdentifier,
+						LogoUrl = model.LogoUrl,
+						AdminUserId = adminUserId,
+						AdminUsername = model.AdminUsername,
+						AdminEmail = model.AdminEmail
+					}
 					};
 				}
 				catch (Exception ex)
