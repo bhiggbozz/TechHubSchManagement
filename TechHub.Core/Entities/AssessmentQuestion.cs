@@ -12,6 +12,7 @@ public class AssessmentQuestion
     public Guid AssessmentId { get; set; }
     public Guid QuestionId { get; set; }
     public Guid SchoolId { get; set; }
+    public Guid? SubTopicId { get; set; }
     public int DisplayOrder { get; set; }
     public string CreationDate { get; set; } = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
     public bool IsActive { get; set; } = true;

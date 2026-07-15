@@ -10,6 +10,7 @@ using TechHub.Background.Extensions;
 using TechHub.Background.Services;
 using TechHub.Core.Configuration;
 using TechHub.Core.Profiles;
+using TechHub.Entity.Migration;
 using TechHub.QuestionBank.Controllers;
 using TechHub.Service.Extensions;
 using TechhubMS;
@@ -115,6 +116,7 @@ try
 	// Board session recording services
 	builder.Services.AddBoardServices(builder.Configuration);
 	builder.Services.AddBoardWorkers();
+	builder.Services.AddDatabaseMigration();
 
 	var app = builder.Build();
 

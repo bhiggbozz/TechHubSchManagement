@@ -13,7 +13,7 @@ TechhubMS.sln
 ├── TechhubMS                          (Web API / Presentation)
 ├── TechHub.Core                       (Domain — Entities, Enums, DTOs, ViewModels, Interfaces)
 ├── TechHub.Service                    (Application — Service implementations, Dapper repos)
-├── TechHub.Entity.Migration           (Data — EF Core DbContext for schema migrations)
+├── TechHub.Entity.Migration           (Data — EF Core DbContext + comprehensive `Script_Initial.sql` for full-server deployment)
 ├── TechHub.Background                 (Background Workers — Hangfire jobs, hosted services)
 └── TeachHub.QuestionBank              (Modular feature — AI question scanning with Claude)
 ```
@@ -128,7 +128,7 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 | `School` | Id, SchoolName, Location, CountryId, StateId, Address, IsActive |
 | `SchoolCode` | SchoolId, Code (used for student registration codes) |
 | `TenantInfo` | Id, SchoolId, Identifier (subdomain), IsActive |
-| `Users` | Id, FirstName, LastName, EmailAddress, UserName, HashPassword (SHA256), SchoolId, RoleId, IsActive |
+| `Users` | Id, FirstName, MiddleName, LastName, EmailAddress, UserName, HashPassword (SHA256), SchoolId, RoleId, IsActive |
 | `Role` | Id, Name (Student/HeadTeacher/Administrator/SuperAdministrator/SubjectTeacher/ClassTeacher) |
 | `Classroom` | Id, Name, SchoolId, NoOfStudents |
 | `Subjects` | Id, Subject, Category (Major/Minor), ClassCategory (Primary/Secondary/Colleges), SchoolId |
@@ -406,7 +406,7 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 
 - **No cancellation endpoint exists** for in-progress assessment attempts. To force a fresh attempt, manually update `AssessmentAttempt.Status` to `Abandoned` or delete the row.
 - **Lesson "watched" tracking** uses the `StudentLessonProgress` table. The `POST /api/performance/lesson/{lessonId}/watch` endpoint creates a row there.
-- **First PlatformSuperAdmin is seeded** via `Scriptsv11_PlatformUsers.sql` with username `platformadmin` and password `Platform@123`.
+- **First PlatformSuperAdmin is seeded** via `Script_Initial.sql` (consolidated from all migration scripts) with username `platformadmin` and password `Platform@123`.
 - **ProvisisonSchool flow**: Creates School → SchoolCode → TenantInfo → Users (Administrator) → AdminPermissions (FullAdmin) → sends welcome email, all in one transaction.
 - **Assessment expiry**: `AssessmentConfig.ExpiresAt` is checked in `StartAttempt`. If expired, returns "Assessment has expired" error.
 - **Student board sessionId format**: `{assessmentId}_{studentId}_{questionId}` for assessment answer board strokes.

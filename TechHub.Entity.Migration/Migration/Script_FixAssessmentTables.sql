@@ -34,6 +34,7 @@ BEGIN
         AssessmentId UNIQUEIDENTIFIER NOT NULL,
         QuestionId   UNIQUEIDENTIFIER NOT NULL,
         SchoolId     UNIQUEIDENTIFIER NOT NULL,
+        SubTopicId   UNIQUEIDENTIFIER NULL,
         DisplayOrder INT              NOT NULL DEFAULT 0,
         CreatedAt    NVARCHAR(30)     NOT NULL,
         IsActive     BIT              NOT NULL DEFAULT 1,

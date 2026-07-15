@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Serilog;
 using TechHub.Core.Configuration;
@@ -76,6 +77,10 @@ public class PerformanceRepository : IPerformanceRepository
         if (existing != null)
         {
             snapshot.Id = existing.Id;
+        }
+        else
+        {
+            snapshot.Id = ObjectId.GenerateNewId();
         }
 
         var options = new ReplaceOptions { IsUpsert = true };
