@@ -68,10 +68,10 @@ public class PerformanceController : ControllerBase
     }
 
     [HttpGet("subject/{subjectId}/topics")]
-    public async Task<IActionResult> GetSubjectTopics(Guid subjectId)
+    public async Task<IActionResult> GetSubjectTopics(Guid subjectId, [FromQuery] Guid? classroomId = null)
     {
         var claims = GetUserClaims();
-        var response = await _dashboardService.GetSubjectTopicsAsync(subjectId, claims);
+        var response = await _dashboardService.GetSubjectTopicsAsync(subjectId, classroomId, claims);
         return MapResponse(response);
     }
 
@@ -96,6 +96,14 @@ public class PerformanceController : ControllerBase
     {
         var claims = GetUserClaims();
         var response = await _studentDashboardService.GetStudentSubTopicScoresAsync(claims);
+        return MapResponse(response);
+    }
+
+    [HttpGet("student/{studentId}/quiz-performance")]
+    public async Task<IActionResult> GetStudentQuizPerformance(Guid studentId)
+    {
+        var claims = GetUserClaims();
+        var response = await _dashboardService.GetStudentQuizPerformanceAsync(studentId, claims);
         return MapResponse(response);
     }
 

@@ -184,6 +184,16 @@ public class PerformanceRepository : IPerformanceRepository
             .ToListAsync();
     }
 
+    public async Task<List<PerformanceSnapshot>> GetByClassroomSubjectSubTopicAsync(Guid schoolId, Guid classroomId, Guid subjectId)
+    {
+        return await _collection
+            .Find(s => s.SchoolId == schoolId
+                    && s.ClassroomId == classroomId
+                    && s.SubjectId == subjectId
+                    && s.DocType == "classroom_subject_subtopic")
+            .ToListAsync();
+    }
+
     public async Task<PerformanceSnapshot?> GetSchoolAggregateAsync(Guid schoolId)
     {
         return await _collection

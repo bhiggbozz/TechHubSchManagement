@@ -51,8 +51,10 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         {
             return role switch
             {
-                UserRole.Administrator or UserRole.SuperAdministrator or UserRole.HeadTeacher
+                UserRole.Administrator or UserRole.SuperAdministrator
                     => await GetAdminNavbar(schoolId),
+                UserRole.HeadTeacher
+                    => await GetHeadTeacherNavbar(userId, schoolId),
                 UserRole.SubjectTeacher
                     => await GetSubjectTeacherNavbar(userId, schoolId),
                 UserRole.ClassTeacher
@@ -84,8 +86,10 @@ public class PerformanceDashboardService : IPerformanceDashboardService
             {
                 case UserRole.Administrator:
                 case UserRole.SuperAdministrator:
-                case UserRole.HeadTeacher:
                     return await GetAdminDashboard(schoolId);
+
+                case UserRole.HeadTeacher:
+                    return await GetHeadTeacherDashboard(userId, schoolId);
 
                 case UserRole.SubjectTeacher:
                     return await GetSubjectTeacherDashboard(userId, schoolId);
@@ -319,6 +323,37 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         });
     }
 
+    private async Task<BaseResponse> GetHeadTeacherNavbar(Guid teacherId, Guid schoolId)
+    {
+        var myClassroomIds = (await _teacherClassroomQuery.QueryAsync<Guid>($@"
+            SELECT ClassroomId FROM TeacherClassroom
+            WHERE TeacherId = '{teacherId}' AND SchoolId = '{schoolId}' AND IsActive = 1",
+            new Dictionary<string, object>())).ToList();
+
+        var allSnapshots = await _perfRepo.GetBySchoolAsync(schoolId);
+
+        var filtered = allSnapshots
+            .Where(s => s.DocType == "classroom_subject"
+                     && myClassroomIds.Contains(s.ClassroomId ?? Guid.Empty))
+            .ToList();
+
+        var scores = filtered.Where(s => s.TotalAttempts > 0)
+            .Select(s => s.AverageScorePercent).DefaultIfEmpty(0).ToList();
+        var passRates = filtered.Where(s => s.TotalAttempts > 0)
+            .Select(s => s.PassRate).DefaultIfEmpty(0).ToList();
+
+        var pendingGrades = await CountPendingGrading(schoolId, teacherId);
+
+        return Success(new ClassTeacherNavbarDto
+        {
+            ClassCount = filtered.Select(s => s.ClassroomId).Distinct().Count(),
+            TotalStudents = filtered.Sum(s => s.StudentCount),
+            OverallAverageScore = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+            OverallPassRate = passRates.Any() ? Math.Round(passRates.Average(), 1) : 0m,
+            PendingGradingItems = pendingGrades
+        });
+    }
+
     private async Task<BaseResponse> GetStudentNavbar(Guid studentId, Guid schoolId)
     {
         var snapshots = await _perfRepo.GetByStudentAsync(studentId);
@@ -443,6 +478,43 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         return Success(result);
     }
 
+    private async Task<BaseResponse> GetHeadTeacherDashboard(Guid teacherId, Guid schoolId)
+    {
+        var myClassroomIds = await _teacherClassroomQuery.QueryAsync<Guid>($@"
+            SELECT ClassroomId FROM TeacherClassroom
+            WHERE TeacherId = '{teacherId}' AND SchoolId = '{schoolId}' AND IsActive = 1",
+            new Dictionary<string, object>());
+
+        var myClassrooms = myClassroomIds.ToList();
+
+        var allSnapshots = await _perfRepo.GetBySchoolAsync(schoolId);
+
+        var filtered = allSnapshots
+            .Where(s => s.DocType == "classroom_subject"
+                     && myClassrooms.Contains(s.ClassroomId ?? Guid.Empty))
+            .ToList();
+
+        var dashboards = filtered.Select(MapToDashboardDto).ToList();
+
+        var totalStudents = filtered.Sum(s => s.StudentCount);
+        var scores = filtered.Where(s => s.TotalAttempts > 0)
+            .Select(s => s.AverageScorePercent).DefaultIfEmpty(0).ToList();
+        var passRates = filtered.Where(s => s.TotalAttempts > 0)
+            .Select(s => s.PassRate).DefaultIfEmpty(0).ToList();
+
+        var result = new TeacherPerformanceDashboardDto
+        {
+            TeacherId = teacherId,
+            TeacherName = "Head Teacher",
+            TotalStudents = totalStudents,
+            OverallAverageScore = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
+            OverallPassRate = passRates.Any() ? Math.Round(passRates.Average(), 1) : 0m,
+            Classrooms = dashboards
+        };
+
+        return Success(result);
+    }
+
     private async Task<BaseResponse> GetStudentDashboard(Guid studentId)
     {
         var snapshots = await _perfRepo.GetByStudentAsync(studentId);
@@ -506,7 +578,70 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         }
     }
 
-    public async Task<BaseResponse> GetSubjectTopicsAsync(Guid subjectId, AuthenticatedUserClaims claims)
+    public async Task<BaseResponse> GetStudentQuizPerformanceAsync(Guid studentId, AuthenticatedUserClaims claims)
+    {
+        if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+            return Unauthorized();
+        if (!Guid.TryParse(claims.UserId, out var userId))
+            return Unauthorized();
+        if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
+            return Unauthorized();
+
+        try
+        {
+            if (role is not (UserRole.Administrator or UserRole.SuperAdministrator
+                or UserRole.HeadTeacher or UserRole.ClassTeacher or UserRole.SubjectTeacher))
+                return Forbidden();
+
+            var snapshot = (await _perfRepo.GetByStudentAsync(studentId))
+                .FirstOrDefault(s => s.DocType == "student" && s.SchoolId == schoolId);
+
+            var sql = $@"
+                SELECT
+                    att.Id               AS AttemptId,
+                    att.QuizCode,
+                    att.LessonId,
+                    lc.Aim               AS LessonTitle,
+                    ISNULL(c.Name, '')   AS ClassroomName,
+                    ISNULL(s.Subject, '') AS SubjectName,
+                    att.AttemptNumber,
+                    att.FinalScorePercent,
+                    att.IsPassed,
+                    att.Status,
+                    att.SubmittedAt
+                FROM QuizAttempt att
+                JOIN LessonContent lc ON lc.Id = att.LessonId
+                LEFT JOIN Classroom c ON c.Id = lc.ClassroomId
+                LEFT JOIN Subjects s ON s.Id = lc.SubjectId
+                WHERE att.StudentId = '{studentId}'
+                AND   att.SchoolId  = '{schoolId}'
+                AND   att.Status IN ('Submitted','PartiallyGraded','FullyGraded')
+                ORDER BY att.SubmittedAt DESC";
+
+            var attempts = (await _attemptQuery.QueryAsync<StudentAttemptItemDto>(sql, new Dictionary<string, object>())).ToList();
+
+            var dto = new StudentPerformanceDetailDto
+            {
+                StudentId = studentId,
+                StudentName = snapshot?.StudentName ?? attempts.FirstOrDefault()?.LessonTitle ?? "Unknown",
+                TotalAttempts = snapshot?.TotalAttempts ?? attempts.Count,
+                CompletedAttempts = snapshot?.CompletedAttempts ?? attempts.Count(a => a.Status is "Submitted" or "PartiallyGraded" or "FullyGraded"),
+                AverageScorePercent = snapshot?.AverageScorePercent ?? (attempts.Any(a => a.FinalScorePercent > 0) ? Math.Round(attempts.Where(a => a.FinalScorePercent > 0).Average(a => a.FinalScorePercent), 1) : 0m),
+                PassRate = snapshot?.PassRate ?? (attempts.Any() ? Math.Round((decimal)attempts.Count(a => a.IsPassed == true) / attempts.Count * 100, 1) : 0m),
+                BestScorePercent = attempts.Any() ? attempts.Max(a => a.FinalScorePercent) : 0m,
+                RecentAttempts = attempts
+            };
+
+            return Success(dto);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Error getting quiz performance for student {StudentId}", studentId);
+            return Error();
+        }
+    }
+
+    public async Task<BaseResponse> GetSubjectTopicsAsync(Guid subjectId, Guid? classroomId, AuthenticatedUserClaims claims)
     {
         if (!Guid.TryParse(claims.SchoolId, out var schoolId))
             return Unauthorized();
@@ -520,8 +655,19 @@ public class PerformanceDashboardService : IPerformanceDashboardService
             if (!await CanAccessSubject(userId, subjectId, role))
                 return Forbidden("You do not have access to this subject");
 
-            var topicSnapshots = await _perfRepo.GetBySubjectTopicAsync(schoolId, subjectId);
-            var subTopicSnapshots = await _perfRepo.GetBySubjectSubTopicAsync(schoolId, subjectId);
+            List<PerformanceSnapshot> topicSnapshots;
+            List<PerformanceSnapshot> subTopicSnapshots;
+
+            if (classroomId.HasValue)
+            {
+                topicSnapshots = await _perfRepo.GetByClassroomSubjectTopicAsync(schoolId, classroomId.Value, subjectId);
+                subTopicSnapshots = await _perfRepo.GetByClassroomSubjectSubTopicAsync(schoolId, classroomId.Value, subjectId);
+            }
+            else
+            {
+                topicSnapshots = await _perfRepo.GetBySubjectTopicAsync(schoolId, subjectId);
+                subTopicSnapshots = await _perfRepo.GetBySubjectSubTopicAsync(schoolId, subjectId);
+            }
 
             var subTopicLookup = subTopicSnapshots
                 .GroupBy(s => s.TopicId)
@@ -547,6 +693,8 @@ public class PerformanceDashboardService : IPerformanceDashboardService
                     {
                         TopicId = g.Key.TopicId ?? Guid.Empty,
                         TopicName = g.Key.TopicName ?? "Unknown",
+                        ClassroomId = first.ClassroomId,
+                        ClassroomName = first.ClassroomName,
                         StudentCount = g.Sum(s => s.StudentCount),
                         TotalAttempts = g.Sum(s => s.TotalAttempts),
                         CompletedAttempts = g.Sum(s => s.CompletedAttempts),
