@@ -176,45 +176,130 @@ public class PerformanceAggregationService : IPerformanceAggregationService
     private async Task<List<AttemptRawRow>> FetchAttemptData(Guid schoolId)
     {
         var sql = $@"
-            SELECT
-                qa.SchoolId,
-                lc.ClassroomId,
-                ISNULL(c.Name, 'Unknown')    AS ClassroomName,
-                lc.SubjectId,
-                ISNULL(s.Subject, 'Unknown') AS SubjectName,
-                lc.TopicId,
-                ISNULL(t.Name, 'Unknown')    AS TopicName,
-                st.Id                        AS SubTopicId,
-                ISNULL(lc.SubTopic, '')      AS SubTopicName,
-                lc.CreatedBy                 AS TeacherId,
-                ISNULL(CONCAT(tchr.FirstName, ' ', tchr.LastName), 'Unknown')
-                                             AS TeacherName,
-                qa.Id                        AS AttemptId,
-                qa.StudentId,
-                ISNULL(CONCAT(stud.FirstName, ' ', stud.LastName), 'Unknown')
-                                             AS StudentName,
-                qa.QuizCode,
-                lc.Id                        AS LessonId,
-                ISNULL(lc.Aim, '')           AS LessonTitle,
-                qa.Status,
-                qa.FinalScorePercent,
-                qa.IsPassed,
-                ISNULL(qa.TotalMarks, 0)     AS TotalMarks,
-                ISNULL(qa.AutoMarksObtained, 0) + ISNULL(qa.ManualMarksObtained, 0)
-                                             AS ObtainedMarks,
-                qa.TimeTakenSeconds,
-                qa.SubmittedAt,
-                qa.AttemptNumber
-            FROM QuizAttempt          qa WITH(NOLOCK)
-            JOIN LessonContent        lc  WITH(NOLOCK) ON lc.Id  = qa.LessonId
-            JOIN Classroom            c   WITH(NOLOCK) ON c.Id   = lc.ClassroomId
-            LEFT JOIN Subjects        s   WITH(NOLOCK) ON s.Id   = lc.SubjectId
-            LEFT JOIN Topic           t   WITH(NOLOCK) ON t.Id   = lc.TopicId
-            LEFT JOIN SubTopic         st    WITH(NOLOCK) ON st.Name   = lc.SubTopic AND st.SchoolId = lc.SchoolId
-            LEFT JOIN Users           tchr  WITH(NOLOCK) ON tchr.Id  = lc.CreatedBy
-            LEFT JOIN Users           stud  WITH(NOLOCK) ON stud.Id  = qa.StudentId
-            WHERE qa.SchoolId = '{schoolId}'
-            ORDER BY qa.SubmittedAt DESC";
+            SELECT SchoolId, ClassroomId, ClassroomName, SubjectId, SubjectName,
+                   TopicId, TopicName, SubTopicId, SubTopicName,
+                   TeacherId, TeacherName, AttemptId, StudentId, StudentName,
+                   QuizCode, LessonId, LessonTitle, Status,
+                   FinalScorePercent, IsPassed, TotalMarks, ObtainedMarks,
+                   TimeTakenSeconds, SubmittedAt, AttemptNumber
+            FROM (
+                -- QuizAttempt data
+                SELECT
+                    qa.SchoolId,
+                    lc.ClassroomId,
+                    ISNULL(c.Name, 'Unknown')             AS ClassroomName,
+                    lc.SubjectId,
+                    ISNULL(s.Subject, 'Unknown')           AS SubjectName,
+                    lc.TopicId,
+                    ISNULL(t.Name, 'Unknown')              AS TopicName,
+                    st.Id                                  AS SubTopicId,
+                    ISNULL(lc.SubTopic, '')                AS SubTopicName,
+                    lc.CreatedBy                           AS TeacherId,
+                    ISNULL(CONCAT(tchr.FirstName, ' ', tchr.LastName), 'Unknown')
+                                                           AS TeacherName,
+                    qa.Id                                  AS AttemptId,
+                    qa.StudentId,
+                    ISNULL(CONCAT(stud.FirstName, ' ', stud.LastName), 'Unknown')
+                                                           AS StudentName,
+                    qa.QuizCode,
+                    lc.Id                                  AS LessonId,
+                    ISNULL(lc.Aim, '')                     AS LessonTitle,
+                    qa.Status,
+                    qa.FinalScorePercent,
+                    qa.IsPassed,
+                    ISNULL(qa.TotalMarks, 0)               AS TotalMarks,
+                    ISNULL(qa.AutoMarksObtained, 0) + ISNULL(qa.ManualMarksObtained, 0)
+                                                           AS ObtainedMarks,
+                    qa.TimeTakenSeconds,
+                    qa.SubmittedAt,
+                    qa.AttemptNumber
+                FROM QuizAttempt          qa WITH(NOLOCK)
+                JOIN LessonContent        lc  WITH(NOLOCK) ON lc.Id  = qa.LessonId
+                JOIN Classroom            c   WITH(NOLOCK) ON c.Id   = lc.ClassroomId
+                LEFT JOIN Subjects        s   WITH(NOLOCK) ON s.Id   = lc.SubjectId
+                LEFT JOIN Topic           t   WITH(NOLOCK) ON t.Id   = lc.TopicId
+                LEFT JOIN SubTopic        st  WITH(NOLOCK) ON st.Name = lc.SubTopic AND st.SchoolId = lc.SchoolId
+                LEFT JOIN Users           tchr WITH(NOLOCK) ON tchr.Id = lc.CreatedBy
+                LEFT JOIN Users           stud WITH(NOLOCK) ON stud.Id = qa.StudentId
+                WHERE qa.SchoolId = '{schoolId}'
+
+                UNION ALL
+
+                -- AssessmentAttempt data
+                SELECT
+                    aa.SchoolId,
+                    ISNULL(cl.ClassroomId, CAST('00000000-0000-0000-0000-000000000000' AS UNIQUEIDENTIFIER))
+                                                           AS ClassroomId,
+                    ISNULL(cl.ClassName, 'Unknown')        AS ClassroomName,
+                    ISNULL(sd.SubjectId, CAST('00000000-0000-0000-0000-000000000000' AS UNIQUEIDENTIFIER))
+                                                           AS SubjectId,
+                    ISNULL(sd.SubjectName, 'Unknown')      AS SubjectName,
+                    ISNULL(sd.TopicId, CAST('00000000-0000-0000-0000-000000000000' AS UNIQUEIDENTIFIER))
+                                                           AS TopicId,
+                    ISNULL(sd.TopicName, 'Unknown')        AS TopicName,
+                    sd.SubTopicId,
+                    ISNULL(sd.SubTopicName, '')            AS SubTopicName,
+                    a.CreatedBy                            AS TeacherId,
+                    ISNULL(CONCAT(tchr.FirstName, ' ', tchr.LastName), 'Unknown')
+                                                           AS TeacherName,
+                    aa.Id                                  AS AttemptId,
+                    aa.StudentId,
+                    ISNULL(CONCAT(stud.FirstName, ' ', stud.LastName), 'Unknown')
+                                                           AS StudentName,
+                    a.Code                                 AS QuizCode,
+                    a.Id                                   AS LessonId,
+                    ISNULL(a.Title, '')                    AS LessonTitle,
+                    aa.Status,
+                    aa.FinalScorePercent,
+                    aa.IsPassed,
+                    ISNULL(aa.TotalMarks, 0)               AS TotalMarks,
+                    ISNULL(aa.AutoMarksObtained, 0) + ISNULL(aa.ManualMarksObtained, 0)
+                                                           AS ObtainedMarks,
+                    aa.TimeTakenSeconds,
+                    aa.SubmittedAt,
+                    aa.AttemptNumber
+                FROM AssessmentAttempt aa WITH(NOLOCK)
+                JOIN Assessments a WITH(NOLOCK) ON a.Id = aa.AssessmentId
+                LEFT JOIN Users tchr WITH(NOLOCK) ON tchr.Id = a.CreatedBy
+                LEFT JOIN Users stud WITH(NOLOCK) ON stud.Id = aa.StudentId
+                OUTER APPLY (
+                    SELECT TOP 1 aa2.TargetId AS ClassroomId, c.Name AS ClassName
+                    FROM AssessmentAssignment aa2 WITH(NOLOCK)
+                    LEFT JOIN Classroom c WITH(NOLOCK) ON c.Id = aa2.TargetId
+                    WHERE aa2.AssessmentId = aa.AssessmentId
+                      AND aa2.TargetType = 'Classroom'
+                      AND aa2.IsActive = 1
+                ) cl
+                OUTER APPLY (
+                    SELECT TOP 1
+                        COALESCE(aas.TargetId, aq.SubjectId) AS SubjectId,
+                        COALESCE(s_subj.Subject, s_q.Subject) AS SubjectName,
+                        aq.TopicId,
+                        t.Name AS TopicName,
+                        aq.SubTopicId,
+                        st.Name AS SubTopicName
+                    FROM (
+                        SELECT TOP 1 TargetId
+                        FROM AssessmentAssignment aa_subj WITH(NOLOCK)
+                        WHERE aa_subj.AssessmentId = aa.AssessmentId
+                          AND aa_subj.TargetType = 'Subject'
+                          AND aa_subj.IsActive = 1
+                    ) aas
+                    LEFT JOIN Subjects s_subj WITH(NOLOCK) ON s_subj.Id = aas.TargetId
+                    OUTER APPLY (
+                        SELECT TOP 1 q.SubjectId, q.TopicId, aq_q.SubTopicId
+                        FROM AssessmentQuestion aq_q WITH(NOLOCK)
+                        JOIN Questions q WITH(NOLOCK) ON q.Id = aq_q.QuestionId
+                        WHERE aq_q.AssessmentId = aa.AssessmentId AND aq_q.IsActive = 1
+                    ) aq
+                    LEFT JOIN Subjects s_q WITH(NOLOCK) ON s_q.Id = aq.SubjectId
+                    LEFT JOIN Topic t WITH(NOLOCK) ON t.Id = aq.TopicId
+                    LEFT JOIN SubTopic st WITH(NOLOCK) ON st.Id = aq.SubTopicId
+                ) sd
+                WHERE aa.SchoolId = '{schoolId}'
+                  AND aa.Status IN ('Submitted', 'PartiallyGraded', 'FullyGraded')
+            ) combined
+            ORDER BY SubmittedAt DESC";
 
         return (await _attemptQuery.QueryAsync<AttemptRawRow>(sql, new Dictionary<string, object>())).ToList();
     }

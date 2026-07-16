@@ -4797,7 +4797,7 @@ namespace TechHub.Service.Service
 
 					// ===== VALIDATE CLASSROOM =====
 
-					var classroom = await _teacherClassroomQueryRespository.Get(model.ClassroomId);
+					var classroom = await _classroomQueryRespository.Get(model.ClassroomId);
 
 					if (classroom is null)
 					{

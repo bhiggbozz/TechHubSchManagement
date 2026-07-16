@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Serilog;
 using TechHub.Core.Configuration;
@@ -76,6 +77,10 @@ public class PerformanceRepository : IPerformanceRepository
         if (existing != null)
         {
             snapshot.Id = existing.Id;
+        }
+        else
+        {
+            snapshot.Id = ObjectId.GenerateNewId();
         }
 
         var options = new ReplaceOptions { IsUpsert = true };
@@ -174,6 +179,16 @@ public class PerformanceRepository : IPerformanceRepository
     {
         return await _collection
             .Find(s => s.SchoolId == schoolId
+                    && s.SubjectId == subjectId
+                    && s.DocType == "classroom_subject_subtopic")
+            .ToListAsync();
+    }
+
+    public async Task<List<PerformanceSnapshot>> GetByClassroomSubjectSubTopicAsync(Guid schoolId, Guid classroomId, Guid subjectId)
+    {
+        return await _collection
+            .Find(s => s.SchoolId == schoolId
+                    && s.ClassroomId == classroomId
                     && s.SubjectId == subjectId
                     && s.DocType == "classroom_subject_subtopic")
             .ToListAsync();
