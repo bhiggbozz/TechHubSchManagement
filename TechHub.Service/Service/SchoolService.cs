@@ -134,7 +134,7 @@ namespace TechHub.Service.Service
 				}
 				var insertDict = new Dictionary<string, object> { { "CreationDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss")}, { "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss")}, { "Id", school.Id },
 					{ "SchoolName", school.SchoolName}, { "Location", school.Location}, {"CountryId", school.CountryId }, {"StateId", school.StateId },
-					{"Address", school.Address }, { "HasBranch", school.HasBranch}, { "IsActive", school.ISActive} };
+					{ "State", (object?)school.State ?? DBNull.Value }, {"Address", school.Address }, { "HasBranch", school.HasBranch}, { "IsActive", school.ISActive} };
 				if(_connString == null)
 				{
 					return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "Connection string not set", Status = "failed" };
@@ -5035,6 +5035,7 @@ namespace TechHub.Service.Service
 					{ "CreationDate", now }, { "ModifiedDate", now }, { "Id", schoolId },
 					{ "SchoolName", model.SchoolName }, { "Location", model.Location },
 					{ "CountryId", model.CountryId }, { "StateId", model.StateId },
+					{ "State", (object?)model.State ?? DBNull.Value },
 					{ "Address", model.Address }, { "HasBranch", model.HasBranch },
 					{ "LogoUrl", (object?)model.LogoUrl ?? DBNull.Value }, { "IsActive", true }
 				};

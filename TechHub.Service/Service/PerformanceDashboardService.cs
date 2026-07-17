@@ -18,6 +18,7 @@ public class PerformanceDashboardService : IPerformanceDashboardService
     private readonly IQueryRepository<ClassroomTeacher> _classroomTeacherQuery;
     private readonly IQueryRepository<QuizAttempt> _attemptQuery;
     private readonly IQueryRepository<QuizAttemptAnswer> _answerQuery;
+    private readonly IQueryRepository<ApprovalRequests> _approvalQuery;
     private readonly ILogger _logger;
 
     public PerformanceDashboardService(
@@ -27,6 +28,7 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         IQueryRepository<ClassroomTeacher> classroomTeacherQuery,
         IQueryRepository<QuizAttempt> attemptQuery,
         IQueryRepository<QuizAttemptAnswer> answerQuery,
+        IQueryRepository<ApprovalRequests> approvalQuery,
         ILogger logger)
     {
         _perfRepo = perfRepo;
@@ -35,6 +37,7 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         _classroomTeacherQuery = classroomTeacherQuery;
         _attemptQuery = attemptQuery;
         _answerQuery = answerQuery;
+        _approvalQuery = approvalQuery;
         _logger = logger;
     }
 
@@ -502,6 +505,15 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         var passRates = filtered.Where(s => s.TotalAttempts > 0)
             .Select(s => s.PassRate).DefaultIfEmpty(0).ToList();
 
+        var pendingApprovalsCount = (await _approvalQuery.QueryAsync<int>($@"
+            SELECT COUNT(*)
+            FROM ApprovalRequests
+            WHERE ApproverId = '{teacherId}'
+            AND   SchoolId   = '{schoolId}'
+            AND   Status     = 'Pending'
+            AND   ExpiresAt  > GETUTCDATE()",
+            new Dictionary<string, object>())).FirstOrDefault();
+
         var result = new TeacherPerformanceDashboardDto
         {
             TeacherId = teacherId,
@@ -509,7 +521,8 @@ public class PerformanceDashboardService : IPerformanceDashboardService
             TotalStudents = totalStudents,
             OverallAverageScore = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
             OverallPassRate = passRates.Any() ? Math.Round(passRates.Average(), 1) : 0m,
-            Classrooms = dashboards
+            Classrooms = dashboards,
+            PendingApprovalsCount = pendingApprovalsCount
         };
 
         return Success(result);

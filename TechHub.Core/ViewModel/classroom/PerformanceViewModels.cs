@@ -49,6 +49,7 @@ public class TeacherPerformanceDashboardDto
     public decimal OverallAverageScore { get; set; }
     public decimal OverallPassRate { get; set; }
     public List<PerformanceDashboardDto> Classrooms { get; set; } = new();
+    public int PendingApprovalsCount { get; set; }
 }
 
 public class StudentPerformanceDetailDto

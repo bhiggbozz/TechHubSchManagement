@@ -6,6 +6,7 @@ public class ProvisionSchoolViewModel
     public string Location { get; set; }
     public int CountryId { get; set; }
     public int StateId { get; set; }
+    public string? State { get; set; }
     public string Address { get; set; }
     public bool HasBranch { get; set; }
     public string TenantIdentifier { get; set; }
