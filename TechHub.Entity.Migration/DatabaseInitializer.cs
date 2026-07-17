@@ -65,7 +65,8 @@ public class DatabaseInitializer : IHostedService
             // Schema migrations for new columns
             var schemaMigrations = new[]
             {
-                "ALTER TABLE AssessmentQuestion ADD SubTopicId UNIQUEIDENTIFIER NULL"
+                "ALTER TABLE AssessmentQuestion ADD SubTopicId UNIQUEIDENTIFIER NULL",
+                "ALTER TABLE School ADD State NVARCHAR(100) NULL"
             };
 
             foreach (var migrationSql in schemaMigrations)
