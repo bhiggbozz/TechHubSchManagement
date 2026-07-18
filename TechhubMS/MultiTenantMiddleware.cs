@@ -24,6 +24,12 @@ public class MultiTenantMiddleware
 
 	public async Task InvokeAsync(HttpContext context, ITenantService tenantService)
 	{
+		if (context.Request.Path.StartsWithSegments("/swagger"))
+		{
+			await _next(context);
+			return;
+		}
+
 		string? tenantIdentifier = null;
 
 		//Priority 1: Check X-Tenant-ID header (from frontend)
