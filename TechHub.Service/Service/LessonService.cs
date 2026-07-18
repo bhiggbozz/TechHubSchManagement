@@ -98,6 +98,11 @@ public class LessonService : ILessonService
 			if (teacher is null || !teacher.IsActive)
 				return Forbidden("Your account is not active");
 
+			var autoPublish = userRole is UserRole.HeadTeacher
+				or UserRole.Administrator
+				or UserRole.SuperAdministrator
+				|| !teacher.LineManagerId.HasValue;
+
 			// Validate classroom belongs to school
 			var classroom = await _classroomQuery.Get(model.ClassroomId);
 			if (classroom is null || classroom.SchoolId != schoolId)
@@ -113,31 +118,13 @@ public class LessonService : ILessonService
 			//		return Forbidden("Quiz does not belong to your school");
 			//}
 
-			// Validate media files
-			//if (!model.MediaFiles.Any())
-			//	return BadRequest("At least one media file is required");
-			if (!model.IsDraft)
+			// Validate media files (optional — lesson can be submitted without media)
+			foreach (var file in model.MediaFiles)
 			{
-				if (!model.MediaFiles.Any())
-					return BadRequest("At least one media file is required");
-
-				foreach (var file in model.MediaFiles)
-				{
-					if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) ||
-						string.IsNullOrWhiteSpace(file.PublicId))
-						return BadRequest(
-							$"Invalid media file data for {file.OriginalFileName}");
-				}
-			}
-			else
-			{
-				foreach (var file in model.MediaFiles)
-				{
-					if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) ||
-						string.IsNullOrWhiteSpace(file.PublicId))
-						return BadRequest(
-							$"Invalid media file data for {file.OriginalFileName}");
-				}
+				if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) ||
+					string.IsNullOrWhiteSpace(file.PublicId))
+					return BadRequest(
+						$"Invalid media file data for {file.OriginalFileName}");
 			}
 
 
@@ -165,14 +152,14 @@ public class LessonService : ILessonService
 				{ "SubTopic",     string.Empty },
 				{ "Aim",         model.Aim.Trim() },
 				{ "Description", model.Description.Trim() },
-				{ "Status",      LessonStatus.PendingApproval },
+				{ "Status",      autoPublish ? LessonStatus.Approved : LessonStatus.PendingApproval },
 				{ "CreatedBy",   teacherId },
-				{ "ApprovedBy",  DBNull.Value },
+				{ "ApprovedBy",  autoPublish ? (object)teacherId : DBNull.Value },
 				{ "RejectedBy",  DBNull.Value },
 				{ "RejectionReason", DBNull.Value },
 				{ "CreatedAt",   now },
 				{ "ModifiedAt",  now },
-				{ "ApprovedAt",  DBNull.Value },
+				{ "ApprovedAt",  autoPublish ? (object)now : DBNull.Value },
 				{ "QuizCode", (object)(model.QuizId ?? (object)DBNull.Value) },
 				{ "AccessDate",      model.AccessDate.HasValue ? (object)model.AccessDate.Value.Date : DBNull.Value },
 				{ "AccessTime",      model.AccessTime.HasValue ? (object)model.AccessTime.Value: DBNull.Value },
@@ -204,9 +191,7 @@ public class LessonService : ILessonService
 					{ "CreatedAt",        now },
 					{ "IsActive",         true },
 					{ "MetaData",         file.MetaData },
-
 				}).ToList();
-
 
 			Guid approvalId;
 
@@ -215,12 +200,13 @@ public class LessonService : ILessonService
 			{
 				await _lessonCommand.Create(scope.Transaction, scope.Connection, lessonDict);
 
-				await _mediaCommand.CreateBatchAsync(scope.Transaction, scope.Connection, mediaDicts);
+				if (mediaDicts.Any())
+					await _mediaCommand.CreateBatchAsync(scope.Transaction, scope.Connection, mediaDicts);
 
 				approvalId = Guid.NewGuid();
 				var approverId = teacher.LineManagerId;
 
-				if (!model.IsDraft && !model.BypassApproval && approverId.HasValue)
+				if (!autoPublish && !model.IsDraft && !model.BypassApproval && approverId.HasValue)
 				{
 					var expiryDays = int.Parse(_configuration["Approvals:ExpiryDays"] ?? "5");
 
@@ -317,7 +303,7 @@ public class LessonService : ILessonService
 			}
 
 			// ===== POST-COMMIT — notify approver (fire and forget) ===========
-			if (!model.BypassApproval && teacher.LineManagerId.HasValue)
+			if (!autoPublish && !model.BypassApproval && teacher.LineManagerId.HasValue)
 			{
 				_ = Task.Run(async () =>
 				{
@@ -692,7 +678,7 @@ public class LessonService : ILessonService
 						s.Subject     AS SubjectName,
 						t.Name        AS TopicName,
 						st.Name       AS SubTopicName,
-						c.Name,
+						c.Name       AS ClassName,
 
 						ap.FirstName + ' ' + ap.LastName AS ApprovedByName
 
@@ -961,7 +947,7 @@ public class LessonService : ILessonService
 
             WHERE  lc.ClassroomId = '{classroomId}'
             AND    lc.SchoolId    = '{schoolId}'
-            AND    lc.Status      = '{LessonStatus.Published}'
+            AND    lc.Status      IN ('{LessonStatus.Published}', '{LessonStatus.Approved}')
 
             ORDER  BY lc.ApprovedAt DESC";
 
@@ -1124,7 +1110,7 @@ public class LessonService : ILessonService
 
 			var statusFilter = isTeacherOrAdmin
 				? string.Empty
-				: $"AND lc.Status = '{LessonStatus.Published}'";
+				: $"AND lc.Status IN ('{LessonStatus.Published}', '{LessonStatus.Approved}')";
 
 			// ── Fetch lessons ─────────────────────────────────────────────
 			var sql = $@"

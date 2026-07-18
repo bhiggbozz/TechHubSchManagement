@@ -112,6 +112,16 @@ public class ClassTeacherNavbarDto
     public int PendingGradingItems { get; set; }
 }
 
+public class HeadTeacherNavbarDto
+{
+    public int ClassCount { get; set; }
+    public int TotalStudents { get; set; }
+    public decimal OverallAverageScore { get; set; }
+    public decimal OverallPassRate { get; set; }
+    public int PendingGradingItems { get; set; }
+    public int PendingApprovalsCount { get; set; }
+}
+
 public class StudentNavbarDto
 {
     public int TotalAttempts { get; set; }

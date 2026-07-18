@@ -347,13 +347,23 @@ public class PerformanceDashboardService : IPerformanceDashboardService
 
         var pendingGrades = await CountPendingGrading(schoolId, teacherId);
 
-        return Success(new ClassTeacherNavbarDto
+        var pendingApprovalsCount = (await _approvalQuery.QueryAsync<int>($@"
+            SELECT COUNT(*)
+            FROM ApprovalRequests
+            WHERE ApproverId = '{teacherId}'
+            AND   SchoolId   = '{schoolId}'
+            AND   Status     = 'Pending'
+            AND   ExpiresAt  > GETUTCDATE()",
+            new Dictionary<string, object>())).FirstOrDefault();
+
+        return Success(new HeadTeacherNavbarDto
         {
             ClassCount = filtered.Select(s => s.ClassroomId).Distinct().Count(),
             TotalStudents = filtered.Sum(s => s.StudentCount),
             OverallAverageScore = scores.Any() ? Math.Round(scores.Average(), 1) : 0m,
             OverallPassRate = passRates.Any() ? Math.Round(passRates.Average(), 1) : 0m,
-            PendingGradingItems = pendingGrades
+            PendingGradingItems = pendingGrades,
+            PendingApprovalsCount = pendingApprovalsCount
         });
     }
 

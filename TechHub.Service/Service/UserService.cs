@@ -5393,7 +5393,7 @@ namespace TechHub.Service.Service
 					JOIN   Users         u  ON u.Id = lc.CreatedBy
 					WHERE  lc.SubjectId = '{subjectId}'
 					AND    lc.SchoolId  = '{schoolId}'
-					AND    lc.Status    = '{LessonStatus.Published}'
+					AND    lc.Status    IN ('{LessonStatus.Published}', '{LessonStatus.Approved}')
 					ORDER  BY lc.ApprovedAt DESC";
 
 				var rows = await _studentMinorSubjectQueryRespository.QueryAsync<StudentSubjectLessonDto>(sql, new Dictionary<string, object>());

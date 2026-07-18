@@ -25,10 +25,10 @@ namespace TechhubMS.Controllers
 			_schoolService = schoolService;
 		}
 		[HttpPost("createschool")]
-		[Authorize(Roles = "PlatformSuperAdmin,PlatformAdmin")]
+		//[Authorize(Roles = "PlatformSuperAdmin,PlatformAdmin")]
 		public async Task<ActionResult<BaseResponse>> CreateSchool(SchoolViewModel schoolViewModel)
 		{
-			var schoolIdClaim = User.GetAuthenticatedUserClaims();
+			//var schoolIdClaim = User.GetAuthenticatedUserClaims();
 			var result = await _schoolService.CreateSchool(schoolViewModel);
 			return Ok(result);
 		}

@@ -98,7 +98,7 @@ public class StudentDashboardService : IStudentDashboardService
                         SELECT ClassroomId FROM StudentClassroom WHERE StudentId = '{studentId}'
                     )
                     AND lc.SchoolId    = '{schoolId}'
-                    AND lc.Status      = 'Published'
+                    AND lc.Status      IN ('Published', 'Approved')
                     AND lc.QuizCode IS NOT NULL
                     AND NOT EXISTS (
                         SELECT 1 FROM QuizAttempt qa
@@ -120,7 +120,7 @@ public class StudentDashboardService : IStudentDashboardService
                         SELECT ClassroomId FROM StudentClassroom WHERE StudentId = '{studentId}'
                     )
                     AND lc.SchoolId = '{schoolId}'
-                    AND lc.Status   = 'Published'
+                    AND lc.Status   IN ('Published', 'Approved')
                     AND NOT EXISTS (
                         SELECT 1 FROM StudentLessonProgress
                         WHERE LessonId  = lc.Id
