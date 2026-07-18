@@ -186,7 +186,7 @@ public class BoardSessionService : IBoardSessionService
             FROM   LessonContent lc
             WHERE  lc.Id       = '{manifest.LessonId}'
             AND    lc.SchoolId = '{schoolId}'
-            AND    lc.Status   = '{LessonStatus.Published}'";
+            AND    lc.Status   IN ('{LessonStatus.Published}', '{LessonStatus.Approved}')";
 
 			var lesson = await _lessonQuery.Get(lessonQuery);
 			if (lesson is null)

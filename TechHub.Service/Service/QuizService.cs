@@ -615,7 +615,7 @@ public class QuizService : IQuizService
                 SELECT TOP 1 Id, QuizCode FROM LessonContent
                 WHERE  Id       = '{lessonId}'
                 AND    SchoolId = '{schoolId}'
-                AND    Status   = '{LessonStatus.Published}'");
+                AND    Status   IN ('{LessonStatus.Published}', '{LessonStatus.Approved}')");
 
 			if (lesson is null)
 				return new BaseResponse
@@ -930,12 +930,12 @@ public class QuizService : IQuizService
 				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
 					return Unauthorized();
 
-				// ── Verify lesson exists, published, has quiz ────────────────────
-				var lesson = await _lessonQuery.Get($@"
+                // ── Verify lesson exists, published, has quiz ────────────────────
+                var lesson = await _lessonQuery.Get($@"
                     SELECT TOP 1 Id, QuizCode, ClassroomId FROM LessonContent
                     WHERE  Id       = '{lessonId}'
                     AND    SchoolId = '{schoolId}'
-                    AND    Status   = '{LessonStatus.Published}'");
+                    AND    Status   IN ('{LessonStatus.Published}', '{LessonStatus.Approved}')");
 
 				if (lesson is null)
 					return new BaseResponse
@@ -1189,11 +1189,11 @@ public class QuizService : IQuizService
 				{
 					// Fallback: resolve from lesson's AssessmentSet
 					var lesson = await _lessonQuery.Get($@"
-                        SELECT TOP 1 Id, QuizCode, ClassroomId, CreatedBy
-                        FROM LessonContent
-                        WHERE  QuizCode  = '{quizCode}'
-                        AND    SchoolId  = '{schoolId}'
-                        AND    Status    = '{LessonStatus.Published}'");
+                    SELECT TOP 1 Id, QuizCode, ClassroomId, CreatedBy
+                    FROM LessonContent
+                    WHERE  QuizCode  = '{quizCode}'
+                    AND    SchoolId  = '{schoolId}'
+                    AND    Status    IN ('{LessonStatus.Published}', '{LessonStatus.Approved}')");
 
 					if (lesson is null)
 						return new BaseResponse
@@ -3277,12 +3277,12 @@ public class QuizService : IQuizService
 				}
 				else
 				{
-					var lesson = await _lessonQuery.Get($@"
+                    var lesson = await _lessonQuery.Get($@"
                         SELECT TOP 1 Id, CreatedBy
                         FROM LessonContent
                         WHERE  QuizCode  = '{quizCode}'
                         AND    SchoolId  = '{schoolId}'
-                        AND    Status    = '{LessonStatus.Published}'");
+                        AND    Status    IN ('{LessonStatus.Published}', '{LessonStatus.Approved}')");
 
 					if (lesson != null)
 						assessmentSet = await ResolveAssessmentSet(lesson.Id, schoolId);
@@ -3368,7 +3368,7 @@ public class QuizService : IQuizService
                     FROM   LessonContent lc
                     WHERE  lc.SubjectId  = '{subjectId}'
                     AND    lc.SchoolId   = '{schoolId}'
-                    AND    lc.Status     = '{LessonStatus.Published}'
+                    AND    lc.Status     IN ('{LessonStatus.Published}', '{LessonStatus.Approved}')
                     AND    lc.QuizCode   IS NOT NULL",
 				new Dictionary<string, object>());
 

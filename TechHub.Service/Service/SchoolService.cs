@@ -4962,7 +4962,7 @@ namespace TechHub.Service.Service
                     WHERE SubjectId   = '{subjectId}'
                     AND   ClassroomId = '{classroomId}'
                     AND   SchoolId    = '{schoolId}'
-                    AND   Status      = 'Published'";
+                    AND   Status      IN ('Published', 'Approved')";
 
 				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
 				conn.Open();
