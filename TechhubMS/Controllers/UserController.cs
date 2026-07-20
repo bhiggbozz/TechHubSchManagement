@@ -432,6 +432,29 @@ namespace TechhubMS.Controllers
 		}
 
 		/// <summary>
+		/// Unlock a user account and clear failed login attempts
+		/// </summary>
+		[HttpPost("{userId}/unlock")]
+		[Authorize(Roles = "SuperAdministrator,Administrator")]
+		[ProducesResponseType(typeof(BaseResponse), 200)]
+		[ProducesResponseType(typeof(BaseResponse), 403)]
+		[ProducesResponseType(typeof(BaseResponse), 404)]
+		public async Task<IActionResult> UnlockUser(Guid userId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.UnlockUserAccount(userId, claims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
+		}
+
+		/// <summary>
 		/// Get students for the logged-in teacher (auto-detected from JWT)
 		/// </summary>
 		[HttpGet("teacher/students")]

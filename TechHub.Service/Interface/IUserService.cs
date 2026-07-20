@@ -57,6 +57,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetStudentsByClassroom(Guid classroomId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> GetStudentsBySubject(Guid subjectId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> GetTeacherStudents(AuthenticatedUserClaims claims);
+		Task<BaseResponse> UnlockUserAccount(Guid userId, AuthenticatedUserClaims claims);
 	}
 		
 }

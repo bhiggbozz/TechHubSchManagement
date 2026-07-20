@@ -20,7 +20,6 @@ namespace TechhubMS.Controllers
 		[HttpPost("createschool")]
 		public async Task<ActionResult<BaseResponse>> CreateSchool(SchoolViewModel schoolViewModel)
 		{
-			var schoolIdClaim = User.GetAuthenticatedUserClaims();
 			var result = await _schoolService.CreateSchool(schoolViewModel);
 			return Ok(result);
 		}
