@@ -189,3 +189,29 @@ public class AssessmentAssignmentsDto
 	public string Title { get; set; }
 	public List<AssignmentTargetDto> Assignments { get; set; } = new();
 }
+
+public class GradeAssessmentAnswerViewModel
+{
+	public decimal ManualMarksObtained { get; set; }
+	public string? TeacherFeedback { get; set; }
+}
+
+public class PendingAssessmentGradingDto
+{
+	public Guid AnswerId { get; set; }
+	public Guid AttemptId { get; set; }
+	public Guid AssessmentId { get; set; }
+	public string AssessmentCode { get; set; }
+	public string AssessmentTitle { get; set; }
+	public string StudentName { get; set; }
+	public Guid QuestionId { get; set; }
+	public string QuestionTitle { get; set; }
+	public string QuestionText { get; set; }
+	public int QuestionType { get; set; }
+	public decimal MaxMarks { get; set; }
+	public string? TypedAnswer { get; set; }
+	public string? BoardSessionId { get; set; }
+	public string? AudioUrl { get; set; }
+	public bool IsSkipped { get; set; }
+	public string AttemptStatus { get; set; }
+}

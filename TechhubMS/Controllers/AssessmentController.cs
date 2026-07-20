@@ -152,4 +152,22 @@ public class AssessmentController : ControllerBase
 		var result = await _assessmentService.GetAttemptHistory(assessmentId, claims);
 		return MapResponse(result);
 	}
+
+	[HttpGet("grading/pending")]
+	[Authorize]
+	public async Task<IActionResult> GetPendingGrading()
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.GetPendingGrading(claims);
+		return MapResponse(result);
+	}
+
+	[HttpPost("grading/{answerId}/grade")]
+	[Authorize]
+	public async Task<IActionResult> GradeAnswer(Guid answerId, [FromBody] GradeAssessmentAnswerViewModel model)
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.GradeAnswer(answerId, model, claims);
+		return MapResponse(result);
+	}
 }

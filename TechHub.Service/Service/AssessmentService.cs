@@ -1188,6 +1188,204 @@ public class AssessmentService : IAssessmentService
         }
     }
 
+    public async Task<BaseResponse> GetPendingGrading(AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.UserId, out var teacherId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                var manualTypes = new[] { 2, 3, 5, 6, 7, 8 };
+
+                using var conn = new SqlConnection(_connString);
+                conn.Open();
+
+                var sql = @"
+                    SELECT
+                        aaa.Id AS AnswerId,
+                        aaa.AttemptId,
+                        a.Id AS AssessmentId,
+                        a.Code AS AssessmentCode,
+                        a.Title AS AssessmentTitle,
+                        u.FirstName + ' ' + u.LastName AS StudentName,
+                        aaa.QuestionId,
+                        q.Title AS QuestionTitle,
+                        q.TextContent AS QuestionText,
+                        aaa.QuestionType,
+                        aaa.MaxMarks,
+                        aaa.TypedAnswer,
+                        aaa.BoardSessionId,
+                        aaa.AudioUrl,
+                        aaa.IsSkipped,
+                        att.Status AS AttemptStatus
+                    FROM AssessmentAttemptAnswer aaa
+                    JOIN AssessmentAttempt att ON att.Id = aaa.AttemptId
+                    JOIN Assessments a ON a.Id = att.AssessmentId
+                    JOIN Users u ON u.Id = att.StudentId
+                    JOIN Questions q ON q.Id = aaa.QuestionId
+                    WHERE a.CreatedByUserId = @TeacherId
+                      AND a.SchoolId = @SchoolId
+                      AND aaa.ManualMarksObtained IS NULL
+                      AND aaa.QuestionType IN @ManualTypes
+                      AND aaa.IsSkipped = 0
+                      AND att.Status IN ('Submitted', 'PartiallyGraded')
+                    ORDER BY aaa.CreationDate DESC";
+
+                var rows = await conn.QueryAsync<PendingAssessmentGradingDto>(sql,
+                    new { TeacherId = teacherId, SchoolId = schoolId, ManualTypes = manualTypes });
+
+                return Ok($"{rows.Count()} pending answer(s) found", rows.ToList());
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error fetching pending assessment grading");
+                return Bad("An error occurred while fetching pending grading", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
+    public async Task<BaseResponse> GradeAnswer(Guid answerId, GradeAssessmentAnswerViewModel model, AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.UserId, out var teacherId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                using var conn = new SqlConnection(_connString);
+                conn.Open();
+
+                // Verify answer exists and belongs to an assessment created by this teacher
+                var verifySql = @"
+                    SELECT aaa.Id, aaa.MaxMarks, aaa.AttemptId, att.Status
+                    FROM AssessmentAttemptAnswer aaa
+                    JOIN AssessmentAttempt att ON att.Id = aaa.AttemptId
+                    JOIN Assessments a ON a.Id = att.AssessmentId
+                    WHERE aaa.Id = @AnswerId
+                      AND a.SchoolId = @SchoolId
+                      AND a.CreatedByUserId = @TeacherId";
+
+                var answer = await conn.QueryFirstOrDefaultAsync(verifySql,
+                    new { AnswerId = answerId, SchoolId = schoolId, TeacherId = teacherId });
+
+                if (answer is null)
+                    return Bad("Answer not found or not authorized to grade", ResponseCode.NotFound);
+
+                if (answer.Status == "FullyGraded")
+                    return Bad("This answer has already been graded", ResponseCode.Conflict);
+
+                if (model.ManualMarksObtained < 0 || model.ManualMarksObtained > (decimal)answer.MaxMarks)
+                    return Bad($"Marks must be between 0 and {answer.MaxMarks}", ResponseCode.BadRequest);
+
+                var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+                // Update the answer with manual marks
+                await _answerCommand.UpdateTableColumnById(
+                    new Dictionary<string, object>
+                    {
+                        { "ManualMarksObtained", model.ManualMarksObtained },
+                        { "TeacherFeedback", (object?)model.TeacherFeedback ?? DBNull.Value },
+                        { "GradedBy", teacherId },
+                        { "GradedAt", now },
+                        { "ModifiedDate", now }
+                    },
+                    new KeyValuePair<string, object>("Id", answerId));
+
+                var attemptId = (Guid)answer.AttemptId;
+
+                // Check if all manual-type answers in this attempt are now graded
+                var pendingSql = @"
+                    SELECT COUNT(1)
+                    FROM AssessmentAttemptAnswer
+                    WHERE AttemptId = @AttemptId
+                      AND ManualMarksObtained IS NULL
+                      AND QuestionType IN (2, 3, 5, 6, 7, 8)
+                      AND IsSkipped = 0";
+
+                var pendingCount = await conn.QueryFirstOrDefaultAsync<int>(pendingSql,
+                    new { AttemptId = attemptId });
+
+                if (pendingCount == 0)
+                {
+                    // All manual answers graded — recalculate and finalize
+                    var scoreSql = @"
+                        SELECT
+                            ISNULL(SUM(AutoMarksObtained), 0) + ISNULL(SUM(ManualMarksObtained), 0) AS Obtained,
+                            ISNULL(SUM(MaxMarks), 0) AS Total
+                        FROM AssessmentAttemptAnswer
+                        WHERE AttemptId = @AttemptId AND IsSkipped = 0";
+
+                    var scores = await conn.QueryFirstOrDefaultAsync(scoreSql, new { AttemptId = attemptId });
+
+                    decimal obtained = (decimal)(scores?.Obtained ?? 0);
+                    decimal total = (decimal)(scores?.Total ?? 0);
+
+                    var configSql = "SELECT TOP 1 PassMarkPercent FROM AssessmentConfig ac " +
+                        "JOIN AssessmentAttempt at2 ON at2.AssessmentId = ac.AssessmentId " +
+                        "WHERE at2.Id = @AttemptId AND ac.IsActive = 1";
+
+                    var passMark = await conn.QueryFirstOrDefaultAsync<int?>(configSql, new { AttemptId = attemptId });
+
+                    decimal finalScore = total > 0
+                        ? Math.Round((obtained / total) * 100, 2)
+                        : 0m;
+
+                    bool isPassed = finalScore >= (passMark ?? 50);
+
+                    await _attemptCommand.UpdateTableColumnById(
+                        new Dictionary<string, object>
+                        {
+                            { "ManualMarksObtained", obtained },
+                            { "TotalMarks", total },
+                            { "FinalScorePercent", finalScore },
+                            { "IsPassed", isPassed },
+                            { "Status", "FullyGraded" },
+                            { "ModifiedDate", now }
+                        },
+                        new KeyValuePair<string, object>("Id", attemptId));
+
+                    _logger.Information(
+                        "Assessment FullyGraded - AttemptId: {AttemptId}, GradedBy: {GradedBy}",
+                        attemptId, teacherId);
+
+                    return Ok("Answer graded. All manual answers graded — attempt finalized",
+                        new { AnswerId = answerId, AttemptStatus = "FullyGraded" });
+                }
+
+                // Some manual answers still pending
+                if (answer.Status == "Submitted")
+                {
+                    await _attemptCommand.UpdateTableColumnById(
+                        new Dictionary<string, object>
+                        {
+                            { "Status", "PartiallyGraded" },
+                            { "ModifiedDate", now }
+                        },
+                        new KeyValuePair<string, object>("Id", attemptId));
+                }
+
+                _logger.Information(
+                    "Answer graded - AnswerId: {AnswerId}, AttemptId: {AttemptId}, GradedBy: {GradedBy}",
+                    answerId, attemptId, teacherId);
+
+                return Ok("Answer graded successfully",
+                    new { AnswerId = answerId, AttemptStatus = "PartiallyGraded" });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error grading assessment answer - AnswerId: {AnswerId}", answerId);
+                return Bad("An error occurred while grading the answer", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
     public async Task<BaseResponse> GetAttemptHistory(Guid assessmentId, AuthenticatedUserClaims claims)
     {
         using (LogContext.PushProperty("RequestedBy", claims.UserId))

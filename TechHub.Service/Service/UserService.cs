@@ -1376,10 +1376,136 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public async Task<BaseResponse> UnlockUserAccount(Guid userId, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (claims is null || string.IsNullOrWhiteSpace(claims.UserId) || string.IsNullOrWhiteSpace(claims.SchoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid user claims",
+						Status = "failed"
+					};
+				}
+
+				var requesterId = Guid.Parse(claims.UserId);
+				var schoolId = Guid.Parse(claims.SchoolId);
+
+				var requester = await _queryrepositoryUser.Get(requesterId);
+				if (requester is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Requester not found",
+						Status = "failed"
+					};
+				}
+
+				if (requester.SchoolId != schoolId)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "Access denied",
+						Status = "failed"
+					};
+				}
+
+				var targetUser = await _queryrepositoryUser.Get(userId);
+				if (targetUser is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "User not found",
+						Status = "failed"
+					};
+				}
+
+				if (targetUser.SchoolId != schoolId)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "Cannot unlock user from a different school",
+						Status = "failed"
+					};
+				}
+
+				if (targetUser.IsActive)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "User account is already active",
+						Status = "successful"
+					};
+				}
+
+				var lastThree = await LastLoginHistorys(targetUser.Id);
+				var consecutiveFailures = lastThree?
+					.Where(h => h?.PasswordFailed == true)
+					.ToList();
+
+				if (consecutiveFailures is null || consecutiveFailures.Count < 3)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "User was not locked due to incorrect password attempts.",
+						Status = "failed"
+					};
+				}
+
+				await _commandRepositoryUser.UpdateTableColumnById(
+					nameof(targetUser.IsActive), nameof(targetUser.Id), true, targetUser.Id);
+
+				using var conn = new SqlConnection(_connString);
+				await conn.OpenAsync();
+
+				const string insertAudit = @"
+					INSERT INTO LoginHistory (Id, CreationDate, ModifiedDate, UserId, RoleId, PasswordFailed, DeviceType)
+					VALUES (@Id, @CreationDate, @ModifiedDate, @UserId, @RoleId, 0, @DeviceType)";
+
+				await conn.ExecuteAsync(insertAudit, new
+				{
+					Id = Guid.NewGuid(),
+					CreationDate = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+					ModifiedDate = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+					UserId = targetUser.Id,
+					RoleId = targetUser.RoleId,
+					DeviceType = "AdminUnlock"
+				});
+
+				_logger.Information(
+					"Account unlocked by admin - TargetUserId: {TargetUserId}, UnlockedBy: {UnlockedBy}",
+					targetUser.Id, requesterId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "User account has been unlocked successfully",
+					Status = "successful"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Failed to unlock user account - UserId: {UserId}", userId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
 		private async Task<IEnumerable<LoginHistory?>> LastLoginHistorys(Guid userId)
 		{
-			//string tableName
-			string query = $"select top 3 * from LoginHistory where UserId = '{userId}'";
+			string query = $"select top 3 * from LoginHistory where UserId = '{userId}' order by CreationDate DESC";
 			var lastLoginHistory = await _queryrepositoryLoginHistory.GetByQuery(query);
 			return lastLoginHistory;
 		}
