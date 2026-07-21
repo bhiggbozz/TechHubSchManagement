@@ -16,15 +16,18 @@ public class PerformanceController : ControllerBase
     private readonly IPerformanceDashboardService _dashboardService;
     private readonly IPerformanceAggregationService _aggregationService;
     private readonly IStudentDashboardService _studentDashboardService;
+    private readonly IAdminDashboardService _adminDashboardService;
 
     public PerformanceController(
         IPerformanceDashboardService dashboardService,
         IPerformanceAggregationService aggregationService,
-        IStudentDashboardService studentDashboardService)
+        IStudentDashboardService studentDashboardService,
+        IAdminDashboardService adminDashboardService)
     {
         _dashboardService = dashboardService;
         _aggregationService = aggregationService;
         _studentDashboardService = studentDashboardService;
+        _adminDashboardService = adminDashboardService;
     }
 
     [HttpGet("navbar")]
@@ -136,6 +139,64 @@ public class PerformanceController : ControllerBase
         {
             ResponseCode = "99000",
             ResponseMessage = "Performance data refreshed",
+            Status = "successful"
+        });
+    }
+
+    // ═════════════════════════════════════════════════════════
+    // ADMIN DASHBOARD ENDPOINTS (pre-computed, low latency)
+    // ═════════════════════════════════════════════════════════
+
+    [HttpGet("admin/dashboard")]
+    public async Task<IActionResult> GetAdminDashboard()
+    {
+        var claims = GetUserClaims();
+        var response = await _adminDashboardService.GetDashboardAsync(claims);
+        return MapResponse(response);
+    }
+
+    [HttpGet("admin/teachers")]
+    public async Task<IActionResult> GetAdminTeacherActivity([FromQuery] Guid? teacherId = null)
+    {
+        var claims = GetUserClaims();
+        var response = await _adminDashboardService.GetTeacherActivityAsync(claims, teacherId);
+        return MapResponse(response);
+    }
+
+    [HttpGet("admin/classrooms")]
+    public async Task<IActionResult> GetAdminClassroomPerformance([FromQuery] Guid? classroomId = null)
+    {
+        var claims = GetUserClaims();
+        var response = await _adminDashboardService.GetClassroomPerformanceAsync(claims, classroomId);
+        return MapResponse(response);
+    }
+
+    [HttpGet("admin/subjects")]
+    public async Task<IActionResult> GetAdminSubjectPerformance([FromQuery] Guid? subjectId = null)
+    {
+        var claims = GetUserClaims();
+        var response = await _adminDashboardService.GetSubjectPerformanceAsync(claims, subjectId);
+        return MapResponse(response);
+    }
+
+    [HttpPost("admin/refresh")]
+    public async Task<IActionResult> RefreshAdminDashboard()
+    {
+        var claims = GetUserClaims();
+        if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+            return Unauthorized();
+        if (!Guid.TryParse(claims.UserId, out var userId))
+            return Unauthorized();
+        if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role)
+            || (role != UserRole.Administrator && role != UserRole.SuperAdministrator))
+            return Forbid();
+
+        await _adminDashboardService.AggregateSchoolAsync(schoolId);
+
+        return Ok(new BaseResponse
+        {
+            ResponseCode = "99000",
+            ResponseMessage = "Admin dashboard data refreshed",
             Status = "successful"
         });
     }

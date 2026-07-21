@@ -24,7 +24,8 @@ public class MultiTenantMiddleware
 
 	public async Task InvokeAsync(HttpContext context, ITenantService tenantService)
 	{
-		if (context.Request.Path.StartsWithSegments("/swagger"))
+		if (context.Request.Path.StartsWithSegments("/swagger")
+		    || string.Equals(context.Request.Path, "/api/School/createschool", StringComparison.OrdinalIgnoreCase))
 		{
 			await _next(context);
 			return;

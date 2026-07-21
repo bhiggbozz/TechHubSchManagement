@@ -114,6 +114,7 @@ try
 	builder.Configuration.GetSection("Cloudinary"));
 	builder.Services.AddHostedService<QuestionJobWorker>();
 	builder.Services.AddHostedService<PerformanceAggregationWorker>();
+	builder.Services.AddHostedService<AdminDashboardAggregationWorker>();
 
 	// Multi-tenant services
 	builder.Services.AddMultiTenantServices(builder.Configuration);
