@@ -100,6 +100,11 @@ public class SubmitAssessmentAnswerViewModel
 	public bool IsSkipped { get; set; }
 }
 
+public class SubmitAssessmentBatchViewModel
+{
+	public List<SubmitAssessmentAnswerViewModel> Answers { get; set; } = new();
+}
+
 public class AnswerBoardInput
 {
 	public string BoardSessionId { get; set; }
@@ -214,4 +219,12 @@ public class PendingAssessmentGradingDto
 	public string? AudioUrl { get; set; }
 	public bool IsSkipped { get; set; }
 	public string AttemptStatus { get; set; }
+	public List<StudentBoardDataDto> Boards { get; set; } = new();
+}
+
+public class StudentBoardDataDto
+{
+	public int BoardIndex { get; set; }
+	public int StrokeCount { get; set; }
+	public List<object> Strokes { get; set; } = new();
 }

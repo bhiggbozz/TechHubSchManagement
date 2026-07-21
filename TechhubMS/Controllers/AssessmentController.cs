@@ -126,6 +126,15 @@ public class AssessmentController : ControllerBase
 		return MapResponse(result);
 	}
 
+	[HttpPost("submit-all")]
+	[Authorize]
+	public async Task<IActionResult> SubmitAllAnswers([FromBody] SubmitAssessmentBatchViewModel model)
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.SubmitAllAnswers(model, claims);
+		return MapResponse(result);
+	}
+
 	[HttpPost("{attemptId}/submit")]
 	[Authorize]
 	public async Task<IActionResult> SubmitAttempt(Guid attemptId)

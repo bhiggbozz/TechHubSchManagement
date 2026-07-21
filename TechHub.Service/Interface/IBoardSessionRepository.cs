@@ -17,4 +17,5 @@ public interface IBoardSessionRepository
 	Task<BoardManifest?> GetSessionAsync(string sessionId, string schoolId);
 	Task SaveStudentBatchAsync(string sessionId, int boardIndex, List<StrokeViewModel> strokes, string schoolId, string studentId);
 	Task<BoardBatchDocument?> GetStudentBatchAsync(string sessionId, int boardIndex);
+	Task<List<BoardBatchDocument>> GetStudentBatchesBySessionAsync(string sessionId);
 }

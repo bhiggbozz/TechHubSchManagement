@@ -2,6 +2,13 @@ using TechHub.Core.Entities.Performance;
 
 namespace TechHub.Service.Interface;
 
+public interface IAdminDashboardRepository
+{
+    Task UpsertDashboardAsync(AdminDashboardData data);
+    Task<AdminDashboardData?> GetBySchoolAsync(Guid schoolId);
+    Task DeleteBySchoolAsync(Guid schoolId);
+}
+
 public interface IPerformanceRepository
 {
     Task UpsertSnapshotAsync(PerformanceSnapshot snapshot);

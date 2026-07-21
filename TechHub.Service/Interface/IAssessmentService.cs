@@ -19,6 +19,7 @@ public interface IAssessmentService
 	Task<BaseResponse> StartAttempt(Guid assessmentId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> SubmitAnswer(SubmitAssessmentAnswerViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> SubmitAttempt(Guid attemptId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> SubmitAllAnswers(SubmitAssessmentBatchViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetResult(Guid attemptId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetAttemptHistory(Guid assessmentId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetAssignedAssessments(AuthenticatedUserClaims claims);

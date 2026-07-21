@@ -308,6 +308,13 @@ public class BoardSessionRepository : IBoardSessionRepository
 			.FirstOrDefaultAsync();
 	}
 
+	public async Task<List<BoardBatchDocument>> GetStudentBatchesBySessionAsync(string sessionId)
+	{
+		return await _batches
+			.Find(Builders<BoardBatchDocument>.Filter.Eq(b => b.SessionId, sessionId))
+			.ToListAsync();
+	}
+
 	public async Task SaveStudentBatchAsync(string sessionId, int boardIndex, List<StrokeViewModel> strokes, string schoolId, string studentId)
 	{
 		try

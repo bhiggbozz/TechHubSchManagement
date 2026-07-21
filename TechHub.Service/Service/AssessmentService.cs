@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using TechHub.Core;
 using TechHub.Core.Entities;
+using TechHub.Core.Entities.Board;
 using TechHub.Core.Enum;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel.classroom;
@@ -34,6 +35,7 @@ public class AssessmentService : IAssessmentService
     private readonly IConfiguration _configuration;
     private readonly ILogger _logger;
     private readonly string _connString;
+    private readonly IBoardSessionRepository _boardRepo;
 
     public AssessmentService(
         ICommandRespository<Assessments> assessmentCommand,
@@ -49,7 +51,8 @@ public class AssessmentService : IAssessmentService
         IQueryRepository<AssessmentAttemptAnswer> answerQuery,
         IDbTransactionScopeFactory dbTransactionScopeFactory,
         IConfiguration configuration,
-        ILogger logger)
+        ILogger logger,
+        IBoardSessionRepository boardRepo)
     {
         _assessmentCommand = assessmentCommand;
         _configCommand = configCommand;
@@ -66,6 +69,7 @@ public class AssessmentService : IAssessmentService
         _configuration = configuration;
         _logger = logger;
         _connString = _configuration.GetConnectionString("DbConnectionString") ?? string.Empty;
+        _boardRepo = boardRepo;
     }
 
     private static BaseResponse Ok(string message, object? data = null) => new()
@@ -697,6 +701,208 @@ public class AssessmentService : IAssessmentService
         }
     }
 
+    public async Task<BaseResponse> SubmitAllAnswers(SubmitAssessmentBatchViewModel model, AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (model.Answers == null || model.Answers.Count == 0)
+                    return Bad("No answers provided");
+
+                var grouped = model.Answers.GroupBy(a => a.AttemptId).ToList();
+                if (grouped.Count != 1)
+                    return Bad("All answers must belong to the same attempt");
+
+                var attemptId = grouped[0].Key;
+
+                if (!Guid.TryParse(claims.UserId, out var studentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+                var attemptSql = "SELECT TOP 1 Id, StartedAt FROM AssessmentAttempt " +
+                    "WHERE Id = @Id " +
+                    "AND StudentId = @StudentId " +
+                    "AND SchoolId = @SchoolId " +
+                    "AND Status = 'InProgress'";
+
+                var attempt = await _attemptQuery.SelectByColumns(attemptSql, new Dictionary<string, object>
+                {
+                    { "Id", attemptId },
+                    { "StudentId", studentId },
+                    { "SchoolId", schoolId }
+                });
+
+                if (attempt is null)
+                    return Bad("Attempt not found or already submitted", ResponseCode.NotFound);
+
+                using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+
+                foreach (var answer in model.Answers)
+                {
+                    var existingSql = "SELECT TOP 1 Id FROM AssessmentAttemptAnswer " +
+                        "WHERE AttemptId = @AttemptId AND QuestionId = @QuestionId";
+
+                    var existing = await scope.Connection.QueryFirstOrDefaultAsync(existingSql,
+                        new { AttemptId = attemptId, QuestionId = answer.QuestionId },
+                        transaction: scope.Transaction);
+
+                    if (existing is not null)
+                        continue;
+
+                    var questionInfo = await scope.Connection.QueryFirstOrDefaultAsync(
+                        "SELECT QuestionType, DifficultyLevel, MarksAllocation FROM Questions WHERE Id = @QuestionId",
+                        new { QuestionId = answer.QuestionId },
+                        transaction: scope.Transaction);
+
+                    var questionType = (int)(questionInfo?.QuestionType ?? 0);
+                    var difficultyLevel = (int)(questionInfo?.DifficultyLevel ?? 0);
+                    var questionMarks = (decimal)(questionInfo?.MarksAllocation ?? 0);
+
+                    var assessmentConfig = await _configQuery.SelectByColumns(
+                        "SELECT TOP 1 * FROM AssessmentConfig WHERE AssessmentId = (SELECT AssessmentId FROM AssessmentAttempt WHERE Id = @AttemptId) AND IsActive = 1",
+                        new Dictionary<string, object> { { "@AttemptId", attemptId } });
+
+                    var resolvedMaxMarks = ResolveDifficultyMarks(assessmentConfig, difficultyLevel, questionMarks);
+
+                    decimal autoMarks = 0;
+                    bool? isCorrect = null;
+
+                    if (answer.SelectedOptionId.HasValue)
+                    {
+                        var correctOption = await scope.Connection.QueryFirstOrDefaultAsync<Guid?>(
+                            "SELECT Id FROM QuestionOptions WHERE QuestionId = @QuestionId AND IsCorrect = 1",
+                            new { QuestionId = answer.QuestionId },
+                            transaction: scope.Transaction);
+
+                        isCorrect = answer.SelectedOptionId == correctOption;
+                        if (isCorrect == true)
+                            autoMarks = resolvedMaxMarks;
+                    }
+
+                    var answerId = Guid.NewGuid();
+                    await _answerCommand.Create(scope.Transaction, scope.Connection, new Dictionary<string, object>
+                    {
+                        { "Id", answerId },
+                        { "AttemptId", attemptId },
+                        { "QuestionId", answer.QuestionId },
+                        { "SchoolId", schoolId },
+                        { "QuestionType", questionType },
+                        { "SelectedOptionId", answer.SelectedOptionId ?? (object)DBNull.Value },
+                        { "IsCorrect", (object?)isCorrect ?? DBNull.Value },
+                        { "AutoMarksObtained", autoMarks > 0 ? autoMarks : 0 },
+                        { "TypedAnswer", answer.TypedAnswer ?? (object)DBNull.Value },
+                        { "BoardSessionId", answer.BoardSessionId ?? (object)DBNull.Value },
+                        { "AudioUrl", answer.AudioUrl ?? (object)DBNull.Value },
+                        { "MaxMarks", resolvedMaxMarks },
+                        { "IsSkipped", answer.IsSkipped },
+                        { "CreationDate", now },
+                        { "ModifiedDate", now }
+                    });
+                }
+
+                var scoreSql = "SELECT " +
+                    "ISNULL(SUM(AutoMarksObtained), 0) + ISNULL(SUM(ManualMarksObtained), 0) AS Obtained, " +
+                    "ISNULL(SUM(MaxMarks), 0) AS Total " +
+                    "FROM AssessmentAttemptAnswer " +
+                    "WHERE AttemptId = @AttemptId AND IsSkipped = 0";
+
+                var scores = await scope.Connection.QueryFirstOrDefaultAsync(scoreSql,
+                    new { AttemptId = attemptId },
+                    transaction: scope.Transaction);
+
+                decimal obtained = (decimal)(scores?.Obtained ?? 0);
+                decimal total = (decimal)(scores?.Total ?? 0);
+
+                var configSql = "SELECT TOP 1 ac.PassMarkPercent, ac.ShowResultImmediately, ac.ShowCorrectAnswers " +
+                    "FROM AssessmentConfig ac " +
+                    "JOIN AssessmentAttempt at2 ON at2.AssessmentId = ac.AssessmentId " +
+                    "WHERE at2.Id = @AttemptId AND ac.IsActive = 1";
+
+                var config = await _configQuery.SelectByColumns(configSql,
+                    new Dictionary<string, object> { { "AttemptId", attemptId } });
+
+                int passMark = config?.PassMarkPercent ?? 50;
+                bool showResult = config?.ShowResultImmediately ?? true;
+                bool showCorrectAnswers = config?.ShowCorrectAnswers ?? false;
+
+                decimal finalScore = total > 0
+                    ? Math.Round((obtained / total) * 100, 2)
+                    : 0m;
+
+                bool isPassed = finalScore >= passMark;
+
+                int timeTaken = 0;
+                if (DateTime.TryParse(attempt.StartedAt, out var started))
+                {
+                    timeTaken = (int)(DateTime.UtcNow - started).TotalSeconds;
+                }
+
+                await _attemptCommand.UpdateTableColumnById(
+                    new Dictionary<string, object>
+                    {
+                        { "AutoMarksObtained", obtained },
+                        { "TotalMarks", total },
+                        { "FinalScorePercent", finalScore },
+                        { "IsPassed", isPassed },
+                        { "Status", "Submitted" },
+                        { "SubmittedAt", now },
+                        { "TimeTakenSeconds", timeTaken },
+                        { "ModifiedDate", now }
+                    },
+                    new KeyValuePair<string, object>("Id", attemptId));
+
+                await scope.CommitAsync();
+
+                if (showResult)
+                {
+                    var answers = new List<AssessmentAnswerResultDto>();
+                    if (showCorrectAnswers)
+                    {
+                        var answerSql = "SELECT QuestionId, QuestionType, MaxMarks, " +
+                            "ISNULL(AutoMarksObtained, 0) + ISNULL(ManualMarksObtained, 0) AS MarksObtained, " +
+                            "IsCorrect, TypedAnswer, TeacherFeedback, IsSkipped " +
+                            "FROM AssessmentAttemptAnswer " +
+                            "WHERE AttemptId = @AttemptId " +
+                            "ORDER BY CreationDate ASC";
+
+                        var answerRows = await scope.Connection.QueryAsync<AssessmentAnswerResultDto>(
+                            answerSql, new { AttemptId = attemptId },
+                            transaction: scope.Transaction);
+                        answers = answerRows.ToList();
+                    }
+
+                    return Ok("Assessment submitted", new AssessmentResultDto
+                    {
+                        AttemptId = attempt.Id,
+                        AssessmentCode = "",
+                        Title = "",
+                        AttemptNumber = 0,
+                        IsOfficial = false,
+                        TotalMarks = total,
+                        AutoMarksObtained = obtained,
+                        ManualMarksObtained = 0,
+                        FinalScorePercent = finalScore,
+                        IsPassed = isPassed,
+                        Status = "Submitted",
+                        SubmittedAt = now,
+                        Answers = answers
+                    });
+                }
+
+                return Ok("Assessment submitted successfully");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error submitting all answers");
+                return Bad("An error occurred while submitting answers", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
     public async Task<BaseResponse> SubmitAnswer(SubmitAssessmentAnswerViewModel model, AuthenticatedUserClaims claims)
     {
         using (LogContext.PushProperty("RequestedBy", claims.UserId))
@@ -729,10 +935,14 @@ public class AssessmentService : IAssessmentService
                 using var conn = new SqlConnection(_connString);
                 conn.Open();
 
-                // Resolve max marks from assessment config difficulty levels
-                var (difficultyLevel, questionMarks) = await conn.QueryFirstOrDefaultAsync<(int, decimal)>(
-                    "SELECT DifficultyLevel, MarksAllocation FROM Questions WHERE Id = @QuestionId",
+                // Resolve question info from Questions table
+                var questionInfo = await conn.QueryFirstOrDefaultAsync(
+                    "SELECT QuestionType, DifficultyLevel, MarksAllocation FROM Questions WHERE Id = @QuestionId",
                     new { QuestionId = model.QuestionId });
+
+                var questionType = (int)(questionInfo?.QuestionType ?? 0);
+                var difficultyLevel = (int)(questionInfo?.DifficultyLevel ?? 0);
+                var questionMarks = (decimal)(questionInfo?.MarksAllocation ?? 0);
 
                 var assessmentConfig = await _configQuery.SelectByColumns(
                     "SELECT TOP 1 * FROM AssessmentConfig WHERE AssessmentId = (SELECT AssessmentId FROM AssessmentAttempt WHERE Id = @AttemptId) AND IsActive = 1",
@@ -775,7 +985,7 @@ public class AssessmentService : IAssessmentService
                         { "AttemptId", model.AttemptId },
                         { "QuestionId", model.QuestionId },
                         { "SchoolId", schoolId },
-                        { "QuestionType", 0 },
+                        { "QuestionType", questionType },
                         { "SelectedOptionId", model.SelectedOptionId },
                         { "IsCorrect", isCorrect },
                         { "AutoMarksObtained", autoMarks > 0 ? autoMarks : 0 },
@@ -1235,10 +1445,36 @@ public class AssessmentService : IAssessmentService
                       AND att.Status IN ('Submitted', 'PartiallyGraded')
                     ORDER BY aaa.CreationDate DESC";
 
-                var rows = await conn.QueryAsync<PendingAssessmentGradingDto>(sql,
-                    new { TeacherId = teacherId, SchoolId = schoolId, ManualTypes = manualTypes });
+                var rows = (await conn.QueryAsync<PendingAssessmentGradingDto>(sql,
+                    new { TeacherId = teacherId, SchoolId = schoolId, ManualTypes = manualTypes })).ToList();
 
-                return Ok($"{rows.Count()} pending answer(s) found", rows.ToList());
+                foreach (var row in rows)
+                {
+                    if (!string.IsNullOrWhiteSpace(row.BoardSessionId))
+                    {
+                        var batches = await _boardRepo.GetStudentBatchesBySessionAsync(row.BoardSessionId);
+                        row.Boards = batches.Select(b => new StudentBoardDataDto
+                        {
+                            BoardIndex = b.BoardIndex,
+                            StrokeCount = b.StrokeCount,
+                            Strokes = b.Strokes?.Select(s => (object)new
+                            {
+                                id = s.Id,
+                                type = s.Type,
+                                data = s.Data,
+                                color = s.Color,
+                                width = s.Width,
+                                currentBoard = s.CurrentBoard,
+                                timestamp = s.Timestamp,
+                                duration = s.Duration,
+                                startTime = s.StartTime,
+                                endTime = s.EndTime
+                            }).ToList() ?? new()
+                        }).ToList();
+                    }
+                }
+
+                return Ok($"{rows.Count} pending answer(s) found", rows);
             }
             catch (Exception ex)
             {
