@@ -11,4 +11,5 @@ public interface IStudentDashboardService
     Task<BaseResponse> MarkLessonAsWatchedAsync(Guid lessonId, AuthenticatedUserClaims claims);
     Task<BaseResponse> GetStudentSubjectScoresAsync(AuthenticatedUserClaims claims);
     Task<BaseResponse> GetStudentSubTopicScoresAsync(AuthenticatedUserClaims claims);
+    Task<BaseResponse> GetStudentDashboardStatsAsync(AuthenticatedUserClaims claims);
 }

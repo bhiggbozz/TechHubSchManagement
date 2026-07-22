@@ -3,6 +3,15 @@ using System.Collections.Generic;
 
 namespace TechHub.Core.ViewModel.classroom;
 
+public class StudentDashboardStatsDto
+{
+    public int ClassesThisWeek { get; set; }
+    public int QuizzesThisWeek { get; set; }
+    public int AssessmentsThisWeek { get; set; }
+    public int PendingAssignments { get; set; }
+    public bool HasLiveClass { get; set; }
+}
+
 public class StudentSummaryDto
 {
     public List<UnattemptedAssessmentDto> UnattemptedAssessments { get; set; } = new();

@@ -63,6 +63,15 @@ public class AssessmentController : ControllerBase
 		return MapResponse(result);
 	}
 
+	[HttpGet("student/scores")]
+	[Authorize]
+	public async Task<IActionResult> GetStudentAssessmentScores()
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.GetStudentAssessmentScores(claims);
+		return MapResponse(result);
+	}
+
 	[HttpGet("assigned")]
 	[Authorize]
 	public async Task<IActionResult> GetAssignedAssessments()

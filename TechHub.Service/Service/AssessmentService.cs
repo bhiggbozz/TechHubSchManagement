@@ -354,6 +354,89 @@ public class AssessmentService : IAssessmentService
         }
     }
 
+    public async Task<BaseResponse> GetStudentAssessmentScores(AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.UserId, out var studentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role)
+                    || role != UserRole.Student)
+                    return Bad("Only students can view assessment scores", ResponseCode.Forbidden);
+
+                var sql = "SELECT DISTINCT " +
+                    "a.Id AS AssessmentId, " +
+                    "a.Code, " +
+                    "a.Title, " +
+                    "a.Description, " +
+                    "ac.TimeLimitMinutes, " +
+                    "(SELECT COUNT(*) FROM AssessmentQuestion WHERE AssessmentId = a.Id AND IsActive = 1) AS QuestionCount, " +
+                    "ISNULL((SELECT SUM(ISNULL(MarksAllocation, 0)) " +
+                    "    FROM AssessmentQuestion aq " +
+                    "    JOIN Questions q ON q.Id = aq.QuestionId " +
+                    "    WHERE aq.AssessmentId = a.Id AND aq.IsActive = 1), 0) AS TotalMarks, " +
+                    "at2.Id AS AttemptId, " +
+                    "at2.AttemptNumber, " +
+                    "at2.IsOfficial, " +
+                    "at2.FinalScorePercent, " +
+                    "at2.AutoMarksObtained, " +
+                    "at2.ManualMarksObtained, " +
+                    "at2.IsPassed, " +
+                    "at2.TimeTakenSeconds, " +
+                    "at2.StartedAt, " +
+                    "at2.SubmittedAt, " +
+                    "CASE WHEN at2.Id IS NULL THEN 'NotStarted' " +
+                    "     WHEN at2.Status = 'InProgress' THEN 'InProgress' " +
+                    "     ELSE at2.Status END AS Status " +
+                    "FROM Assessments a " +
+                    "JOIN AssessmentConfig ac ON ac.AssessmentId = a.Id AND ac.IsActive = 1 " +
+                    "JOIN AssessmentAssignment aa ON aa.AssessmentId = a.Id AND aa.IsActive = 1 " +
+                    "LEFT JOIN ( " +
+                    "    SELECT Id, AssessmentId, AttemptNumber, IsOfficial, " +
+                    "           FinalScorePercent, AutoMarksObtained, ManualMarksObtained, " +
+                    "           IsPassed, Status, TimeTakenSeconds, StartedAt, SubmittedAt, " +
+                    "           ROW_NUMBER() OVER (PARTITION BY AssessmentId ORDER BY AttemptNumber DESC) AS rn " +
+                    "    FROM AssessmentAttempt " +
+                    "    WHERE StudentId = @StudentId AND SchoolId = @SchoolId " +
+                    ") at2 ON at2.AssessmentId = a.Id AND at2.rn = 1 " +
+                    "WHERE a.SchoolId = @SchoolId AND a.IsActive = 1 " +
+                    "AND ( " +
+                    "    aa.TargetType = 'Student' AND aa.TargetId = @StudentId " +
+                    "    OR aa.TargetType = 'Subject' AND aa.TargetId IN ( " +
+                    "        SELECT cs.SubjectId " +
+                    "        FROM StudentClassroom sc " +
+                    "        JOIN ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId " +
+                    "        WHERE sc.StudentId = @StudentId AND sc.IsActive = 1 AND cs.IsActive = 1 " +
+                    "        UNION " +
+                    "        SELECT sms.SubjectId " +
+                    "        FROM StudentMinorSubject sms " +
+                    "        WHERE sms.StudentId = @StudentId AND sms.IsActive = 1 " +
+                    "    ) " +
+                    "    OR aa.TargetType = 'Classroom' AND aa.TargetId IN ( " +
+                    "        SELECT ClassroomId FROM StudentClassroom WHERE StudentId = @StudentId AND IsActive = 1 " +
+                    "    ) " +
+                    ") " +
+                    "ORDER BY a.Title ASC";
+
+                using var conn = new SqlConnection(_connString);
+                var rows = await conn.QueryAsync<StudentAssessmentScoreDto>(
+                    sql, new { StudentId = studentId, SchoolId = schoolId });
+
+                return Ok($"{rows.Count()} assessment score(s) found", rows.ToList());
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error fetching student assessment scores");
+                return Bad("An error occurred while fetching assessment scores", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
     public async Task<BaseResponse> GetAssessmentDetailByCode(string code, AuthenticatedUserClaims claims)
     {
         using (LogContext.PushProperty("RequestedBy", claims.UserId))

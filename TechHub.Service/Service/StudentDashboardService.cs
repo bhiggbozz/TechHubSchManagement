@@ -261,4 +261,138 @@ public class StudentDashboardService : IStudentDashboardService
             }
         }
     }
+
+    public async Task<BaseResponse> GetStudentDashboardStatsAsync(AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.UserId, out var studentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                var now = DateTime.UtcNow;
+                var monday = now.AddDays(-(int)now.DayOfWeek + (int)DayOfWeek.Monday);
+                var sunday = monday.AddDays(6).Date.AddDays(1).AddSeconds(-1);
+                var weekStart = monday.ToString("yyyy-MM-dd");
+                var weekEnd = sunday.ToString("yyyy-MM-dd HH:mm:ss");
+                var today = now.ToString("yyyy-MM-dd");
+
+                using var conn = new SqlConnection(_connString);
+                conn.Open();
+
+                var classesTask = conn.QueryFirstAsync<int>($@"
+                    SELECT COUNT(DISTINCT cp.Id)
+                    FROM ClassPreparation cp
+                    WHERE cp.ClassroomId IN (
+                        SELECT ClassroomId FROM StudentClassroom
+                        WHERE StudentId = '{studentId}' AND IsActive = 1
+                    )
+                    AND cp.SchoolId = '{schoolId}'
+                    AND cp.ScheduledDate >= '{weekStart}'
+                    AND cp.ScheduledDate <= '{weekEnd}'
+                    AND cp.Status IN (2, 4)");
+
+                var quizzesTask = conn.QueryFirstAsync<int>($@"
+                    SELECT COUNT(DISTINCT lc.Id)
+                    FROM LessonContent lc
+                    WHERE lc.ClassroomId IN (
+                        SELECT ClassroomId FROM StudentClassroom
+                        WHERE StudentId = '{studentId}' AND IsActive = 1
+                    )
+                    AND lc.SchoolId = '{schoolId}'
+                    AND lc.QuizCode IS NOT NULL
+                    AND lc.CreatedAt >= '{weekStart}'
+                    AND lc.CreatedAt <= '{weekEnd}'
+                    AND lc.Status IN ('Published', 'Approved')");
+
+                var assessmentsTask = conn.QueryFirstAsync<int>($@"
+                    SELECT COUNT(DISTINCT a.Id)
+                    FROM Assessments a
+                    JOIN AssessmentAssignment aa ON aa.AssessmentId = a.Id AND aa.IsActive = 1
+                    WHERE a.SchoolId = '{schoolId}' AND a.IsActive = 1
+                    AND (
+                        aa.TargetType = 'Student' AND aa.TargetId = '{studentId}'
+                        OR aa.TargetType = 'Subject' AND aa.TargetId IN (
+                            SELECT cs.SubjectId
+                            FROM StudentClassroom sc
+                            JOIN ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+                            WHERE sc.StudentId = '{studentId}' AND sc.IsActive = 1 AND cs.IsActive = 1
+                            UNION
+                            SELECT sms.SubjectId
+                            FROM StudentMinorSubject sms
+                            WHERE sms.StudentId = '{studentId}' AND sms.IsActive = 1
+                        )
+                        OR aa.TargetType = 'Classroom' AND aa.TargetId IN (
+                            SELECT ClassroomId FROM StudentClassroom
+                            WHERE StudentId = '{studentId}' AND IsActive = 1
+                        )
+                    )
+                    AND a.CreationDate >= '{weekStart}'
+                    AND a.CreationDate <= '{weekEnd}'");
+
+                var pendingTask = conn.QueryFirstAsync<int>($@"
+                    SELECT COUNT(DISTINCT a.Id)
+                    FROM Assessments a
+                    JOIN AssessmentAssignment aa ON aa.AssessmentId = a.Id AND aa.IsActive = 1
+                    LEFT JOIN (
+                        SELECT AssessmentId, MAX(AttemptNumber) AS MaxAttempt
+                        FROM AssessmentAttempt
+                        WHERE StudentId = '{studentId}' AND SchoolId = '{schoolId}'
+                        GROUP BY AssessmentId
+                    ) at2 ON at2.AssessmentId = a.Id
+                    WHERE a.SchoolId = '{schoolId}' AND a.IsActive = 1
+                    AND (
+                        aa.TargetType = 'Student' AND aa.TargetId = '{studentId}'
+                        OR aa.TargetType = 'Subject' AND aa.TargetId IN (
+                            SELECT cs.SubjectId
+                            FROM StudentClassroom sc
+                            JOIN ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+                            WHERE sc.StudentId = '{studentId}' AND sc.IsActive = 1 AND cs.IsActive = 1
+                            UNION
+                            SELECT sms.SubjectId
+                            FROM StudentMinorSubject sms
+                            WHERE sms.StudentId = '{studentId}' AND sms.IsActive = 1
+                        )
+                        OR aa.TargetType = 'Classroom' AND aa.TargetId IN (
+                            SELECT ClassroomId FROM StudentClassroom
+                            WHERE StudentId = '{studentId}' AND IsActive = 1
+                        )
+                    )
+                    AND at2.AssessmentId IS NULL");
+
+                var liveClassTask = conn.QueryFirstAsync<bool>($@"
+                    SELECT CAST(CASE WHEN EXISTS (
+                        SELECT 1 FROM ClassPreparation cp
+                        WHERE cp.ClassroomId IN (
+                            SELECT ClassroomId FROM StudentClassroom
+                            WHERE StudentId = '{studentId}' AND IsActive = 1
+                        )
+                        AND cp.SchoolId = '{schoolId}'
+                        AND cp.Status = 4
+                        AND cp.ScheduledDate = '{today}'
+                    ) THEN 1 ELSE 0 END AS BIT)");
+
+                await Task.WhenAll(classesTask, quizzesTask, assessmentsTask, pendingTask, liveClassTask);
+
+                var dto = new StudentDashboardStatsDto
+                {
+                    ClassesThisWeek = classesTask.Result,
+                    QuizzesThisWeek = quizzesTask.Result,
+                    AssessmentsThisWeek = assessmentsTask.Result,
+                    PendingAssignments = pendingTask.Result,
+                    HasLiveClass = liveClassTask.Result
+                };
+
+                return Ok("Student dashboard stats retrieved", dto);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error fetching student dashboard stats");
+                return Bad("An error occurred while fetching dashboard stats", ResponseCode.ErrorOccured);
+            }
+        }
+    }
 }
