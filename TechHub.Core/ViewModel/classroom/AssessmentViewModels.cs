@@ -31,6 +31,28 @@ public class AssignAssessmentViewModel
 	public List<Guid> TargetIds { get; set; } = new();
 }
 
+public class StudentAssessmentScoreDto
+{
+    public Guid AssessmentId { get; set; }
+    public string Code { get; set; }
+    public string Title { get; set; }
+    public string? Description { get; set; }
+    public int TimeLimitMinutes { get; set; }
+    public int QuestionCount { get; set; }
+    public int TotalMarks { get; set; }
+    public Guid? AttemptId { get; set; }
+    public int? AttemptNumber { get; set; }
+    public bool? IsOfficial { get; set; }
+    public decimal? FinalScorePercent { get; set; }
+    public decimal? AutoMarksObtained { get; set; }
+    public decimal? ManualMarksObtained { get; set; }
+    public bool? IsPassed { get; set; }
+    public string Status { get; set; } // NotStarted | InProgress | Submitted | PartiallyGraded | FullyGraded
+    public int? TimeTakenSeconds { get; set; }
+    public string? StartedAt { get; set; }
+    public string? SubmittedAt { get; set; }
+}
+
 public class AssessmentListItemDto
 {
 	public Guid AssessmentId { get; set; }

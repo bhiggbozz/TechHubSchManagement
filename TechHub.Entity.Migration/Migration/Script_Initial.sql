@@ -185,6 +185,8 @@ BEGIN
     );
 END;
 
+GO
+
 -- ========================================================================
 -- SECTION 2: CLASSROOM & SUBJECT TABLES
 -- ========================================================================
@@ -332,6 +334,8 @@ BEGIN
     );
 END;
 
+GO
+
 -- ========================================================================
 -- SECTION 3: TOPIC & SUBTOPIC
 -- ========================================================================
@@ -378,6 +382,8 @@ BEGIN
     CREATE INDEX IX_SubTopic_ClassroomId  ON SubTopic(SchoolId, ClassroomId);
 END;
 
+GO
+
 -- ========================================================================
 -- SECTION 4: LESSON PLANNING
 -- ========================================================================
@@ -409,6 +415,7 @@ BEGIN
         DurationMinutes   INT              NULL,
         AccessEndsAt      DATETIME2        NULL,
         AssessmentSetId   UNIQUEIDENTIFIER NULL,
+        IsActive          BIT              NOT NULL DEFAULT 1,
         CONSTRAINT FK_LessonContent_Classroom FOREIGN KEY (ClassroomId) REFERENCES Classroom(Id),
         CONSTRAINT FK_LessonContent_CreatedBy FOREIGN KEY (CreatedBy)   REFERENCES Users(Id)
     );
@@ -638,6 +645,8 @@ BEGIN
         ON StudentLessonProgress(LessonId);
 END;
 
+GO
+
 -- ========================================================================
 -- SECTION 5: QUIZ SYSTEM
 -- ========================================================================
@@ -827,6 +836,8 @@ BEGIN
     CREATE INDEX IX_QuizAttemptAssistance_Attempt ON QuizAttemptAssistance(AttemptId, StudentId);
 END;
 
+GO
+
 -- ========================================================================
 -- SECTION 6: ASSESSMENT SYSTEM
 -- ========================================================================
@@ -986,6 +997,8 @@ BEGIN
     CREATE INDEX IX_AnswerBoard_AnswerId ON AssessmentAttemptAnswerBoard(AnswerId);
     CREATE INDEX IX_AnswerBoard_Session  ON AssessmentAttemptAnswerBoard(BoardSessionId);
 END;
+
+GO
 
 -- ========================================================================
 -- SECTION 7: QUESTION BANK
@@ -1191,6 +1204,8 @@ BEGIN
     );
 END;
 
+GO
+
 -- ========================================================================
 -- SECTION 8: ANALYTICS & PERFORMANCE
 -- ========================================================================
@@ -1294,6 +1309,8 @@ BEGIN
         ON PerformanceAggregationLog(SchoolId, Status);
 END;
 
+GO
+
 -- ========================================================================
 -- SECTION 9: MISC TABLES
 -- ========================================================================
@@ -1311,6 +1328,8 @@ BEGIN
         ModifiedDate DATETIME         DEFAULT GETUTCDATE()
     );
 END;
+
+GO
 
 -- ========================================================================
 -- SECTION 10: SEED DATA

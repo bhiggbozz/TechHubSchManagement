@@ -283,6 +283,7 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 | GET | `/api/Assessment/{id}/detail` | JWT | Assessment with questions |
 | POST | `/api/Assessment/{id}/start` | Student | **Start or resume** attempt |
 | POST | `/api/Assessment/answer` | Student | Submit single answer |
+| POST | `/api/Assessment/submit-all` | Student | **Submit all answers + attempt in one call** |
 | POST | `/api/Assessment/{attemptId}/submit` | Student | Submit entire attempt |
 | GET | `/api/Assessment/result/{attemptId}` | Student | Get result |
 | GET | `/api/Assessment/{id}/history` | Student | Attempt history |
@@ -374,8 +375,9 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 2. If exists → returns `{ resume: true, attemptId }` (no new attempt created)
 3. If none → creates new attempt, fetches shuffled questions + options
 4. `POST /api/Assessment/answer` — submit one answer at a time (auto-grades objective)
-5. `POST /api/Assessment/{attemptId}/submit` — finalizes, calculates score
-6. Only first attempt is `IsOfficial = true`
+5. `POST /api/Assessment/submit-all` — **submit all answers + finalize attempt in one call** (saves answers in a transaction, calculates score, marks as Submitted)
+6. `POST /api/Assessment/{attemptId}/submit` — finalizes, calculates score
+7. Only first attempt is `IsOfficial = true`
 
 ### Quiz Attempt Flow
 - Similar to assessment but attached to a lesson via `QuizCode`

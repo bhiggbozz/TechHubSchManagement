@@ -374,7 +374,8 @@ public class PerformanceAggregationService : IPerformanceAggregationService
     private List<PerformanceSnapshot> AggregateByClassroomSubjectTopic(List<AttemptRawRow> rows, DateTime now)
     {
         var groups = rows
-            .Where(r => r.ClassroomId != Guid.Empty && r.SubjectId != Guid.Empty && r.TopicId != Guid.Empty)
+            .Where(r => r.ClassroomId != Guid.Empty && r.SubjectId != Guid.Empty
+                        && r.TopicId.HasValue && r.TopicId.Value != Guid.Empty)
             .GroupBy(r => new
             {
                 r.ClassroomId,
@@ -430,7 +431,8 @@ public class PerformanceAggregationService : IPerformanceAggregationService
     private List<PerformanceSnapshot> AggregateByClassroomSubjectSubTopic(List<AttemptRawRow> rows, DateTime now)
     {
         var groups = rows
-            .Where(r => r.ClassroomId != Guid.Empty && r.SubjectId != Guid.Empty && r.TopicId != Guid.Empty
+            .Where(r => r.ClassroomId != Guid.Empty && r.SubjectId != Guid.Empty
+                        && r.TopicId.HasValue && r.TopicId.Value != Guid.Empty
                         && !string.IsNullOrEmpty(r.SubTopicName))
             .GroupBy(r => new
             {
@@ -712,7 +714,7 @@ public class PerformanceAggregationService : IPerformanceAggregationService
         public string ClassroomName { get; set; } = string.Empty;
         public Guid SubjectId { get; set; }
         public string SubjectName { get; set; } = string.Empty;
-        public Guid TopicId { get; set; }
+        public Guid? TopicId { get; set; }
         public string TopicName { get; set; } = string.Empty;
         public Guid? SubTopicId { get; set; }
         public string SubTopicName { get; set; } = string.Empty;

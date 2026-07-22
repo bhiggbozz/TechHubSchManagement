@@ -61,13 +61,26 @@ public class DatabaseInitializer : IHostedService
             }
 
             Log.Information("DatabaseInitializer: Initial migration completed successfully.");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "DatabaseInitializer: Initial migration script failed (non-fatal, continuing startup).");
+        }
 
-            // Schema migrations for new columns
+        // Schema migrations — run regardless of whether the main script succeeded
+        try
+        {
             var schemaMigrations = new[]
             {
+                "IF OBJECT_ID('LessonContent', 'U') IS NOT NULL AND COL_LENGTH('LessonContent', 'IsActive') IS NULL ALTER TABLE LessonContent ADD IsActive BIT NOT NULL DEFAULT 1",
+                "IF OBJECT_ID('ClassPreparation', 'U') IS NOT NULL AND COL_LENGTH('ClassPreparation', 'AutoApprovalEligible') IS NULL ALTER TABLE ClassPreparation ADD AutoApprovalEligible BIT NOT NULL DEFAULT 0",
+                "IF OBJECT_ID('ClassPreparation', 'U') IS NOT NULL AND COL_LENGTH('ClassPreparation', 'IsActive') IS NULL ALTER TABLE ClassPreparation ADD IsActive BIT DEFAULT 1",
                 "ALTER TABLE AssessmentQuestion ADD SubTopicId UNIQUEIDENTIFIER NULL",
                 "ALTER TABLE School ADD State NVARCHAR(100) NULL"
             };
+
+            await using var connection = new SqlConnection(connStr);
+            await connection.OpenAsync(cancellationToken);
 
             foreach (var migrationSql in schemaMigrations)
             {
@@ -86,7 +99,7 @@ public class DatabaseInitializer : IHostedService
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "DatabaseInitializer: Initial migration failed (non-fatal, continuing startup).");
+            Log.Warning(ex, "DatabaseInitializer: Schema migration block failed (non-fatal).");
         }
     }
 
