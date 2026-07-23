@@ -1,7 +1,8 @@
-namespace TechHub.Core.ViewModel.Platform;
+namespace TechHub.Core.Entities;
 
-public class ProvisionSchoolViewModel
+public class SchoolRegistrationRequest
 {
+    public Guid Id { get; set; }
     public string SchoolName { get; set; }
     public string Location { get; set; }
     public int CountryId { get; set; }
@@ -19,4 +20,9 @@ public class ProvisionSchoolViewModel
     public string AdminEmail { get; set; }
     public string AdminUsername { get; set; }
     public string AdminPassword { get; set; }
+    public string Status { get; set; } = "Pending";
+    public string? RejectionReason { get; set; }
+    public Guid? ApprovedBy { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? RespondedAt { get; set; }
 }

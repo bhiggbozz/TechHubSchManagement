@@ -1,6 +1,6 @@
 namespace TechHub.Core.ViewModel.Platform;
 
-public class ProvisionSchoolViewModel
+public class SchoolRegistrationRequestViewModel
 {
     public string SchoolName { get; set; }
     public string Location { get; set; }

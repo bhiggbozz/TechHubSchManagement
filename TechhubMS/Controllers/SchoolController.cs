@@ -410,6 +410,76 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		/// <summary>
+		/// Submit a school registration request (anonymous)
+		/// POST /api/School/register
+		/// </summary>
+		[HttpPost("register")]
+		[AllowAnonymous]
+		public async Task<IActionResult> RegisterSchool([FromBody] SchoolRegistrationRequestViewModel model)
+		{
+			var result = await _schoolService.SubmitRegistrationRequest(model);
+			return result.ResponseCode switch
+			{
+				"99000" => Ok(result),
+				"99161" => StatusCode(StatusCodes.Status409Conflict, result),
+				_ => BadRequest(result)
+			};
+		}
+
+		/// <summary>
+		/// List registration requests (Platform Admin)
+		/// GET /api/School/registration-requests?status=Pending
+		/// </summary>
+		[HttpGet("registration-requests")]
+		[Authorize(Roles = "PlatformAdmin,PlatformSuperAdmin")]
+		public async Task<IActionResult> GetRegistrationRequests([FromQuery] string? status = null)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.GetRegistrationRequests(status, claims);
+			return result.ResponseCode switch
+			{
+				"99000" => Ok(result),
+				_ => BadRequest(result)
+			};
+		}
+
+		/// <summary>
+		/// Approve a school registration request (Platform Admin)
+		/// POST /api/School/approve/{requestId}
+		/// </summary>
+		[HttpPost("approve/{requestId:guid}")]
+		[Authorize(Roles = "PlatformAdmin,PlatformSuperAdmin")]
+		public async Task<IActionResult> ApproveRegistration(Guid requestId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.ApproveRegistrationRequest(requestId, claims);
+			return result.ResponseCode switch
+			{
+				"99000" => Ok(result),
+				"99134" => NotFound(result),
+				"99161" => StatusCode(StatusCodes.Status409Conflict, result),
+				_ => BadRequest(result)
+			};
+		}
+
+		/// <summary>
+		/// Reject a school registration request (Platform Admin)
+		/// POST /api/School/reject/{requestId}
+		/// </summary>
+		[HttpPost("reject/{requestId:guid}")]
+		[Authorize(Roles = "PlatformAdmin,PlatformSuperAdmin")]
+		public async Task<IActionResult> RejectRegistration(Guid requestId, [FromBody] string reason)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.RejectRegistrationRequest(requestId, reason, claims);
+			return result.ResponseCode switch
+			{
+				"99000" => Ok(result),
+				"99134" => NotFound(result),
+				_ => BadRequest(result)
+			};
+		}
 	}
 
 }

@@ -49,6 +49,8 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<SubTopic> _subTopicCommandRepository;
 		private readonly ICommandRespository<Users> _userCommandRepository;
 		private readonly ICommandRespository<ApprovalRequests> _approvalRequestCommandRepository;
+		private readonly ICommandRespository<SchoolRegistrationRequest> _registrationRequestCommandRepository;
+		private readonly IQueryRepository<SchoolRegistrationRequest> _registrationRequestQueryRepository;
 
 
 		private readonly IQueryRepository<State> _queryrepositoryState;
@@ -84,6 +86,7 @@ namespace TechHub.Service.Service
 			IQueryRepository<School> schQueryRepository, ICloudinaryService cloudinaryService, IQueryRepository<AdminPermissions> adminPermissionsQueryRespository,
 			IQueryRepository<Subjects> queryrepositorySubject, ICommandRespository<Topic> topicCommandRepository, IQueryRepository<Topic> topicQueryRepository, ICommandRespository<SubTopic> subTopicCommandRepository,
 			IQueryRepository<SubTopic> subTopicQueryRepository, ICommandRespository<Users> userCommandRepository, ICommandRespository<ApprovalRequests> approvalRequestCommandRepository,
+			ICommandRespository<SchoolRegistrationRequest> registrationRequestCommandRepository, IQueryRepository<SchoolRegistrationRequest> registrationRequestQueryRepository,
 			IConfiguration configuration, ILogger logger, IEmailService emailService)
 		{
 			_emailService = emailService;
@@ -98,6 +101,8 @@ namespace TechHub.Service.Service
 			_subTopicCommandRepository = subTopicCommandRepository;
 			_userCommandRepository = userCommandRepository;
 			_approvalRequestCommandRepository = approvalRequestCommandRepository;
+			_registrationRequestCommandRepository = registrationRequestCommandRepository;
+			_registrationRequestQueryRepository = registrationRequestQueryRepository;
 
 			_classroomSubjectCommandRespository = classroomSubjectCommandRespository;
 			_classroomSubjectQueryRespository = classroomSubjectQueryRespository;
@@ -5200,6 +5205,363 @@ _logger.Information(
 					_logger.Error(ex, "Error provisioning school");
 					return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred while provisioning school", Status = "failed" };
 				}
+			}
+		}
+
+		public async Task<BaseResponse> SubmitRegistrationRequest(SchoolRegistrationRequestViewModel model)
+		{
+			try
+			{
+				if (model is null)
+					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "Object is empty", Status = "failed" };
+
+				if (string.IsNullOrWhiteSpace(model.TenantIdentifier))
+					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "Tenant identifier is required", Status = "failed" };
+
+				if (string.IsNullOrWhiteSpace(model.SchoolCode))
+					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "School code is required", Status = "failed" };
+
+				// Check tenant uniqueness
+				using (var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString))
+				{
+					var existingTenant = await conn.QueryFirstOrDefaultAsync<Guid?>(
+						"SELECT TOP 1 Id FROM TenantInfo WHERE Identifier = @Identifier AND IsActive = 1",
+						new { Identifier = model.TenantIdentifier });
+
+					if (existingTenant is not null)
+						return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "Tenant identifier already exists", Status = "failed" };
+
+					var existingCode = await conn.QueryFirstOrDefaultAsync<Guid?>(
+						"SELECT TOP 1 SchoolId FROM SchoolCode WHERE Code = @Code",
+						new { Code = model.SchoolCode });
+
+					if (existingCode is not null)
+						return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "School code already exists", Status = "failed" };
+
+					var existingUser = await conn.QueryFirstOrDefaultAsync<Guid?>(
+						"SELECT TOP 1 Id FROM Users WHERE UserName = @Username",
+						new { Username = model.AdminUsername });
+
+					if (existingUser is not null)
+						return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "Username already exists", Status = "failed" };
+				}
+
+				var entity = new SchoolRegistrationRequest
+				{
+					Id = Guid.NewGuid(),
+					SchoolName = model.SchoolName,
+					Location = model.Location,
+					CountryId = model.CountryId,
+					StateId = model.StateId,
+					State = model.State,
+					Address = model.Address,
+					HasBranch = model.HasBranch,
+					TenantIdentifier = model.TenantIdentifier,
+					SchoolCode = model.SchoolCode,
+					LogoUrl = model.LogoUrl,
+					LogoPublicId = model.LogoPublicId,
+					AdminFirstName = model.AdminFirstName,
+					AdminMiddleName = model.AdminMiddleName,
+					AdminLastName = model.AdminLastName,
+					AdminEmail = model.AdminEmail,
+					AdminUsername = model.AdminUsername,
+					AdminPassword = model.AdminPassword,
+					Status = "Pending",
+					CreatedAt = DateTime.UtcNow
+				};
+
+				var insertDict = new Dictionary<string, object>
+				{
+					{ "Id", entity.Id },
+					{ "SchoolName", entity.SchoolName },
+					{ "Location", entity.Location },
+					{ "CountryId", entity.CountryId },
+					{ "StateId", entity.StateId },
+					{ "State", (object?)entity.State ?? DBNull.Value },
+					{ "Address", entity.Address },
+					{ "HasBranch", entity.HasBranch },
+					{ "TenantIdentifier", entity.TenantIdentifier },
+					{ "SchoolCode", entity.SchoolCode },
+					{ "LogoUrl", (object?)entity.LogoUrl ?? DBNull.Value },
+					{ "LogoPublicId", (object?)entity.LogoPublicId ?? DBNull.Value },
+					{ "AdminFirstName", entity.AdminFirstName },
+					{ "AdminMiddleName", (object?)entity.AdminMiddleName ?? DBNull.Value },
+					{ "AdminLastName", entity.AdminLastName },
+					{ "AdminEmail", entity.AdminEmail },
+					{ "AdminUsername", entity.AdminUsername },
+					{ "AdminPassword", entity.AdminPassword },
+					{ "Status", entity.Status },
+					{ "CreatedAt", entity.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") }
+				};
+
+				await _registrationRequestCommandRepository.Create(insertDict);
+
+				_logger.Information("School registration request submitted - School: {Name}, Code: {Code}", model.SchoolName, model.SchoolCode);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Registration request submitted successfully. Awaiting approval.",
+					Status = "successful"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error submitting school registration request");
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred while submitting registration request", Status = "failed" };
+			}
+		}
+
+		public async Task<BaseResponse> GetRegistrationRequests(string? statusFilter, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.UserId, out _))
+					return new BaseResponse { ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid authentication", Status = "failed" };
+
+				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
+				IEnumerable<SchoolRegistrationRequest> results;
+
+				if (!string.IsNullOrWhiteSpace(statusFilter))
+				{
+					results = await conn.QueryAsync<SchoolRegistrationRequest>(
+						"SELECT * FROM SchoolRegistrationRequest WHERE Status = @Status ORDER BY CreatedAt DESC",
+						new { Status = statusFilter });
+				}
+				else
+				{
+					results = await conn.QueryAsync<SchoolRegistrationRequest>(
+						"SELECT * FROM SchoolRegistrationRequest ORDER BY CreatedAt DESC");
+				}
+
+				var mapped = results.Select(r => new RegistrationRequestResponse
+				{
+					Id = r.Id,
+					SchoolName = r.SchoolName,
+					Location = r.Location,
+					Address = r.Address,
+					TenantIdentifier = r.TenantIdentifier,
+					SchoolCode = r.SchoolCode,
+					LogoUrl = r.LogoUrl,
+					LogoPublicId = r.LogoPublicId,
+					AdminFirstName = r.AdminFirstName,
+					AdminLastName = r.AdminLastName,
+					AdminEmail = r.AdminEmail,
+					AdminUsername = r.AdminUsername,
+					Status = r.Status,
+					RejectionReason = r.RejectionReason,
+					CreatedAt = r.CreatedAt,
+					RespondedAt = r.RespondedAt
+				}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Registration requests retrieved",
+					Status = "successful",
+					Data = mapped
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error retrieving registration requests");
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred", Status = "failed" };
+			}
+		}
+
+		public async Task<BaseResponse> ApproveRegistrationRequest(Guid requestId, AuthenticatedUserClaims claims)
+		{
+			if (!Guid.TryParse(claims.UserId, out var platformUserId))
+				return new BaseResponse { ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid authentication", Status = "failed" };
+
+			using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+			try
+			{
+				var request = await _registrationRequestQueryRepository.Get(requestId);
+				if (request is null)
+				{
+					await scope.RollbackAsync();
+					return new BaseResponse { ResponseCode = ResponseCode.NotFound, ResponseMessage = "Registration request not found", Status = "failed" };
+				}
+
+				if (request.Status != "Pending")
+				{
+					await scope.RollbackAsync();
+					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = $"Request already {request.Status}", Status = "failed" };
+				}
+
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+				var schoolId = Guid.NewGuid();
+				var adminUserId = Guid.NewGuid();
+
+				// 1. Insert School
+				var schoolInsertDict = new Dictionary<string, object>
+				{
+					{ "CreationDate", now }, { "ModifiedDate", now }, { "Id", schoolId },
+					{ "SchoolName", request.SchoolName }, { "Location", request.Location },
+					{ "CountryId", request.CountryId }, { "StateId", request.StateId },
+					{ "State", (object?)request.State ?? DBNull.Value },
+					{ "Address", request.Address }, { "HasBranch", request.HasBranch },
+					{ "LogoUrl", (object?)request.LogoUrl ?? DBNull.Value },
+					{ "LogoPublicId", (object?)request.LogoPublicId ?? DBNull.Value },
+					{ "IsActive", true }
+				};
+				await _schCommandRespository.Create(scope.Transaction, scope.Connection, schoolInsertDict);
+
+				// 2. Insert SchoolCode
+				await _schCodeCommandRespository.Create(scope.Transaction, scope.Connection,
+					new Dictionary<string, object> { { "SchoolId", schoolId }, { "Code", request.SchoolCode } });
+
+				// 3. Insert TenantInfo
+				await scope.Connection.ExecuteAsync(@"
+					INSERT INTO TenantInfo (Id, SchoolId, Identifier, IsActive, ConnectionString, CreatedDate, ModifiedDate)
+					VALUES (@Id, @SchoolId, @Identifier, 1, NULL, @Now, @Now)",
+					new { Id = Guid.NewGuid(), SchoolId = schoolId, Identifier = request.TenantIdentifier, Now = DateTime.UtcNow },
+					scope.Transaction);
+
+				// 4. Insert Admin User (SuperAdministrator role - RoleId = 3)
+				var passwordHash = HashPassword(request.AdminPassword);
+				await scope.Connection.ExecuteAsync(@"
+					INSERT INTO Users (Id, CreationDate, ModifiedDate, FirstName, MiddleName, LastName, EmailAddress, HashPassword,
+						IsActive, HasAccess, UserName, SchoolId, RoleId, CreatedBy)
+					VALUES (@Id, @Now, @Now, @FirstName, @MiddleName, @LastName, @Email, @PasswordHash,
+						1, 1, @Username, @SchoolId, 3, @CreatedBy)",
+					new
+					{
+						Id = adminUserId,
+						Now = now,
+						FirstName = request.AdminFirstName,
+						MiddleName = (object?)request.AdminMiddleName ?? DBNull.Value,
+						LastName = request.AdminLastName,
+						Email = request.AdminEmail,
+						PasswordHash = passwordHash,
+						Username = request.AdminUsername,
+						SchoolId = schoolId,
+						CreatedBy = platformUserId
+					},
+					scope.Transaction);
+
+				// 5. Insert AdminPermissions (FullAdmin = 127)
+				await scope.Connection.ExecuteAsync(@"
+					INSERT INTO AdminPermissions (Id, UserId, SchoolId, Permissions, CreationDate, ModifiedDate, CreatedBy, IsActive)
+					VALUES (@Id, @UserId, @SchoolId, 127, @Now, @Now, @CreatedBy, 1)",
+					new
+					{
+						Id = Guid.NewGuid(),
+						UserId = adminUserId,
+						SchoolId = schoolId,
+						Now = now,
+						CreatedBy = platformUserId
+					},
+					scope.Transaction);
+
+				// 6. Update request status
+				await scope.Connection.ExecuteAsync(@"
+					UPDATE SchoolRegistrationRequest SET Status = 'Approved', ApprovedBy = @ApprovedBy, RespondedAt = @RespondedAt
+					WHERE Id = @Id",
+					new { Id = requestId, ApprovedBy = platformUserId, RespondedAt = DateTime.UtcNow },
+					scope.Transaction);
+
+				await scope.CommitAsync();
+
+				_logger.Information("School registration approved - School: {Name}, Code: {Code}", request.SchoolName, request.SchoolCode);
+
+				// Send welcome email (fire-and-forget)
+				_ = Task.Run(async () =>
+				{
+					try
+					{
+						var subject = $"Welcome to {request.SchoolName} - TechHub";
+						var body = $@"
+							<html>
+							<body style='font-family: Arial, sans-serif;'>
+								<h2>School Registration Approved</h2>
+								<p>Dear {request.AdminFirstName},</p>
+								<p>Your school <strong>{request.SchoolName}</strong> has been approved and created on TechHub.</p>
+								<h3>School Details</h3>
+								<ul>
+									<li><strong>School:</strong> {request.SchoolName}</li>
+									<li><strong>School Code:</strong> {request.SchoolCode}</li>
+									<li><strong>Tenant ID:</strong> {request.TenantIdentifier}</li>
+									<li><strong>Location:</strong> {request.Location}</li>
+								</ul>
+								<h3>Admin Login Credentials</h3>
+								<ul>
+									<li><strong>Username:</strong> {request.AdminUsername}</li>
+									<li><strong>Password:</strong> {request.AdminPassword}</li>
+								</ul>
+								<p>Please log in and change your password on first login.</p>
+								<p>Best regards,<br/>TechHub Platform Team</p>
+							</body>
+							</html>";
+
+						await _emailService.SendAsync(request.AdminEmail, $"{request.AdminFirstName} {request.AdminLastName}", subject, body);
+						_logger.Information("Welcome email sent to {Email} for school {School}", request.AdminEmail, request.SchoolName);
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(ex, "Failed to send welcome email for school {School}", request.SchoolName);
+					}
+				});
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "School registration approved and provisioned successfully",
+					Status = "successful",
+					Data = new
+					{
+						SchoolId = schoolId,
+						SchoolName = request.SchoolName,
+						SchoolCode = request.SchoolCode,
+						TenantIdentifier = request.TenantIdentifier,
+						AdminUserId = adminUserId,
+						AdminUsername = request.AdminUsername
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				await scope.RollbackAsync();
+				_logger.Error(ex, "Error approving school registration");
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred while approving registration", Status = "failed" };
+			}
+		}
+
+		public async Task<BaseResponse> RejectRegistrationRequest(Guid requestId, string reason, AuthenticatedUserClaims claims)
+		{
+			if (!Guid.TryParse(claims.UserId, out var platformUserId))
+				return new BaseResponse { ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid authentication", Status = "failed" };
+
+			try
+			{
+				var request = await _registrationRequestQueryRepository.Get(requestId);
+				if (request is null)
+					return new BaseResponse { ResponseCode = ResponseCode.NotFound, ResponseMessage = "Registration request not found", Status = "failed" };
+
+				if (request.Status != "Pending")
+					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = $"Request already {request.Status}", Status = "failed" };
+
+				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
+				await conn.ExecuteAsync(@"
+					UPDATE SchoolRegistrationRequest SET Status = 'Rejected', RejectionReason = @Reason, ApprovedBy = @ApprovedBy, RespondedAt = @RespondedAt
+					WHERE Id = @Id",
+					new { Id = requestId, Reason = reason, ApprovedBy = platformUserId, RespondedAt = DateTime.UtcNow });
+
+				_logger.Information("School registration rejected - School: {Name}, Code: {Code}, Reason: {Reason}",
+					request.SchoolName, request.SchoolCode, reason);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Registration request rejected",
+					Status = "successful"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error rejecting school registration");
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred", Status = "failed" };
 			}
 		}
 	}

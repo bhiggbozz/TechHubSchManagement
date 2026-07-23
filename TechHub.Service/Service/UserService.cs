@@ -32,6 +32,7 @@ using TechHub.Core.Models;
 using TechHub.Core.ResponseModel;
 using TechHub.Core.Utilities;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.Platform;
 using TechHub.Core.ViewModel.school;
 using TechHub.Core.ViewModel.Users;
 using TechHub.Service.Extension;
@@ -6619,6 +6620,133 @@ namespace TechHub.Service.Service
 		//{
 		//	return BCrypt.Net.BCrypt.HashPassword(password);
 		//}
+
+		public async Task<BaseResponse> CreateSchoolAdmin(CreateSchoolAdminViewModel model, AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims.UserId))
+			{
+				try
+				{
+					if (model is null)
+						return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "Object is empty", Status = "failed" };
+
+					if (string.IsNullOrWhiteSpace(model.SchoolCode))
+						return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "School code is required", Status = "failed" };
+
+					if (!Guid.TryParse(claims.UserId, out var platformUserId))
+						return new BaseResponse { ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid authentication", Status = "failed" };
+
+					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+
+					try
+					{
+						// Resolve school by school code
+						var schoolCode = await scope.Connection.QueryFirstOrDefaultAsync<SchoolCode>(
+							"SELECT * FROM SchoolCode WHERE Code = @Code",
+							new { Code = model.SchoolCode }, scope.Transaction);
+
+						if (schoolCode is null)
+						{
+							await scope.RollbackAsync();
+							return new BaseResponse { ResponseCode = ResponseCode.NotFound, ResponseMessage = "School not found with the provided code", Status = "failed" };
+						}
+
+						var schoolId = schoolCode.SchoolId;
+
+						// Check username uniqueness within the school
+						var existingUser = await scope.Connection.QueryFirstOrDefaultAsync<Guid?>(
+							"SELECT TOP 1 Id FROM Users WHERE UserName = @Username AND SchoolId = @SchoolId",
+							new { Username = model.Username, SchoolId = schoolId }, scope.Transaction);
+
+						if (existingUser is not null)
+						{
+							await scope.RollbackAsync();
+							return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "Username already exists in this school", Status = "failed" };
+						}
+
+						// Check email uniqueness within the school
+						var existingEmail = await scope.Connection.QueryFirstOrDefaultAsync<Guid?>(
+							"SELECT TOP 1 Id FROM Users WHERE EmailAddress = @Email AND SchoolId = @SchoolId",
+							new { Email = model.Email, SchoolId = schoolId }, scope.Transaction);
+
+						if (existingEmail is not null)
+						{
+							await scope.RollbackAsync();
+							return new BaseResponse { ResponseCode = ResponseCode.Conflict, ResponseMessage = "Email already exists in this school", Status = "failed" };
+						}
+
+						var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+						var adminUserId = Guid.NewGuid();
+						var passwordHash = HashPassword(model.Password);
+
+						// Insert SuperAdministrator user (RoleId = 3)
+						await scope.Connection.ExecuteAsync(@"
+							INSERT INTO Users (Id, CreationDate, ModifiedDate, FirstName, MiddleName, LastName, EmailAddress, HashPassword,
+								IsActive, HasAccess, UserName, SchoolId, RoleId, CreatedBy)
+							VALUES (@Id, @Now, @Now, @FirstName, @MiddleName, @LastName, @Email, @PasswordHash,
+								1, 1, @Username, @SchoolId, 3, @CreatedBy)",
+							new
+							{
+								Id = adminUserId,
+								Now = now,
+								FirstName = model.FirstName,
+								MiddleName = (object?)model.MiddleName ?? DBNull.Value,
+								LastName = model.LastName,
+								Email = model.Email,
+								PasswordHash = passwordHash,
+								Username = model.Username,
+								SchoolId = schoolId,
+								CreatedBy = platformUserId
+							},
+							scope.Transaction);
+
+						// Insert AdminPermissions (FullAdmin = 127)
+						await scope.Connection.ExecuteAsync(@"
+							INSERT INTO AdminPermissions (Id, UserId, SchoolId, Permissions, CreationDate, ModifiedDate, CreatedBy, IsActive)
+							VALUES (@Id, @UserId, @SchoolId, 127, @Now, @Now, @CreatedBy, 1)",
+							new
+							{
+								Id = Guid.NewGuid(),
+								UserId = adminUserId,
+								SchoolId = schoolId,
+								Now = now,
+								CreatedBy = platformUserId
+							},
+							scope.Transaction);
+
+						await scope.CommitAsync();
+
+						_logger.Information("School admin created - UserId: {UserId}, SchoolId: {SchoolId}, Username: {Username}",
+							adminUserId, schoolId, model.Username);
+
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.successful,
+							ResponseMessage = "School super admin created successfully",
+							Status = "successful",
+							Data = new
+							{
+								UserId = adminUserId,
+								SchoolId = schoolId,
+								Username = model.Username,
+								Email = model.Email,
+								Role = "SuperAdministrator"
+							}
+						};
+					}
+					catch
+					{
+						await scope.RollbackAsync();
+						throw;
+					}
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Error creating school admin");
+					return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred while creating school admin", Status = "failed" };
+				}
+			}
+		}
 	}
 
 	internal class UsersListData

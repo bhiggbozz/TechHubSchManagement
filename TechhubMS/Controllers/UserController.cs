@@ -5,6 +5,7 @@ using TechHub.Core.DTO;
 using TechHub.Core.Entities;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.Platform;
 using TechHub.Core.ViewModel.school;
 using TechHub.Core.ViewModel.Users;
 using TechHub.Service.Extension;
@@ -466,6 +467,24 @@ namespace TechhubMS.Controllers
 			return Ok(result);
 		}
 
+		/// <summary>
+		/// Create a school SuperAdministrator user by school code (Platform Admin only)
+		/// POST /api/User/create-school-admin
+		/// </summary>
+		[HttpPost("create-school-admin")]
+		[Authorize(Roles = "PlatformAdmin,PlatformSuperAdmin")]
+		public async Task<IActionResult> CreateSchoolAdmin([FromBody] CreateSchoolAdminViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.CreateSchoolAdmin(model, claims);
+			return result.ResponseCode switch
+			{
+				"99000" => Ok(result),
+				"99134" => NotFound(result),
+				"99161" => StatusCode(StatusCodes.Status409Conflict, result),
+				_ => BadRequest(result)
+			};
+		}
 	}
 
 }
