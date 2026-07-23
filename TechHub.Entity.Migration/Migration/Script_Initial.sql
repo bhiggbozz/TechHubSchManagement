@@ -1356,6 +1356,43 @@ BEGIN
 END;
 
 -- ========================================================================
+-- SECTION 12: SCHOOL REGISTRATION REQUESTS
+-- ========================================================================
+
+IF OBJECT_ID('SchoolRegistrationRequest', 'U') IS NULL
+BEGIN
+    CREATE TABLE SchoolRegistrationRequest (
+        Id              UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        SchoolName      NVARCHAR(500)    NOT NULL,
+        Location        NVARCHAR(100)    NULL,
+        CountryId       INT              NOT NULL DEFAULT 0,
+        StateId         INT              NOT NULL DEFAULT 0,
+        [State]         NVARCHAR(100)    NULL,
+        Address         NVARCHAR(1000)   NULL,
+        HasBranch       BIT              NOT NULL DEFAULT 0,
+        TenantIdentifier NVARCHAR(100)   NOT NULL,
+        SchoolCode      NVARCHAR(80)     NOT NULL,
+        LogoUrl         NVARCHAR(MAX)    NULL,
+        LogoPublicId    NVARCHAR(500)    NULL,
+        AdminFirstName  NVARCHAR(100)    NOT NULL,
+        AdminMiddleName NVARCHAR(100)    NULL,
+        AdminLastName   NVARCHAR(100)    NOT NULL,
+        AdminEmail      NVARCHAR(255)    NOT NULL,
+        AdminUsername   NVARCHAR(100)    NOT NULL,
+        AdminPassword   NVARCHAR(255)    NOT NULL,
+        [Status]        NVARCHAR(20)     NOT NULL DEFAULT 'Pending',
+        RejectionReason NVARCHAR(1000)   NULL,
+        ApprovedBy      UNIQUEIDENTIFIER NULL,
+        CreatedAt       DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        RespondedAt     DATETIME2        NULL,
+        CONSTRAINT PK_SchoolRegistrationRequest PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_SchoolRegistrationRequest_Status
+        ON SchoolRegistrationRequest([Status]);
+END;
+
+-- ========================================================================
 -- MIGRATION COMPLETE
 -- ========================================================================
 PRINT 'TechHub initial migration completed successfully.';

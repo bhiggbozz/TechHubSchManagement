@@ -10,6 +10,7 @@ using TechHub.Core.Enum;
 using TechHub.Core.Model;
 using TechHub.Core.Models;
 using TechHub.Core.ViewModel;
+using TechHub.Core.ViewModel.Platform;
 using TechHub.Core.ViewModel.school;
 using TechHub.Core.ViewModel.Users;
 
@@ -58,6 +59,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetStudentsBySubject(Guid subjectId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> GetTeacherStudents(AuthenticatedUserClaims claims);
 		Task<BaseResponse> UnlockUserAccount(Guid userId, AuthenticatedUserClaims claims);
+		Task<BaseResponse> CreateSchoolAdmin(CreateSchoolAdminViewModel model, AuthenticatedUserClaims claims);
 	}
 		
 }
