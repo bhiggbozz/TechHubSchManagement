@@ -25,7 +25,12 @@ public class MultiTenantMiddleware
 	public async Task InvokeAsync(HttpContext context, ITenantService tenantService)
 	{
 		if (context.Request.Path.StartsWithSegments("/swagger")
-		    || string.Equals(context.Request.Path, "/api/School/createschool", StringComparison.OrdinalIgnoreCase))
+		    || string.Equals(context.Request.Path, "/api/School/createschool", StringComparison.OrdinalIgnoreCase)
+		    || string.Equals(context.Request.Path, "/api/School/registration-requests", StringComparison.OrdinalIgnoreCase)
+		    || string.Equals(context.Request.Path, "/api/School/register", StringComparison.OrdinalIgnoreCase)
+		    || context.Request.Path.StartsWithSegments("/api/School/approve")
+		    || context.Request.Path.StartsWithSegments("/api/School/reject")
+		    || string.Equals(context.Request.Path, "/api/School/provision", StringComparison.OrdinalIgnoreCase))
 		{
 			await _next(context);
 			return;
