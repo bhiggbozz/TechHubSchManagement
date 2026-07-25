@@ -432,11 +432,10 @@ namespace TechhubMS.Controllers
 		/// GET /api/School/registration-requests?status=Pending
 		/// </summary>
 		[HttpGet("registration-requests")]
-		[Authorize(Roles = "PlatformAdmin,PlatformSuperAdmin")]
+		[AllowAnonymous]
 		public async Task<IActionResult> GetRegistrationRequests([FromQuery] string? status = null)
 		{
-			var claims = User.GetAuthenticatedUserClaims();
-			var result = await _schoolService.GetRegistrationRequests(status, claims);
+			var result = await _schoolService.GetRegistrationRequests(status, null);
 			return result.ResponseCode switch
 			{
 				"99000" => Ok(result),
