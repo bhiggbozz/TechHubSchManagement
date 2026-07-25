@@ -60,7 +60,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> ProvisionSchool(ProvisionSchoolViewModel model, AuthenticatedUserClaims claims);
 
 		Task<BaseResponse> SubmitRegistrationRequest(SchoolRegistrationRequestViewModel model);
-		Task<BaseResponse> GetRegistrationRequests(string? statusFilter, AuthenticatedUserClaims claims);
+		Task<BaseResponse> GetRegistrationRequests(string? statusFilter, AuthenticatedUserClaims? claims);
 		Task<BaseResponse> ApproveRegistrationRequest(Guid requestId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> RejectRegistrationRequest(Guid requestId, string reason, AuthenticatedUserClaims claims);
 	}

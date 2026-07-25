@@ -5312,13 +5312,10 @@ _logger.Information(
 			}
 		}
 
-		public async Task<BaseResponse> GetRegistrationRequests(string? statusFilter, AuthenticatedUserClaims claims)
+		public async Task<BaseResponse> GetRegistrationRequests(string? statusFilter, AuthenticatedUserClaims? claims)
 		{
 			try
 			{
-				if (!Guid.TryParse(claims.UserId, out _))
-					return new BaseResponse { ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid authentication", Status = "failed" };
-
 				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
 				IEnumerable<SchoolRegistrationRequest> results;
 
