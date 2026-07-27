@@ -165,7 +165,13 @@ namespace TechHub.Service.Service
 				//}
 
 
-				return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "object created successfully", Status = "successful" };
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "object created successfully",
+					Status = "successful",
+					Data = new { SchoolId = school.Id }
+				};
 			}
 			catch (SqlException ex)
 			{
@@ -5622,6 +5628,47 @@ _logger.Information(
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "Error fetching pending school IDs");
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred", Status = "failed" };
+			}
+		}
+
+		public async Task<BaseResponse> GetSchoolApprovalStatus(Guid schoolId)
+		{
+			try
+			{
+				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
+
+				var school = await conn.QueryFirstOrDefaultAsync<dynamic>(
+					"SELECT Id, SchoolName, ISActive FROM School WHERE Id = @Id",
+					new { Id = schoolId });
+
+				if (school is null)
+					return new BaseResponse { ResponseCode = ResponseCode.NotFound, ResponseMessage = "School not found", Status = "failed" };
+
+				var request = await conn.QueryFirstOrDefaultAsync<dynamic>(
+					"SELECT Status, RejectionReason FROM SchoolRegistrationRequest WHERE SchoolName = @SchoolName ORDER BY CreatedAt DESC",
+					new { SchoolName = (string)school.SchoolName });
+
+				var status = request is not null ? (string)request.Status : "Approved";
+				var rejectionReason = request is not null ? (string?)request.RejectionReason : null;
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "School approval status retrieved",
+					Status = "successful",
+					Data = new
+					{
+						SchoolId = (Guid)school.Id,
+						SchoolName = (string)school.SchoolName,
+						Status = status,
+						RejectionReason = rejectionReason
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching school approval status for {SchoolId}", schoolId);
 				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred", Status = "failed" };
 			}
 		}
