@@ -250,3 +250,19 @@ public class StudentBoardDataDto
 	public int StrokeCount { get; set; }
 	public List<object> Strokes { get; set; } = new();
 }
+
+public class ClassroomAssessmentPerformanceDto
+{
+	public Guid AssessmentId { get; set; }
+	public string Code { get; set; } = string.Empty;
+	public string Title { get; set; } = string.Empty;
+	public string ClassroomName { get; set; } = string.Empty;
+	public int TotalStudents { get; set; }
+	public int TotalAttempts { get; set; }
+	public int CompletedAttempts { get; set; }
+	public int InProgressAttempts { get; set; }
+	public decimal AverageScorePercent { get; set; }
+	public int PassedCount { get; set; }
+	public int FailedCount { get; set; }
+	public decimal PassRate { get; set; }
+}

@@ -5561,5 +5561,69 @@ _logger.Information(
 				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred", Status = "failed" };
 			}
 		}
+
+		public async Task<BaseResponse> GetAllSchoolsWithStatus()
+		{
+			try
+			{
+				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
+				var sql = @"
+					SELECT
+						NULL AS SchoolId,
+						r.Id AS RequestId,
+						r.SchoolName,
+						r.Status
+					FROM SchoolRegistrationRequest r
+					WHERE r.Status != 'Approved'
+
+					UNION ALL
+
+					SELECT
+						s.Id AS SchoolId,
+						NULL AS RequestId,
+						s.SchoolName,
+						'Approved' AS Status
+					FROM School s
+					WHERE s.ISActive = 1
+					ORDER BY SchoolName";
+
+				var results = await conn.QueryAsync<SchoolStatusDto>(sql);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Schools retrieved",
+					Status = "successful",
+					Data = results.ToList()
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching schools with status");
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred", Status = "failed" };
+			}
+		}
+
+		public async Task<BaseResponse> GetPendingSchoolIds()
+		{
+			try
+			{
+				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
+				var sql = @"SELECT Id AS RequestId, SchoolName FROM SchoolRegistrationRequest WHERE Status = 'Pending' ORDER BY CreatedAt DESC";
+
+				var results = await conn.QueryAsync<dynamic>(sql);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Pending schools retrieved",
+					Status = "successful",
+					Data = results.ToList()
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching pending school IDs");
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred", Status = "failed" };
+			}
+		}
 	}
 }

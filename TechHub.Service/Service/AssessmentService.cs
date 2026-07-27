@@ -1391,6 +1391,67 @@ public class AssessmentService : IAssessmentService
         }
     }
 
+    public async Task<BaseResponse> GetClassroomAssessmentPerformance(Guid classroomId, AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("ClassroomId", classroomId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                using var conn = new SqlConnection(_connString);
+                conn.Open();
+
+                var sql = @"
+                    SELECT
+                        a.Id AS AssessmentId,
+                        a.Code,
+                        a.Title,
+                        c.Name AS ClassroomName,
+                        COUNT(DISTINCT sc.StudentId) AS TotalStudents,
+                        COUNT(aa.Id) AS TotalAttempts,
+                        COUNT(CASE WHEN aa.Status IN ('Submitted','PartiallyGraded','FullyGraded') THEN 1 END) AS CompletedAttempts,
+                        COUNT(CASE WHEN aa.Status = 'InProgress' THEN 1 END) AS InProgressAttempts,
+                        ISNULL(AVG(CASE WHEN aa.FinalScorePercent IS NOT NULL THEN CAST(aa.FinalScorePercent AS DECIMAL(10,2)) END), 0) AS AverageScorePercent,
+                        COUNT(CASE WHEN aa.IsPassed = 1 THEN 1 END) AS PassedCount,
+                        COUNT(CASE WHEN aa.IsPassed = 0 THEN 1 END) AS FailedCount
+                    FROM Assessments a
+                    JOIN AssessmentAssignment aas ON aas.AssessmentId = a.Id AND aas.IsActive = 1 AND aas.TargetType = 'Classroom'
+                    JOIN Classroom c ON c.Id = aas.TargetId
+                    LEFT JOIN StudentClassroom sc ON sc.ClassroomId = c.Id AND sc.IsActive = 1
+                    LEFT JOIN AssessmentAttempt aa ON aa.AssessmentId = a.Id
+                        AND aa.StudentId = sc.StudentId
+                        AND aa.SchoolId = @SchoolId
+                    WHERE aas.TargetId = @ClassroomId
+                      AND a.SchoolId = @SchoolId
+                      AND a.IsActive = 1
+                    GROUP BY a.Id, a.Code, a.Title, c.Name
+                    ORDER BY a.Title";
+
+                var rows = (await conn.QueryAsync<ClassroomAssessmentPerformanceDto>(sql, new
+                {
+                    SchoolId = schoolId,
+                    ClassroomId = classroomId
+                })).ToList();
+
+                foreach (var r in rows)
+                {
+                    r.PassRate = r.CompletedAttempts > 0
+                        ? Math.Round((decimal)r.PassedCount / r.CompletedAttempts * 100, 1)
+                        : 0;
+                }
+
+                return Ok($"{rows.Count} assessment(s) found", rows);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error fetching classroom assessment performance for {ClassroomId}", classroomId);
+                return Bad("An error occurred while fetching classroom assessment performance", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
     public async Task<BaseResponse> GetTeacherAssessments(AuthenticatedUserClaims claims)
     {
         using (LogContext.PushProperty("RequestedBy", claims.UserId))
