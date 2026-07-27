@@ -495,6 +495,19 @@ namespace TechhubMS.Controllers
 			var result = await _schoolService.GetPendingSchoolIds();
 			return Ok(result);
 		}
+
+		[HttpGet("{schoolId:guid}/approval-status")]
+		[AllowAnonymous]
+		public async Task<IActionResult> GetSchoolApprovalStatus(Guid schoolId)
+		{
+			var result = await _schoolService.GetSchoolApprovalStatus(schoolId);
+			return result.ResponseCode switch
+			{
+				"99000" => Ok(result),
+				"99134" => NotFound(result),
+				_ => BadRequest(result)
+			};
+		}
 	}
 }
 	
