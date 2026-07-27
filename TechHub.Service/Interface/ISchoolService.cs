@@ -63,5 +63,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetRegistrationRequests(string? statusFilter, AuthenticatedUserClaims? claims);
 		Task<BaseResponse> ApproveRegistrationRequest(Guid requestId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> RejectRegistrationRequest(Guid requestId, string reason, AuthenticatedUserClaims claims);
+		Task<BaseResponse> GetAllSchoolsWithStatus();
+		Task<BaseResponse> GetPendingSchoolIds();
 	}
 }

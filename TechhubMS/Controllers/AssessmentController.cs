@@ -153,6 +153,15 @@ public class AssessmentController : ControllerBase
 		return MapResponse(result);
 	}
 
+	[HttpGet("classroom/{classroomId}/performance")]
+	[Authorize]
+	public async Task<IActionResult> GetClassroomPerformance(Guid classroomId)
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.GetClassroomAssessmentPerformance(classroomId, claims);
+		return MapResponse(result);
+	}
+
 	[HttpGet("result/{attemptId}")]
 	[Authorize]
 	public async Task<IActionResult> GetResult(Guid attemptId)

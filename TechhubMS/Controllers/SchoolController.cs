@@ -479,6 +479,24 @@ namespace TechhubMS.Controllers
 				_ => BadRequest(result)
 			};
 		}
+
+		[HttpGet("schools-status")]
+		[AllowAnonymous]
+		public async Task<IActionResult> GetAllSchoolsWithStatus()
+		{
+			var result = await _schoolService.GetAllSchoolsWithStatus();
+			return Ok(result);
+		}
+
+		[HttpGet("pending")]
+		[AllowAnonymous]
+		public async Task<IActionResult> GetPendingSchoolIds()
+		{
+			var result = await _schoolService.GetPendingSchoolIds();
+			return Ok(result);
+		}
+	}
+}
 	}
 
 }
