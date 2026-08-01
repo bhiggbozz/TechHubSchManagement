@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+.github
+
+# Build output
+bin/
+obj/
+[Ll]og/
+[Ll]ogs/
+[Dd]ebug/
+[Rr]elease/
+publish/
+
+# IDE
+.vs/
+.vscode/
+*.user
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Temp / runtime
+app_error.log
+app_output.log
+*.log
+docker-compose.override.yml
