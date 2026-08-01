@@ -144,7 +144,7 @@ public class AdminDashboardService : IAdminDashboardService
         _logger.Information("Starting admin dashboard aggregation for all schools");
 
         var schoolIds = await _lessonQuery.QueryAsync<Guid>($@"
-            SELECT DISTINCT SchoolId FROM LessonContent WITH(NOLOCK) WHERE IsActive = 1",
+            SELECT Id FROM School WITH(NOLOCK) WHERE ISActive = 1",
             new Dictionary<string, object>());
 
         foreach (var schoolId in schoolIds)
@@ -166,6 +166,18 @@ public class AdminDashboardService : IAdminDashboardService
     {
         _logger.Information("Aggregating admin dashboard for school {SchoolId}", schoolId);
 
+        try
+        {
+            await AggregateSchoolInternalAsync(schoolId);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to aggregate admin dashboard for school {SchoolId}", schoolId);
+        }
+    }
+
+    private async Task AggregateSchoolInternalAsync(Guid schoolId)
+    {
         var now = DateTime.UtcNow;
 
         // ── 1. Counts from SQL ────────────────────────────────
@@ -256,12 +268,20 @@ public class AdminDashboardService : IAdminDashboardService
 
     private async Task<int> CountStudents(Guid schoolId)
     {
-        var result = await _userQuery.QueryAsync<int>($@"
-            SELECT COUNT(*) FROM Users WITH(NOLOCK)
-            WHERE SchoolId = '{schoolId}' AND IsActive = 1
-            AND RoleId IN (SELECT Id FROM Role WHERE Name = 'Student')",
-            new Dictionary<string, object>());
-        return result.FirstOrDefault();
+        try
+        {
+            var result = await _userQuery.QueryAsync<int>($@"
+                SELECT COUNT(*) FROM Users WITH(NOLOCK)
+                WHERE SchoolId = '{schoolId}' AND IsActive = 1
+                AND RoleId = {(int)UserRole.Student}",
+                new Dictionary<string, object>());
+            return result.FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to count students for school {SchoolId}", schoolId);
+            return 0;
+        }
     }
 
     private async Task<int> CountTeachers(Guid schoolId)

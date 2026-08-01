@@ -42,6 +42,7 @@ public interface IQuizService
 	Task<BaseResponse> GetLessonQuizResults(Guid lessonId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetLessonQuizAnalytics(Guid lessonId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetStudentQuizHistory(Guid studentId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetClassroomQuizPerformance(Guid classroomId, AuthenticatedUserClaims claims);
 
 	// ── Assessment Sets ───────────────────────────────────────────────────────
 	Task<BaseResponse> CreateAssessmentSet(CreateAssessmentSetViewModel model, AuthenticatedUserClaims claims);
