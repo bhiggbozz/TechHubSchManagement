@@ -12,6 +12,53 @@ services:
       ASPNETCORE_URLS: http://+:80
       ASPNETCORE_ENVIRONMENT: Production
 
+      # ── Database (remote SQL Server, e.g. site4now) ─────────────────────────
+      ConnectionStrings__DbConnectionString: ${DB_CONNECTION_STRING}
+      ConnectionStrings__QuestionBankConnection: ${QUESTION_BANK_CONNECTION_STRING}
+
+      # ── MongoDB (Atlas) ─────────────────────────────────────────────────────
+      MongoDB__ConnectionString: ${MONGO_CONNECTION_STRING}
+      MongoDB__DatabaseName: ${MONGO_DATABASE_NAME}
+
+      # ── RabbitMQ (CloudAMQP) ────────────────────────────────────────────────
+      RabbitMQ__AmqpUrl: ${RABBITMQ_AMQP_URL}
+      RabbitMQ__BoardBatchQueue: ${RABBITMQ_BOARD_BATCH_QUEUE}
+
+      # ── JWT ─────────────────────────────────────────────────────────────────
+      Jwt__SecretKey: ${JWT_SECRET_KEY}
+      Jwt__Issuer: ${JWT_ISSUER}
+      Jwt__Audience: ${JWT_AUDIENCE}
+      Jwt__ExpirationHours: ${JWT_EXPIRATION_HOURS}
+
+      # ── Cloudinary ──────────────────────────────────────────────────────────
+      Cloudinary__CloudName: ${CLOUDINARY_CLOUD_NAME}
+      Cloudinary__ApiKey: ${CLOUDINARY_API_KEY}
+      Cloudinary__ApiSecret: ${CLOUDINARY_API_SECRET}
+
+      # ── Email (ElasticEmail) ────────────────────────────────────────────────
+      server: ${SMTP_SERVER}
+      Port: ${SMTP_PORT}
+      smtpPassword: ${SMTP_PASSWORD}
+      EmailSettings__Host: ${EMAIL_HOST}
+      EmailSettings__Port: ${EMAIL_PORT}
+      EmailSettings__Username: ${EMAIL_USERNAME}
+      EmailSettings__Password: ${EMAIL_PASSWORD}
+      EmailSettings__FromEmail: ${EMAIL_FROM}
+      EmailSettings__FromName: ${EMAIL_FROM_NAME}
+
+      # ── App ─────────────────────────────────────────────────────────────────
+      App__BaseUrl: ${APP_BASE_URL}
+      Cors__AllowedOrigins__0: ${CORS_ORIGIN_0}
+
+      # ── AI / Question Bank ──────────────────────────────────────────────────
+      Anthropic__ApiKey: ${ANTHROPIC_API_KEY}
+      Anthropic__Model: ${ANTHROPIC_MODEL}
+
+      # ── Supabase ────────────────────────────────────────────────────────────
+      Supabase__Url: ${SUPABASE_URL}
+      Supabase__AnonKey: ${SUPABASE_ANON_KEY}
+      Supabase__ServiceRoleKey: ${SUPABASE_SERVICE_ROLE_KEY}
+      Supabase__Bucket: ${SUPABASE_BUCKET}
       # ── Runtime configuration ──────────────────────────────────────────────
       # All app settings (SQL, MongoDB, RabbitMQ, JWT, Cloudinary, email, AI)
       # are read from appsettings.json, which already ships with working values.
