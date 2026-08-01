@@ -59,6 +59,13 @@ services:
       Supabase__AnonKey: ${SUPABASE_ANON_KEY}
       Supabase__ServiceRoleKey: ${SUPABASE_SERVICE_ROLE_KEY}
       Supabase__Bucket: ${SUPABASE_BUCKET}
+      # ── Runtime configuration ──────────────────────────────────────────────
+      # All app settings (SQL, MongoDB, RabbitMQ, JWT, Cloudinary, email, AI)
+      # are read from appsettings.json, which already ships with working values.
+      # Nothing secret is overridden here, so the container works with NO .env.
+      #
+      # To override a single value for THIS deployment, add it here as
+      # Section__Key: ${YOUR_VAR} and define YOUR_VAR in a local .env file.
     volumes:
       - techhub-logs:/app/logs
 
