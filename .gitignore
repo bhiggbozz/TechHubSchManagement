@@ -3,6 +3,12 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+# Docker environment (secrets)
+.env
+.env.*
+!.env.example
+docker-compose.override.yml
+
 # User-specific files
 *.rsuser
 *.suo
