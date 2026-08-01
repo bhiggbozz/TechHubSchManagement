@@ -301,6 +301,15 @@ public class QuizController : ControllerBase
 		return MapResponse(response);
 	}
 
+	[HttpGet("classroom/{classroomId}/performance")]
+	[Authorize]
+	public async Task<IActionResult> GetClassroomQuizPerformance(Guid classroomId)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetClassroomQuizPerformance(classroomId, claims);
+		return MapResponse(response);
+	}
+
 	// ═══════════════════════════════════════════════════════════════════════
 	// HELPERS
 	// ═══════════════════════════════════════════════════════════════════════

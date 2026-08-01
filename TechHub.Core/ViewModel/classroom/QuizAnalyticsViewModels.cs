@@ -61,6 +61,24 @@ public class StudentQuizPerformanceDto
 	public int? SkippedAnswers { get; set; }
 }
 
+// ── Per-Classroom Performance (per-lesson quiz stats) ─────────────────────
+public class ClassroomQuizPerformanceDto
+{
+    public Guid LessonId { get; set; }
+    public string QuizCode { get; set; } = string.Empty;
+    public string LessonTitle { get; set; } = string.Empty;
+    public string SubjectName { get; set; } = string.Empty;
+    public string ClassroomName { get; set; } = string.Empty;
+    public int TotalStudents { get; set; }
+    public int TotalAttempts { get; set; }
+    public int CompletedAttempts { get; set; }
+    public int InProgressAttempts { get; set; }
+    public decimal AverageScorePercent { get; set; }
+    public int PassedCount { get; set; }
+    public int FailedCount { get; set; }
+    public decimal PassRate { get; set; }
+}
+
 // ── Participation (who hasn't taken the quiz) ─────────────────────────────
 public class LessonParticipationDto
 {

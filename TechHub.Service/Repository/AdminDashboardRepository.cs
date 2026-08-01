@@ -26,6 +26,17 @@ public class AdminDashboardRepository : IAdminDashboardRepository
     public async Task UpsertDashboardAsync(AdminDashboardData data)
     {
         var filter = Builders<AdminDashboardData>.Filter.Eq(d => d.SchoolId, data.SchoolId);
+
+        var existing = await _collection.Find(filter).FirstOrDefaultAsync();
+        if (existing != null)
+        {
+            data.Id = existing.Id;
+        }
+        else
+        {
+            data.Id = ObjectId.GenerateNewId();
+        }
+
         var options = new ReplaceOptions { IsUpsert = true };
         await _collection.ReplaceOneAsync(filter, data, options);
     }
