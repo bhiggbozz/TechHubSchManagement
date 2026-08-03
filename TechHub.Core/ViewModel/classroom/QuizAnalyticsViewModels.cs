@@ -61,6 +61,55 @@ public class StudentQuizPerformanceDto
 	public int? SkippedAnswers { get; set; }
 }
 
+// ── Per-Subject Performance (per-lesson quiz stats for a subject) ──────────
+public class SubjectQuizPerformanceDto
+{
+    public Guid LessonId { get; set; }
+    public string QuizCode { get; set; } = string.Empty;
+    public string LessonTitle { get; set; } = string.Empty;
+    public string SubjectName { get; set; } = string.Empty;
+    public string ClassroomName { get; set; } = string.Empty;
+    public int TotalStudents { get; set; }
+    public int TotalAttempts { get; set; }
+    public int CompletedAttempts { get; set; }
+    public int InProgressAttempts { get; set; }
+    public decimal AverageScorePercent { get; set; }
+    public int PassedCount { get; set; }
+    public int FailedCount { get; set; }
+    public decimal PassRate { get; set; }
+}
+
+// ── Per-Student Performance (aggregate + per-lesson breakdown) ─────────────
+public class StudentQuizPerformanceDetailDto
+{
+    public Guid StudentId { get; set; }
+    public string StudentName { get; set; } = string.Empty;
+    public int TotalQuizzes { get; set; }
+    public int TotalAttempts { get; set; }
+    public int CompletedAttempts { get; set; }
+    public int InProgressAttempts { get; set; }
+    public decimal AverageScorePercent { get; set; }
+    public decimal PassRate { get; set; }
+    public decimal BestScorePercent { get; set; }
+    public List<StudentQuizPerformanceItemDto> Quizzes { get; set; } = new();
+}
+
+public class StudentQuizPerformanceItemDto
+{
+    public Guid AttemptId { get; set; }
+    public Guid LessonId { get; set; }
+    public string QuizCode { get; set; } = string.Empty;
+    public string LessonTitle { get; set; } = string.Empty;
+    public string ClassroomName { get; set; } = string.Empty;
+    public string SubjectName { get; set; } = string.Empty;
+    public int AttemptCount { get; set; }
+    public decimal? BestScorePercent { get; set; }
+    public Guid? BestAttemptId { get; set; }
+    public bool? IsPassed { get; set; }
+    public string LatestStatus { get; set; } = string.Empty;
+    public string? LatestSubmittedAt { get; set; }
+}
+
 // ── Per-Classroom Performance (per-lesson quiz stats) ─────────────────────
 public class ClassroomQuizPerformanceDto
 {

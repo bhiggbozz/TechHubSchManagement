@@ -2613,6 +2613,230 @@ public class QuizService : IQuizService
 		}
 	}
 
+	public async Task<BaseResponse> GetSubjectQuizPerformance(Guid subjectId, AuthenticatedUserClaims claims)
+	{
+		using (LogContext.PushProperty("RequestedBy", claims.UserId))
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return Unauthorized();
+
+				var subjectExists = await _lessonQuery.QueryAsync<Guid>($@"
+                    SELECT TOP 1 Id FROM Subjects
+                    WHERE Id       = '{subjectId}'
+                    AND   SchoolId = '{schoolId}'", new Dictionary<string, object>());
+
+				if (!subjectExists.Any())
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Subject not found",
+						Status = "failed"
+					};
+
+				// Per-lesson quiz performance for the subject (lessons that have a quiz attached)
+				var sql = $@"
+                    SELECT
+                        lc.Id                AS LessonId,
+                        lc.QuizCode          AS QuizCode,
+                        lc.Aim               AS LessonTitle,
+                        s.Subject            AS SubjectName,
+                        ISNULL(c.Name, '')   AS ClassroomName,
+                        COUNT(DISTINCT sc.StudentId) AS TotalStudents,
+                        COUNT(att.Id)        AS TotalAttempts,
+                        COUNT(CASE WHEN att.Status IN ('{QuizAttemptStatus.Submitted}','{QuizAttemptStatus.PartiallyGraded}','{QuizAttemptStatus.FullyGraded}') THEN 1 END) AS CompletedAttempts,
+                        COUNT(CASE WHEN att.Status = '{QuizAttemptStatus.InProgress}' THEN 1 END) AS InProgressAttempts,
+                        ISNULL(AVG(CASE WHEN att.FinalScorePercent IS NOT NULL THEN CAST(att.FinalScorePercent AS DECIMAL(10,2)) END), 0) AS AverageScorePercent,
+                        COUNT(CASE WHEN att.IsPassed = 1 THEN 1 END) AS PassedCount,
+                        COUNT(CASE WHEN att.IsPassed = 0 THEN 1 END) AS FailedCount
+                    FROM LessonContent lc
+                    JOIN Subjects s ON s.Id = lc.SubjectId
+                    LEFT JOIN Classroom c ON c.Id = lc.ClassroomId
+                    LEFT JOIN StudentClassroom sc ON sc.ClassroomId = c.Id AND sc.IsActive = 1
+                    LEFT JOIN QuizAttempt att ON att.LessonId = lc.Id
+                        AND att.StudentId = sc.StudentId
+                        AND att.SchoolId  = @SchoolId
+                    WHERE lc.SubjectId = @SubjectId
+                      AND lc.SchoolId  = @SchoolId
+                      AND lc.IsActive  = 1
+                      AND lc.QuizCode IS NOT NULL
+                      AND lc.QuizCode <> ''
+                    GROUP BY lc.Id, lc.QuizCode, lc.Aim, s.Subject, c.Name
+                    ORDER BY lc.Aim";
+
+				var rows = (await _lessonQuery.QueryAsync<SubjectQuizPerformanceDto>(sql, new Dictionary<string, object>
+				{
+					{ "SchoolId", schoolId },
+					{ "SubjectId", subjectId }
+				})).ToList();
+
+				foreach (var r in rows)
+				{
+					r.PassRate = r.CompletedAttempts > 0
+						? Math.Round((decimal)r.PassedCount / r.CompletedAttempts * 100, 1)
+						: 0;
+				}
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = $"{rows.Count} quiz(zes) found",
+					Status = "successful",
+					Data = rows
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching subject quiz performance for {SubjectId}", subjectId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching subject quiz performance",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
+	public async Task<BaseResponse> GetStudentQuizPerformance(Guid studentId, AuthenticatedUserClaims claims)
+	{
+		using (LogContext.PushProperty("RequestedBy", claims.UserId))
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return Unauthorized();
+
+				if (!Guid.TryParse(claims.UserId, out var requesterId))
+					return Unauthorized();
+
+				if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
+					return Unauthorized();
+
+				bool isTeacherOrAdmin = role switch
+				{
+					UserRole.Administrator or UserRole.SuperAdministrator
+						or UserRole.HeadTeacher or UserRole.SubjectTeacher
+						or UserRole.ClassTeacher => true,
+					_ => false
+				};
+
+				// Students can only view their own performance
+				if (role == UserRole.Student && studentId != requesterId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You can only view your own quiz performance",
+						Status = "failed"
+					};
+
+				if (!isTeacherOrAdmin && role != UserRole.Student)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You do not have permission to view quiz performance",
+						Status = "failed"
+					};
+
+				var sql = $@"
+                    SELECT
+                        att.Id               AS AttemptId,
+                        att.QuizCode         AS QuizCode,
+                        att.LessonId         AS LessonId,
+                        lc.Aim               AS LessonTitle,
+                        ISNULL(c.Name, '')   AS ClassroomName,
+                        ISNULL(s.Subject, '') AS SubjectName,
+                        att.AttemptNumber    AS AttemptNumber,
+                        att.FinalScorePercent AS FinalScorePercent,
+                        att.IsPassed         AS IsPassed,
+                        att.Status           AS Status,
+                        att.SubmittedAt      AS SubmittedAt
+                    FROM QuizAttempt att
+                    JOIN LessonContent lc ON lc.Id = att.LessonId
+                    LEFT JOIN Classroom c ON c.Id = lc.ClassroomId
+                    LEFT JOIN Subjects s ON s.Id = lc.SubjectId
+                    WHERE att.StudentId = @StudentId
+                    AND   att.SchoolId  = @SchoolId
+                    ORDER BY att.SubmittedAt DESC";
+
+				var attempts = (await _attemptQuery.QueryAsync<StudentQuizAttemptRowDto>(sql, new Dictionary<string, object>
+				{
+					{ "StudentId", studentId },
+					{ "SchoolId", schoolId }
+				})).ToList();
+
+				var studentName = (await _lessonQuery.QueryAsync<string>($@"
+                    SELECT TOP 1 FirstName + ' ' + LastName
+                    FROM Users
+                    WHERE Id       = '{studentId}'
+                    AND   SchoolId = '{schoolId}'", new Dictionary<string, object>())).FirstOrDefault() ?? "Unknown";
+
+				var quizzes = attempts
+					.GroupBy(a => new { a.LessonId, a.QuizCode, a.LessonTitle, a.ClassroomName, a.SubjectName })
+					.Select(g =>
+					{
+						var best = g.OrderByDescending(a => a.FinalScorePercent).FirstOrDefault();
+						return new StudentQuizPerformanceItemDto
+						{
+							LessonId = g.Key.LessonId,
+							QuizCode = g.Key.QuizCode,
+							LessonTitle = g.Key.LessonTitle,
+							ClassroomName = g.Key.ClassroomName,
+							SubjectName = g.Key.SubjectName,
+							AttemptCount = g.Count(),
+							BestScorePercent = best?.FinalScorePercent,
+							BestAttemptId = best?.AttemptId,
+							IsPassed = best?.IsPassed,
+							LatestStatus = g.OrderByDescending(a => a.SubmittedAt).FirstOrDefault()?.Status ?? string.Empty,
+							LatestSubmittedAt = g.OrderByDescending(a => a.SubmittedAt).FirstOrDefault()?.SubmittedAt
+						};
+					})
+					.OrderByDescending(q => q.LatestSubmittedAt)
+					.ToList();
+
+				var completed = quizzes.Count(q =>
+					q.LatestStatus is QuizAttemptStatus.Submitted or QuizAttemptStatus.PartiallyGraded or QuizAttemptStatus.FullyGraded);
+
+				var dto = new StudentQuizPerformanceDetailDto
+				{
+					StudentId = studentId,
+					StudentName = studentName,
+					TotalQuizzes = quizzes.Count,
+					TotalAttempts = attempts.Count,
+					CompletedAttempts = completed,
+					InProgressAttempts = quizzes.Count(q => q.LatestStatus == QuizAttemptStatus.InProgress),
+					AverageScorePercent = attempts.Any(a => a.FinalScorePercent > 0)
+						? Math.Round(attempts.Where(a => a.FinalScorePercent > 0).Average(a => a.FinalScorePercent) ?? 0m, 1)
+						: 0m,
+					PassRate = attempts.Any()
+						? Math.Round((decimal)attempts.Count(a => a.IsPassed == true) / attempts.Count * 100, 1)
+						: 0m,
+					BestScorePercent = attempts.Any(a => a.FinalScorePercent.HasValue) ? attempts.Max(a => a.FinalScorePercent ?? 0m) : 0m,
+					Quizzes = quizzes
+				};
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Student quiz performance retrieved",
+					Status = "successful",
+					Data = dto
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching student quiz performance for {StudentId}", studentId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching student quiz performance",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
 	public async Task<BaseResponse> GetStudentQuizHistory(Guid studentId, AuthenticatedUserClaims claims)
 	{
 		using (LogContext.PushProperty("RequestedBy", claims.UserId))
@@ -3673,6 +3897,21 @@ public class QuizService : IQuizService
 		public string LessonTitle { get; set; } = string.Empty;
 		public string QuizCode { get; set; } = string.Empty;
 		public Guid CreatedBy { get; set; }
+	}
+
+	private class StudentQuizAttemptRowDto
+	{
+		public Guid AttemptId { get; set; }
+		public string QuizCode { get; set; } = string.Empty;
+		public Guid LessonId { get; set; }
+		public string LessonTitle { get; set; } = string.Empty;
+		public string ClassroomName { get; set; } = string.Empty;
+		public string SubjectName { get; set; } = string.Empty;
+		public int AttemptNumber { get; set; }
+		public decimal? FinalScorePercent { get; set; }
+		public bool? IsPassed { get; set; }
+		public string Status { get; set; } = string.Empty;
+		public string? SubmittedAt { get; set; }
 	}
 
 	private class QuestionDifficultyDto
