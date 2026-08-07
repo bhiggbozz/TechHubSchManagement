@@ -16,10 +16,12 @@ public class LessonController : ControllerBase
 {
 	private readonly ILessonService _lessonService;
 	private readonly ICloudinaryService _signatureService;
-	public LessonController(ILessonService lessonService, ICloudinaryService signatureService)
+	private readonly IUserService _userService;
+	public LessonController(ILessonService lessonService, ICloudinaryService signatureService, IUserService userService)
 	{
 		_lessonService = lessonService;
 		_signatureService = signatureService;
+		_userService = userService;
 	}
 
 
@@ -73,6 +75,43 @@ public class LessonController : ControllerBase
 	public async Task<IActionResult> SubmitLesson([FromBody] SubmitLessonViewModel model)
 	{
 		var claims = GetClaims();
+		var result = await _lessonService.SubmitLesson(model, claims);
+		return result.ResponseCode == ResponseCode.successful
+			? Ok(result) : BadRequest(result);
+	}
+
+	[HttpPost("admin/submit")]
+	[Authorize(Roles = "Administrator,SuperAdministrator")]
+	[ProducesResponseType(typeof(BaseResponse), 200)]
+	[ProducesResponseType(typeof(BaseResponse), 400)]
+	[ProducesResponseType(typeof(BaseResponse), 401)]
+	[ProducesResponseType(typeof(BaseResponse), 403)]
+	public async Task<IActionResult> AdminSubmitLesson([FromBody] SubmitLessonViewModel model)
+	{
+		var claims = GetClaims();
+		if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+			return Unauthorized();
+		if (!Guid.TryParse(claims.UserId, out var userId))
+			return Unauthorized();
+
+		// SuperAdministrators bypass; Administrators must hold CreateLessons or ManageLessons.
+		if (claims.Role != UserRole.SuperAdministrator.ToString())
+		{
+			if (claims.Role != UserRole.Administrator.ToString())
+				return Forbid();
+
+			var hasCreateCls = await _userService.HasPermission(userId, schoolId, AdminPermission.CreateLessons);
+			var hasManageCls = await _userService.HasPermission(userId, schoolId, AdminPermission.ManageLessons);
+
+			if (!hasCreateCls && !hasManageCls)
+				return StatusCode(403, new BaseResponse
+				{
+					ResponseCode = ResponseCode.Forbidden,
+					ResponseMessage = "You do not have permission to create lessons",
+					Status = "failed"
+				});
+		}
+
 		var result = await _lessonService.SubmitLesson(model, claims);
 		return result.ResponseCode == ResponseCode.successful
 			? Ok(result) : BadRequest(result);

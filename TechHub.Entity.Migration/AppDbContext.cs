@@ -22,6 +22,8 @@ namespace TechHub.Entity.Migration
 		public DbSet<Role> Roles { get; set; }
 		public DbSet<TenantInfo> TenantInfo { get; set; }
 		public DbSet<PlatformUser> PlatformUsers { get; set; }
+		public DbSet<PlatformLoginHistory> PlatformLoginHistory { get; set; }
+		public DbSet<PlatformAuditLog> PlatformAuditLog { get; set; }
 		public DbSet<LoginHistory> LoginHistory { get; set; }
 		public DbSet<RefreshTokens> RefreshTokens { get; set; }
 		public DbSet<AdminPermissions> AdminPermissions { get; set; }

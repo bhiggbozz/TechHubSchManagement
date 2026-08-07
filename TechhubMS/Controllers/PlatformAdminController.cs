@@ -14,10 +14,12 @@ namespace TechhubMS.Controllers;
 public class PlatformAdminController : ControllerBase
 {
     private readonly IPlatformAdminService _platformAdminService;
+    private readonly IPlatformAuditService _platformAuditService;
 
-    public PlatformAdminController(IPlatformAdminService platformAdminService)
+    public PlatformAdminController(IPlatformAdminService platformAdminService, IPlatformAuditService platformAuditService)
     {
         _platformAdminService = platformAdminService;
+        _platformAuditService = platformAuditService;
     }
 
     private AuthenticatedUserClaims GetUserClaims() => new()
@@ -39,11 +41,47 @@ public class PlatformAdminController : ControllerBase
     };
 
     [HttpPost("create")]
-    [Authorize(Roles = "PlatformSuperAdmin")]
-    public async Task<IActionResult> CreatePlatformAdmin([FromBody] CreatePlatformAdminViewModel model)
+    [Authorize(Roles = "PlatformSuperAdmin,PlatformAdmin")]
+    public async Task<IActionResult> CreatePlatformUser([FromBody] CreatePlatformAdminViewModel model)
     {
         var claims = GetUserClaims();
-        var result = await _platformAdminService.CreatePlatformAdminAsync(model, claims);
+        var result = await _platformAdminService.CreatePlatformUserAsync(model, claims);
+
+        if (result.ResponseCode == ResponseCode.successful)
+        {
+            await _platformAuditService.LogAsync(
+                claims,
+                PlatformAuditAction.PlatformUserCreated,
+                PlatformAuditAction.EntityPlatformUser,
+                null,
+                $"Platform user '{model.Username}' created with role '{model.Role}'",
+                new { model.Username, model.Email, model.Role });
+        }
+
+        return MapResponse(result);
+    }
+
+    [HttpGet("users")]
+    [Authorize(Roles = "PlatformSuperAdmin,PlatformAdmin")]
+    public async Task<IActionResult> GetPlatformUsers()
+    {
+        var result = await _platformAdminService.GetPlatformUsersAsync(GetUserClaims());
+        return MapResponse(result);
+    }
+
+    [HttpGet("login-history")]
+    [Authorize(Roles = "PlatformSuperAdmin,PlatformAdmin")]
+    public async Task<IActionResult> GetLoginHistory([FromQuery] Guid? userId, [FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
+    {
+        var result = await _platformAdminService.GetPlatformLoginHistoryAsync(userId, pageNumber, pageSize);
+        return MapResponse(result);
+    }
+
+    [HttpGet("audit-logs")]
+    [Authorize(Roles = "PlatformSuperAdmin,PlatformAdmin")]
+    public async Task<IActionResult> GetAuditLogs([FromQuery] string? action = null, [FromQuery] string? entityType = null, [FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 50)
+    {
+        var result = await _platformAuditService.GetLogsAsync(action, entityType, pageNumber, pageSize);
         return MapResponse(result);
     }
 }

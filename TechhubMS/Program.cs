@@ -1,13 +1,16 @@
 
 //using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Hangfire;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using Serilog.Events;
 using System.Text;
+using TechHub.Background.Configuration;
 using TechHub.Background.Extensions;
 using TechHub.Background.Services;
+using TechHub.BackgroundJobs.Interfaces;
 using TechHub.Core.Configuration;
 using TechHub.Core.Profiles;
 using TechHub.Entity.Migration;
@@ -126,7 +129,18 @@ try
 	builder.Services.AddBoardWorkers();
 	builder.Services.AddDatabaseMigration();
 
+	// Hangfire background job processing (SQL Server storage + embedded server)
+	var hangfireConnectionString = builder.Configuration.GetConnectionString("DbConnectionString");
+	builder.Services.AddHangfireServices(hangfireConnectionString, builder.Configuration);
+
 	var app = builder.Build();
+
+	// Register recurring background jobs (Hangfire)
+	using (var scope = app.Services.CreateScope())
+	{
+		var backgroundJobService = scope.ServiceProvider.GetRequiredService<IBackgroundJobService>();
+		backgroundJobService.ScheduleMediaCleanup();
+	}
 
 	app.UseSerilogRequestLogging();
 
@@ -136,6 +150,12 @@ try
 	app.UseSwagger();
 	app.UseSwaggerUI();
 	//}
+
+	if (builder.Configuration.GetValue<bool>("Hangfire:EnableDashboard", false))
+	{
+		app.UseHangfireDashboard(
+			builder.Configuration.GetValue<string>("Hangfire:DashboardPath", "/hangfire"));
+	}
 
 	app.UseHttpsRedirection();
 	app.UseCors("MultiTenantCors");

@@ -480,6 +480,24 @@ namespace TechhubMS.Controllers
 			};
 		}
 
+		/// <summary>
+		/// Edit school info (Platform Admin)
+		/// POST /api/School/edit/{schoolId}
+		/// </summary>
+		[HttpPut("edit/{schoolId:guid}")]
+		[Authorize(Roles = "PlatformAdmin,PlatformSuperAdmin")]
+		public async Task<IActionResult> EditSchool(Guid schoolId, [FromBody] SchoolEditViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.EditSchoolInfoAsync(schoolId, model, claims);
+			return result.ResponseCode switch
+			{
+				"99000" => Ok(result),
+				"99134" => NotFound(result),
+				_ => BadRequest(result)
+			};
+		}
+
 		[HttpGet("schools-status")]
 		[AllowAnonymous]
 		public async Task<IActionResult> GetAllSchoolsWithStatus()

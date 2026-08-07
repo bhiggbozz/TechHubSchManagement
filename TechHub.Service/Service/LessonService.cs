@@ -66,7 +66,8 @@ public class LessonService : ILessonService
 		_logger = logger;
 	}
 
-	// ── Submit lesson — saves to DB + fires approval simultaneously ──────────
+// ── Submit lesson — saves to DB + fires approval simultaneously ──────────
+
 	public async Task<BaseResponse> SubmitLesson(SubmitLessonViewModel model, AuthenticatedUserClaims claims)
 	{
 		try

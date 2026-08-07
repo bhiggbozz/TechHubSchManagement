@@ -74,6 +74,7 @@ namespace TechHub.Service.Service
 		private readonly IDbTransactionScopeFactory _dbTransactionScopeFactory;
 		private readonly ICloudinaryService _cloudinaryService;
 		private readonly IEmailService _emailService;
+		private readonly IPlatformAuditService _platformAuditService;
 		private readonly string? _connString;
 
 		private readonly IMapper _mapper;
@@ -87,7 +88,7 @@ namespace TechHub.Service.Service
 			IQueryRepository<Subjects> queryrepositorySubject, ICommandRespository<Topic> topicCommandRepository, IQueryRepository<Topic> topicQueryRepository, ICommandRespository<SubTopic> subTopicCommandRepository,
 			IQueryRepository<SubTopic> subTopicQueryRepository, ICommandRespository<Users> userCommandRepository, ICommandRespository<ApprovalRequests> approvalRequestCommandRepository,
 			ICommandRespository<SchoolRegistrationRequest> registrationRequestCommandRepository, IQueryRepository<SchoolRegistrationRequest> registrationRequestQueryRepository,
-			IConfiguration configuration, ILogger logger, IEmailService emailService)
+			IConfiguration configuration, ILogger logger, IEmailService emailService, IPlatformAuditService platformAuditService)
 		{
 			_emailService = emailService;
 			_schCommandRespository = schCommandRespository;
@@ -118,6 +119,7 @@ namespace TechHub.Service.Service
 			_dbTransactionScopeFactory = dbTransactionScopeFactory;
 			_queryrepositoryUser = queryrepositoryUser;
 			_cloudinaryService = cloudinaryService;
+			_platformAuditService = platformAuditService;
 			_mapper = mapper;
 			_logger = logger;
 			_connString = _configuration.GetConnectionString("DbConnectionString") ?? null;
@@ -5469,6 +5471,14 @@ _logger.Information(
 
 				_logger.Information("School registration approved - School: {Name}, Code: {Code}", request.SchoolName, request.SchoolCode);
 
+				await _platformAuditService.LogAsync(
+					claims,
+					PlatformAuditAction.SchoolApproved,
+					PlatformAuditAction.EntitySchool,
+					schoolId,
+					$"School '{request.SchoolName}' approved and provisioned (code: {request.SchoolCode})",
+					new { request.SchoolCode, request.TenantIdentifier, AdminUserId = adminUserId });
+
 				// Send welcome email (fire-and-forget)
 				_ = Task.Run(async () =>
 				{
@@ -5554,6 +5564,14 @@ _logger.Information(
 				_logger.Information("School registration rejected - School: {Name}, Code: {Code}, Reason: {Reason}",
 					request.SchoolName, request.SchoolCode, reason);
 
+				await _platformAuditService.LogAsync(
+					claims,
+					PlatformAuditAction.SchoolRejected,
+					PlatformAuditAction.EntitySchool,
+					requestId,
+					$"School registration '{request.SchoolName}' rejected",
+					new { request.SchoolCode, reason });
+
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.successful,
@@ -5565,6 +5583,93 @@ _logger.Information(
 			{
 				_logger.Error(ex, "Error rejecting school registration");
 				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred", Status = "failed" };
+			}
+		}
+
+		public async Task<BaseResponse> EditSchoolInfoAsync(Guid schoolId, SchoolEditViewModel model, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
+
+				var school = await conn.QueryFirstOrDefaultAsync<dynamic>(
+					"SELECT Id, SchoolName, Location, CountryId, StateId, [State], Address, HasBranch, ISActive, LogoUrl, LogoPublicId FROM School WHERE Id = @Id",
+					new { Id = schoolId });
+
+				if (school is null)
+					return new BaseResponse { ResponseCode = ResponseCode.NotFound, ResponseMessage = "School not found", Status = "failed" };
+
+				var before = new
+				{
+					school.SchoolName,
+					school.Location,
+					school.CountryId,
+					school.StateId,
+					school.State,
+					school.Address,
+					school.HasBranch,
+					school.ISActive,
+					school.LogoUrl,
+					school.LogoPublicId
+				};
+
+				var now = DateTime.UtcNow;
+				await conn.ExecuteAsync(@"
+					UPDATE School SET
+						SchoolName = COALESCE(@SchoolName, SchoolName),
+						Location = COALESCE(@Location, Location),
+						CountryId = @CountryId,
+						StateId = @StateId,
+						[State] = COALESCE(@State, [State]),
+						Address = COALESCE(@Address, Address),
+						HasBranch = @HasBranch,
+						ISActive = @IsActive,
+						LogoUrl = COALESCE(@LogoUrl, LogoUrl),
+						LogoPublicId = COALESCE(@LogoPublicId, LogoPublicId),
+						ModifiedDate = @Now
+					WHERE Id = @Id",
+					new
+					{
+						Id = schoolId,
+						SchoolName = model.SchoolName,
+						Location = model.Location,
+						CountryId = model.CountryId,
+						StateId = model.StateId,
+						State = model.State,
+						Address = model.Address,
+						HasBranch = model.HasBranch ?? before.HasBranch,
+						IsActive = model.IsActive ?? before.ISActive,
+						LogoUrl = model.LogoUrl,
+						LogoPublicId = model.LogoPublicId,
+						Now = now
+					});
+
+				_logger.Information("School info edited - School: {SchoolId} by {UserId}", schoolId, claims?.UserId);
+
+				await _platformAuditService.LogAsync(
+					claims,
+					PlatformAuditAction.SchoolEdited,
+					PlatformAuditAction.EntitySchool,
+					schoolId,
+					$"School info updated ({school.SchoolName})",
+					new { Before = before });
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "School info updated successfully",
+					Status = "successful",
+					Data = new
+					{
+						SchoolId = schoolId,
+						SchoolName = model.SchoolName ?? school.SchoolName
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error editing school info - SchoolId: {SchoolId}", schoolId);
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred while editing school info", Status = "failed" };
 			}
 		}
 

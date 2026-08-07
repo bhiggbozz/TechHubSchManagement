@@ -7,6 +7,13 @@ namespace TechHub.BackgroundJobs.Services;
 
 	public class BackgroundJobService : IBackgroundJobService
 	{
+		private readonly IRecurringJobManager _recurringJobManager;
+
+		public BackgroundJobService(IRecurringJobManager recurringJobManager)
+		{
+			_recurringJobManager = recurringJobManager;
+		}
+
 	//	/// <summary>
 	//	/// Enqueue media upload job
 	//	/// </summary>
@@ -50,7 +57,7 @@ namespace TechHub.BackgroundJobs.Services;
 		/// </summary>
 		public void ScheduleMediaCleanup()
 		{
-			RecurringJob.AddOrUpdate<MediaCleanupJob>("media-cleanup",
+			_recurringJobManager.AddOrUpdate<MediaCleanupJob>("media-cleanup",
 				job => job.ExecuteAsync(),
 				Cron.Daily(2));  // 2 AM every day
 		}

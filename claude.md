@@ -52,18 +52,31 @@ TechhubMS.sln
 
 ### 2. Platform Users (PlatformUser table — separate system)
 
-- Roles: `PlatformAdmin`, `PlatformSuperAdmin`
+- Roles: `PlatformSuperAdmin`, `PlatformAdmin`, `PlatformUser`
 - Login: `POST /api/Platform/login`
 - JWT claims: `ClaimTypes.NameIdentifier`, `ClaimTypes.Role` (no SchoolId — not tied to any school)
 - Token expiry: 1 hour
 - Manages the platform, not individual schools
+- **Every login (success + failed attempt) is recorded** in `PlatformLoginHistory` table (see `PlatformAuthService.LogLoginAsync`)
 
 ### Platform Role Hierarchy
 
 | Role | Created By | Can Do |
 |------|-----------|--------|
-| `PlatformSuperAdmin` | Seeded in DB migration | Create PlatformAdmins, access all platform endpoints |
-| `PlatformAdmin` | PlatformSuperAdmin via `POST /api/Platform/admin/create` | Provision schools, manage platform operations |
+| `PlatformSuperAdmin` | Seeded in DB migration | Create all platform roles, access all platform endpoints |
+| `PlatformAdmin` | PlatformSuperAdmin via `POST /api/Platform/admin/create` | Provision schools, create `PlatformUser` accounts, manage platform operations |
+| `PlatformUser` | PlatformSuperAdmin / PlatformAdmin | Lower-privilege operational access (defined by future endpoint gates) |
+
+### Platform Audit Trail
+
+`PlatformAuditLog` table records "who did what" on platform-level actions:
+
+- **Action / EntityType constants**: `PlatformAuditAction` (e.g. `ApproveSchool`, `RejectSchool`, `EditSchool`, `CreatePlatformUser`)
+- Written by `IPlatformAuditService` (Dapper-backed) for:
+  - School registration **approve** and **reject** — logged in `SchoolService`
+  - School **info edit** — logged in `SchoolService.EditSchoolInfoAsync`
+  - Platform user creation — logged in `PlatformAdminController`
+- Retrievable via `GET /api/Platform/admin/audit-logs`
 
 ### AdminPermission Bit-Flag System (school-level)
 
@@ -73,15 +86,15 @@ TechhubMS.sln
 |------------|-------|-------------|
 | None | 0 | No permissions |
 | ApproveClasses | 1 | Approve class preparations |
-| CreateClasses | 2 | Create class preparations |
+| CreateLessons | 2 | Create class preparations (also gates student-to-class registration) |
 | ManageTeachers | 4 | Manage teacher accounts |
 | ManageStudents | 8 | Manage student accounts |
 | ViewReports | 16 | View performance reports |
-| ManageClassrooms | 32 | Manage classrooms |
+| ManageLessons | 32 | Manage lessons (also gates teacher-to-classroom assignment) |
 | ManageSubjects | 64 | Manage subjects |
 | CreateUsers | 128 | Create user accounts |
 
-Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin = 127`
+Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin = 127`
 
 ---
 
@@ -143,7 +156,9 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 
 | Table | Key Columns |
 |-------|-------------|
-| `PlatformUser` | Id, FirstName, LastName, Email, Username, PasswordHash (SHA256), Role (PlatformAdmin\|PlatformSuperAdmin), IsActive, IsDeleted, CreatedBy |
+| `PlatformUser` | Id, FirstName, LastName, Email, Username, PasswordHash (SHA256), Role (PlatformSuperAdmin\|PlatformAdmin\|PlatformUser), IsActive, IsDeleted, CreatedBy |
+| `PlatformLoginHistory` | Id, PlatformUserId, Username, Email, Role, PasswordFailed, DeviceType, DeviceIp, CreatedAt |
+| `PlatformAuditLog` | Id, ActorId, ActorName, ActorRole, Action, EntityType, EntityId, Description, DetailsJson, CreatedAt |
 
 ### Lesson Planning
 
@@ -222,7 +237,10 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 | POST | `/api/User/RevokePermissions` | SuperAdmin | Revoke permissions |
 | POST | `/api/User/refresh-token` | Anonymous | Refresh JWT |
 | POST | `/api/Platform/login` | Anonymous | Platform user login |
-| POST | `/api/Platform/admin/create` | PlatformSuperAdmin | Create PlatformAdmin |
+| POST | `/api/Platform/admin/create` | PlatformSuperAdmin/PlatformAdmin | Create platform user (Role field: PlatformSuperAdmin/PlatformAdmin/PlatformUser; hierarchy enforced in service) |
+| GET | `/api/Platform/admin/users` | PlatformSuperAdmin/PlatformAdmin | List platform users |
+| GET | `/api/Platform/admin/login-history` | PlatformSuperAdmin/PlatformAdmin | Platform login history (filter by userId) |
+| GET | `/api/Platform/admin/audit-logs` | PlatformSuperAdmin/PlatformAdmin | Platform audit trail (filter by action/entityType) |
 
 ### School Management
 
@@ -243,12 +261,14 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 | POST | `/api/School/subtopics` | JWT | Create subtopic |
 | GET | `/api/School/subtopics/{topicId}` | JWT | Subtopics by topic |
 | GET | `/api/School/classroom/{id}/curriculum` | JWT | Classroom curriculum |
+| PUT | `/api/School/edit/{schoolId}` | PlatformAdmin/SuperAdmin | Edit school info (audit-logged) |
 
 ### Lessons
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
 | POST | `/api/lessons/submit` | JWT | Submit lesson |
+| POST | `/api/lessons/admin/submit` | Admin (CreateLessons\|ManageLessons) / SuperAdmin | **Admin lesson submission** — same SubmitLesson service; SuperAdmin bypasses, Administrator must hold CreateLessons or ManageLessons |
 | POST | `/api/lessons/draft` | JWT | Save draft |
 | GET | `/api/lessons/{id}` | JWT | Get lesson |
 | GET | `/api/lessons/classroom/{id}` | JWT | Lessons by classroom |
@@ -360,6 +380,125 @@ Pre-defined combos: `BasicAdmin = 18` (CreateClasses\|ViewReports), `FullAdmin =
 ```
 
 **Frontend usage:** Display per-subject average scores with ranking position. `position` is 1-based rank within the subject (higher average = lower number). `totalStudents` is the total number of students ranked in that subject.
+
+---
+
+## Frontend Endpoint Reference: Quiz Performance
+
+Four quiz-performance endpoints exist. All require a **JWT** (school user). SchoolId is always resolved from the token, so each is scoped to the caller's school.
+
+### `GET /api/quiz/classroom/{classroomId}/performance`
+
+**Auth:** JWT (roles Managerial)
+
+**Request:** Header `Authorization: Bearer <token>`, `X-Tenant-ID: <subdomain>`. No body. `classroomId` in route.
+
+**Description:** Per-lesson quiz stats for a classroom (only lessons that have a quiz attached). 404 if the classroom isn't in the caller's school.
+
+**Response (200):**
+```json
+{
+    "responseMessage": "3 quiz(zes) found",
+    "responseCode": "99000",
+    "status": "successful",
+    "data": [
+        {
+            "lessonId": "guid",
+            "quizCode": "QUIZ-1",
+            "lessonTitle": "Algebra Intro",
+            "subjectName": "",
+            "classroomName": "SS1 A",
+            "totalStudents": 30,
+            "totalAttempts": 18,
+            "completedAttempts": 16,
+            "inProgressAttempts": 2,
+            "averageScorePercent": 71.4,
+            "passedCount": 12,
+            "failedCount": 4,
+            "passRate": 75.0
+        }
+    ]
+}
+```
+
+### `GET /api/quiz/subject/{subjectId}/performance`
+
+**Auth:** JWT. 404 if the subject isn't in the caller's school.
+
+**Request:** Header only; `subjectId` in route.
+
+**Response:** Same per-lesson shape as classroom but with `subjectName` populated and grouped across the subject's lessons (includes each lesson's `classroomName`).
+
+```json
+{
+    "responseMessage": "Subject quiz performance retrieved",
+    "responseCode": "99000",
+    "status": "successful",
+    "data": [
+        {
+            "lessonId": "uuid",
+            "quizCode": "Q-101",
+            "lessonTitle": "Fractions",
+            "subjectName": "Mathematics",
+            "classroomName": "SS1 B",
+            "totalStudents": 25,
+            "totalAttempts": 12,
+            "completedAttempts": 11,
+            "inProgressAttempts": 1,
+            "averageScorePercent": 64.0,
+            "passCount": 8,
+            "failedCount": 3,
+            "passRate": 72.7
+        }
+    ]
+}
+```
+
+### `GET /api/quiz/student/{studentId}/performance`
+
+**Auth:** JWT. Admins/head-teacher/teachers can query any student in their school. A `Student` role can only query their own `studentId`, otherwise 403 "You can only view your own quiz performance".
+
+**Response (200):**
+```json
+{
+    "responseMessage": "Student quiz performance retrieved",
+    "responseCode": "99000",
+    "status": "successful",
+    "data": {
+        "studentId": "uuid",
+        "studentName": "John Doe",
+        "totalQuizzes": 4,
+        "totalAttempts": 6,
+        "completedAttempts": 5,
+        "inProgressAttempts": 1,
+        "averageScorePercent": 68.3,
+        "passRate": 66.7,
+        "bestScorePercent": 92.0,
+        "quizzes": [
+            {
+                "attemptId": "uuid",
+                "lessonId": "uuid",
+                "quizCode": "Q-101",
+                "lessonTitle": "Fractions",
+                "classroomName": "SS1 B",
+                "subjectName": "Mathematics",
+                "attemptCount": 2,
+                "bestScorePercent": 80.0,
+                "bestAttemptId": "uuid",
+                "isPassed": true,
+                "latestStatus": "FullyGraded",
+                "latestSubmittedAt": "2026-01-01T10:00:00"
+            }
+        ]
+    }
+}
+```
+
+**Frontend usage:** Dashboard list of quiz results per lesson with best score, attempt count, latest status; `totalQuizzes`/`completedAttempts`/`inProgressAttempts` for summary cards; `passRate`/`averageScorePercent`/`bestScorePercent` highlight stats.
+
+### `GET /api/performance/student/{studentId}/quiz-performance`
+
+Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanceAsync` (returns a `QuizBreakdown` list). Same auth semantics as above.
 
 ---
 
