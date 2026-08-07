@@ -66,5 +66,6 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetAllSchoolsWithStatus();
 		Task<BaseResponse> GetPendingSchoolIds();
 		Task<BaseResponse> GetSchoolApprovalStatus(Guid schoolId);
+		Task<BaseResponse> EditSchoolInfoAsync(Guid schoolId, SchoolEditViewModel model, AuthenticatedUserClaims claims);
 	}
 }

@@ -5,6 +5,11 @@
 -- for a fresh TechHub deployment. It is the single source of truth.
 -- ========================================================================
 
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_PADDING ON;
+GO
+
 -- ========================================================================
 -- SECTION 1: CORE TABLES
 -- ========================================================================
@@ -86,6 +91,7 @@ BEGIN
         GuardianName  NVARCHAR(MAX)    NULL,
         DOB           NVARCHAR(19)     NULL,
         LineManagerId UNIQUEIDENTIFIER NULL,
+        QrCodeToken   NVARCHAR(100)    NULL,
         CONSTRAINT PK_Users PRIMARY KEY (Id, CreationDate)
     );
 END;
@@ -112,6 +118,47 @@ BEGIN
         ON PlatformUser(Username) WHERE IsDeleted = 0;
     CREATE UNIQUE INDEX IX_PlatformUsers_Email
         ON PlatformUser(Email) WHERE IsDeleted = 0;
+END;
+
+-- 1.5b PlatformLoginHistory
+IF OBJECT_ID('PlatformLoginHistory', 'U') IS NULL
+BEGIN
+    CREATE TABLE PlatformLoginHistory (
+        Id             UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+        PlatformUserId UNIQUEIDENTIFIER NOT NULL,
+        Username       NVARCHAR(100)    NOT NULL,
+        Email          NVARCHAR(200)    NULL,
+        Role           NVARCHAR(20)     NOT NULL,
+        PasswordFailed BIT              NOT NULL DEFAULT 0,
+        DeviceType     NVARCHAR(MAX)    NULL,
+        DeviceIp       NVARCHAR(MAX)    NULL,
+        CreatedAt      NVARCHAR(30)     NOT NULL
+    );
+
+    CREATE INDEX IX_PlatformLoginHistory_PlatformUserId
+        ON PlatformLoginHistory(PlatformUserId, CreatedAt DESC);
+END;
+
+-- 1.5c PlatformAuditLog
+IF OBJECT_ID('PlatformAuditLog', 'U') IS NULL
+BEGIN
+    CREATE TABLE PlatformAuditLog (
+        Id            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
+        ActorId       UNIQUEIDENTIFIER NULL,
+        ActorName     NVARCHAR(200)    NULL,
+        ActorRole     NVARCHAR(20)     NULL,
+        [Action]      NVARCHAR(100)    NOT NULL,
+        EntityType    NVARCHAR(50)     NOT NULL,
+        EntityId      UNIQUEIDENTIFIER NULL,
+        Description   NVARCHAR(MAX)    NULL,
+        DetailsJson   NVARCHAR(MAX)    NULL,
+        CreatedAt     NVARCHAR(30)     NOT NULL
+    );
+
+    CREATE INDEX IX_PlatformAuditLog_CreatedAt
+        ON PlatformAuditLog(CreatedAt DESC);
+    CREATE INDEX IX_PlatformAuditLog_EntityType
+        ON PlatformAuditLog(EntityType, EntityId);
 END;
 
 -- 1.6 LoginHistory (table only — no seed data)
@@ -1354,6 +1401,78 @@ BEGIN
         FORMAT(GETUTCDATE(), 'yyyy-MM-dd HH:mm:ss')
     );
 END;
+
+-- ========================================================================
+-- SECTION 11: STUDENT ATTENDANCE + QR CODES
+-- ========================================================================
+
+-- 11.1 Users.QrCodeToken (idempotent for existing databases)
+IF COL_LENGTH('Users', 'QrCodeToken') IS NULL
+BEGIN
+    ALTER TABLE Users ADD QrCodeToken NVARCHAR(100) NULL;
+END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_Users_QrCodeToken' AND object_id = OBJECT_ID('Users'))
+BEGIN
+    CREATE UNIQUE INDEX UQ_Users_QrCodeToken ON Users(QrCodeToken) WHERE QrCodeToken IS NOT NULL;
+END
+GO
+
+-- 11.2 AttendanceSession
+IF OBJECT_ID('AttendanceSession', 'U') IS NULL
+BEGIN
+    CREATE TABLE AttendanceSession (
+        Id                 UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        CreationDate       NVARCHAR(19)     NOT NULL,
+        ModifiedDate       NVARCHAR(19)     NOT NULL,
+        SchoolId           UNIQUEIDENTIFIER NOT NULL,
+        TeacherId          UNIQUEIDENTIFIER NOT NULL,
+        AttendanceType     INT              NOT NULL,
+        ClassroomId        UNIQUEIDENTIFIER NULL,
+        SubjectId          UNIQUEIDENTIFIER NULL,
+        SubTopicId         UNIQUEIDENTIFIER NULL,
+        ClassPreparationId UNIQUEIDENTIFIER NULL,
+        [Status]           INT              NOT NULL DEFAULT 0,
+        StartedAt          NVARCHAR(19)     NOT NULL,
+        EndedAt            NVARCHAR(19)     NULL,
+        CreatedBy          UNIQUEIDENTIFIER NOT NULL,
+        IsActive           BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_AttendanceSession PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_AttendanceSession_School_Status ON AttendanceSession(SchoolId, [Status]);
+    CREATE INDEX IX_AttendanceSession_Teacher      ON AttendanceSession(TeacherId);
+    CREATE INDEX IX_AttendanceSession_Classroom    ON AttendanceSession(ClassroomId);
+    CREATE INDEX IX_AttendanceSession_Subject      ON AttendanceSession(SubjectId);
+    CREATE INDEX IX_AttendanceSession_SubTopic     ON AttendanceSession(SubTopicId);
+END
+GO
+
+-- 11.3 AttendanceRecord
+IF OBJECT_ID('AttendanceRecord', 'U') IS NULL
+BEGIN
+    CREATE TABLE AttendanceRecord (
+        Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        CreationDate NVARCHAR(19)     NOT NULL,
+        ModifiedDate NVARCHAR(19)     NOT NULL,
+        SessionId    UNIQUEIDENTIFIER NOT NULL,
+        StudentId    UNIQUEIDENTIFIER NOT NULL,
+        SchoolId     UNIQUEIDENTIFIER NOT NULL,
+        IsPresent    BIT              NOT NULL DEFAULT 1,
+        IsManual     BIT              NOT NULL DEFAULT 0,
+        AttendedAt   NVARCHAR(19)     NOT NULL,
+        CreatedBy    UNIQUEIDENTIFIER NOT NULL,
+        IsActive     BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_AttendanceRecord PRIMARY KEY (Id)
+    );
+
+    CREATE UNIQUE INDEX UQ_AttendanceRecord_Session_Student ON AttendanceRecord(SessionId, StudentId);
+    CREATE INDEX IX_AttendanceRecord_Session  ON AttendanceRecord(SessionId);
+    CREATE INDEX IX_AttendanceRecord_Student  ON AttendanceRecord(StudentId);
+    CREATE INDEX IX_AttendanceRecord_School   ON AttendanceRecord(SchoolId);
+END
+GO
 
 -- ========================================================================
 -- SECTION 12: SCHOOL REGISTRATION REQUESTS

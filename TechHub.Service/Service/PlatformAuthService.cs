@@ -29,6 +29,36 @@ public class PlatformAuthService : IPlatformAuthService
         _connString = _configuration.GetConnectionString("DbConnectionString") ?? string.Empty;
     }
 
+    private async Task LogLoginAsync(Guid userId, string username, string? email, string role, bool passwordFailed)
+    {
+        try
+        {
+            using var conn = new SqlConnection(_connString);
+            conn.Open();
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO PlatformLoginHistory (Id, PlatformUserId, Username, Email, Role, PasswordFailed, DeviceType, DeviceIp, CreatedAt)
+                VALUES (@Id, @PlatformUserId, @Username, @Email, @Role, @PasswordFailed, @DeviceType, @DeviceIp, @CreatedAt)",
+                new
+                {
+                    Id = Guid.NewGuid(),
+                    PlatformUserId = userId,
+                    Username = username,
+                    Email = email,
+                    Role = role,
+                    PasswordFailed = passwordFailed,
+                    DeviceType = (string?)null,
+                    DeviceIp = (string?)null,
+                    CreatedAt = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss")
+                });
+        }
+        catch (Exception ex)
+        {
+            // Login history must never break the login flow.
+            _logger.Error(ex, "Failed to write platform login history for user {Username}", username);
+        }
+    }
+
     private BaseResponse Ok(string message, object data = null) => new()
     {
         ResponseCode = ResponseCode.successful,
@@ -69,14 +99,23 @@ public class PlatformAuthService : IPlatformAuthService
                 WHERE Username = '{model.Username}' AND IsDeleted = 0");
 
             if (user is null)
+            {
+                await LogLoginAsync(Guid.Empty, model.Username, null, string.Empty, true);
                 return Bad("Invalid username or password", ResponseCode.Unauthorized);
+            }
 
             if (!user.IsActive)
+            {
+                await LogLoginAsync(user.Id, user.Username, user.Email, user.Role, true);
                 return Bad("Account is deactivated", ResponseCode.Forbidden);
+            }
 
             var passwordHash = HashPassword(model.Password);
             if (user.PasswordHash != passwordHash)
+            {
+                await LogLoginAsync(user.Id, user.Username, user.Email, user.Role, true);
                 return Bad("Invalid username or password", ResponseCode.Unauthorized);
+            }
 
             var claims = new List<Claim>
             {
@@ -106,6 +145,8 @@ public class PlatformAuthService : IPlatformAuthService
             );
 
             var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+
+            await LogLoginAsync(user.Id, user.Username, user.Email, user.Role, false);
 
             _logger.Information("Platform user {Username} logged in with role {Role}", user.Username, user.Role);
 

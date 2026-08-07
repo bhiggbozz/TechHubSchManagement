@@ -57,6 +57,7 @@ namespace TechhubMS
 
 			services.AddScoped<IMediaService, MediaService>();
 			services.AddScoped<IClassPreparationService, ClassPreparationService>();
+			services.AddScoped<IAttendanceService, AttendanceService>();
 			services.AddScoped<IBackgroundJobService, BackgroundJobService>();
 
 			services.AddScoped<IEmailService, EmailService>();
@@ -103,6 +104,7 @@ namespace TechhubMS
 			services.AddSingleton<IAdminDashboardRepository, AdminDashboardRepository>();
 			services.AddScoped<IPlatformAuthService, PlatformAuthService>();
 			services.AddScoped<IPlatformAdminService, PlatformAdminService>();
+			services.AddScoped<IPlatformAuditService, PlatformAuditService>();
 
 			// Register QuestionBank module
 			services.AddQuestionBankServices();

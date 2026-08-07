@@ -1415,6 +1415,24 @@ namespace TechHub.Service.Service
 					};
 				}
 
+				if (requester.RoleId != (int)UserRole.SuperAdministrator)
+				{
+					var canManageUsers =
+						await HasPermission(requesterId, schoolId, AdminPermission.ManageStudents) ||
+						await HasPermission(requesterId, schoolId, AdminPermission.ManageTeachers) ||
+						await HasPermission(requesterId, schoolId, AdminPermission.CreateUsers);
+
+					if (!canManageUsers)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You do not have permission to unlock user accounts",
+							Status = "failed"
+						};
+					}
+				}
+
 				var targetUser = await _queryrepositoryUser.Get(userId);
 				if (targetUser is null)
 				{
@@ -1612,12 +1630,12 @@ namespace TechHub.Service.Service
 					// SuperAdministrators always have permission
 					if (userRole == UserRole.Administrator)
 					{
-						var hasPermission = await this.HasPermission(createdBy,schoolId,AdminPermission.CreateClasses);
+						var hasPermission = await this.HasPermission(createdBy,schoolId,AdminPermission.CreateLessons);
 
 						if (!hasPermission)
 						{
 							_logger.Warning(
-								"Admin lacks CreateClasses permission - AdminId: {AdminId}, StudentId: {StudentId}, ClassroomId: {ClassroomId}",
+								"Admin lacks CreateLessons permission - AdminId: {AdminId}, StudentId: {StudentId}, ClassroomId: {ClassroomId}",
 								createdBy,
 								registerStudentClassViewModel.StudentId,
 								registerStudentClassViewModel.ClassId);
@@ -1631,7 +1649,7 @@ namespace TechHub.Service.Service
 						}
 
 						_logger.Information(
-							"Admin has CreateClasses permission - AdminId: {AdminId}",
+							"Admin has CreateLessons permission - AdminId: {AdminId}",
 							createdBy);
 					}
 
@@ -1923,61 +1941,54 @@ namespace TechHub.Service.Service
 					}
 
 					// ===== AUTHORIZATION =====
+					// Only SuperAdmin or Administrator with CreateUsers permission may use this
+					// endpoint. Self-edit (users editing their own profile) is not permitted here;
+					// activating an inactive user likewise requires CreateUsers permission.
 
-					bool isSelfEdit = updateUserViewModel.Id == modifiedBy;
-
-					if (!isSelfEdit)
+					if (userRole == UserRole.SuperAdministrator)
 					{
-						// Only SuperAdmin or Admin with CreateUsers permission can edit other users
-						if (userRole == UserRole.SuperAdministrator)
-						{
-							// SuperAdmin always allowed
-							_logger.Information(
-								"SuperAdmin editing user - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
-								modifiedBy, updateUserViewModel.Id);
-						}
-						else if (userRole == UserRole.Administrator)
-						{
-							var hasPermission = await this.HasPermission(
-								modifiedBy,
-								claimSchoolId,
-								AdminPermission.CreateUsers
-							);
+						// SuperAdmin always allowed
+						_logger.Information(
+							"SuperAdmin editing user - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
+							modifiedBy, updateUserViewModel.Id);
+					}
+					else if (userRole == UserRole.Administrator)
+					{
+						var hasPermission = await this.HasPermission(
+							modifiedBy,
+							claimSchoolId,
+							AdminPermission.CreateUsers
+						);
 
-							if (!hasPermission)
-							{
-								_logger.Warning(
-									"Admin lacks CreateUsers permission - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
-									modifiedBy, updateUserViewModel.Id);
-								return new BaseResponse
-								{
-									ResponseCode = ResponseCode.Forbidden,
-									ResponseMessage = "You don't have permission to edit users. Contact your SuperAdministrator.",
-									Status = "failed"
-								};
-							}
-
-							_logger.Information(
-								"Admin with CreateUsers permission editing user - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
-								modifiedBy, updateUserViewModel.Id);
-						}
-						else
+						if (!hasPermission)
 						{
-							// Teachers and other roles cannot edit other users
 							_logger.Warning(
-								"Unauthorized edit attempt - ModifiedBy: {ModifiedBy}, Role: {Role}, TargetUserId: {TargetUserId}",
-								modifiedBy, userRole.ToString(), updateUserViewModel.Id);
+								"Admin lacks CreateUsers permission - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
+								modifiedBy, updateUserViewModel.Id);
 							return new BaseResponse
 							{
 								ResponseCode = ResponseCode.Forbidden,
-								ResponseMessage = "You are not authorized to update other users",
+								ResponseMessage = "You don't have permission to edit users. Contact your SuperAdministrator.",
 								Status = "failed"
 							};
 						}
+
+						_logger.Information(
+							"Admin with CreateUsers permission editing user - AdminId: {AdminId}, TargetUserId: {TargetUserId}",
+							modifiedBy, updateUserViewModel.Id);
 					}
 					else
 					{
-						_logger.Information("User editing own profile - UserId: {UserId}", modifiedBy);
+						// Teachers, students and other roles cannot edit users
+						_logger.Warning(
+							"Unauthorized edit attempt - ModifiedBy: {ModifiedBy}, Role: {Role}, TargetUserId: {TargetUserId}",
+							modifiedBy, userRole.ToString(), updateUserViewModel.Id);
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You are not authorized to update users",
+							Status = "failed"
+						};
 					}
 
 					// SuperAdmin protection — only SuperAdmin can edit another SuperAdmin
@@ -4498,12 +4509,12 @@ namespace TechHub.Service.Service
 		//				var hasPermission = await this.HasPermission(
 		//					requestingUserId,
 		//					schoolId,
-		//					AdminPermission.ManageClassrooms);
+		//					AdminPermission.ManageLessons);
 
 		//				if (!hasPermission)
 		//				{
 		//					_logger.Warning(
-		//						"Admin lacks ManageClassrooms permission - AdminId: {AdminId}",
+		//						"Admin lacks ManageLessons permission - AdminId: {AdminId}",
 		//						requestingUserId);
 		//					return new BaseResponse
 		//					{
@@ -4837,12 +4848,12 @@ namespace TechHub.Service.Service
 						var hasPermission = await this.HasPermission(
 							requestingUserId,
 							schoolId,
-							AdminPermission.ManageClassrooms);
+							AdminPermission.ManageLessons);
 
 						if (!hasPermission)
 						{
 							_logger.Warning(
-								"Admin lacks ManageClassrooms permission - AdminId: {AdminId}",
+								"Admin lacks ManageLessons permission - AdminId: {AdminId}",
 								requestingUserId);
 							return new BaseResponse
 							{
