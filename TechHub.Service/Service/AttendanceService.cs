@@ -699,6 +699,9 @@ namespace TechHub.Service.Service
 			if (IsAdminRole(role))
 				return true;
 
+			if (!string.Equals(role, "ClassTeacher", StringComparison.OrdinalIgnoreCase))
+				return false;
+
 			return await _classroomTeacherQueryRepo.CountAsync(
 				"SELECT TOP 1 1 FROM ClassroomTeacher WHERE TeacherId = @TeacherId AND ClassroomId = @ClassroomId AND SchoolId = @SchoolId AND IsActive = 1",
 				new Dictionary<string, object>
@@ -713,6 +716,9 @@ namespace TechHub.Service.Service
 		{
 			if (IsAdminRole(role))
 				return true;
+
+			if (!string.Equals(role, "SubjectTeacher", StringComparison.OrdinalIgnoreCase))
+				return false;
 
 			return await _teacherSubjectQueryRepo.CountAsync(
 				"SELECT TOP 1 1 FROM TeacherSubject WHERE TeacherId = @TeacherId AND SubjectId = @SubjectId AND SchoolId = @SchoolId AND IsActive = 1",
@@ -733,16 +739,22 @@ namespace TechHub.Service.Service
 						&& await IsStudentInClassroomAsync(studentId, session.ClassroomId.Value, schoolId);
 
 				case AttendanceType.Subject:
+					if (!session.SubjectId.HasValue)
+						return false;
+					if (!await IsStudentInSubjectAsync(studentId, session.SubjectId.Value, schoolId))
+						return false;
 					if (session.ClassroomId.HasValue)
 						return await IsStudentInClassroomAsync(studentId, session.ClassroomId.Value, schoolId);
-					return session.SubjectId.HasValue
-						&& await IsStudentInSubjectAsync(studentId, session.SubjectId.Value, schoolId);
+					return true;
 
 				case AttendanceType.SubTopic:
+					if (!session.SubjectId.HasValue)
+						return false;
+					if (!await IsStudentInSubjectAsync(studentId, session.SubjectId.Value, schoolId))
+						return false;
 					if (session.ClassroomId.HasValue)
 						return await IsStudentInClassroomAsync(studentId, session.ClassroomId.Value, schoolId);
-					return session.SubjectId.HasValue
-						&& await IsStudentInSubjectAsync(studentId, session.SubjectId.Value, schoolId);
+					return true;
 
 				default:
 					return false;

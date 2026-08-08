@@ -25,10 +25,19 @@ namespace TechhubMS.Controllers
 			_schoolService = schoolService;
 		}
 		[HttpPost("createschool")]
+		[Authorize(Roles = "PlatformAdmin,PlatformSuperAdmin")]
 		public async Task<ActionResult<BaseResponse>> CreateSchool(SchoolViewModel schoolViewModel)
 		{
-			var result = await _schoolService.CreateSchool(schoolViewModel);
-			return Ok(result);
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _schoolService.CreateSchool(schoolViewModel, claims);
+			return result.ResponseCode switch
+			{
+				"99000" => Ok(result),
+				"AX1003" => StatusCode(StatusCodes.Status403Forbidden, result),
+				"99107" => Unauthorized(result),
+				"99161" => StatusCode(StatusCodes.Status409Conflict, result),
+				_ => BadRequest(result)
+			};
 		}
 		[HttpPost("getState")]
 

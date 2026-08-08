@@ -21,6 +21,8 @@ namespace TechHub.Core.Entities
 		public bool ISActive { get; set; }
 		public string? LogoUrl { get; set;}
 		public string? LogoPublicId { get; set; }
+		public Guid? CreatedBy { get; set; }
+		public Guid? ModifiedBy { get; set; }
 
 	}
 }
