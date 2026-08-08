@@ -125,71 +125,96 @@ namespace TechHub.Service.Service
 			_connString = _configuration.GetConnectionString("DbConnectionString") ?? null;
 		}
 
-		public async Task<BaseResponse> CreateSchool(SchoolViewModel schoolViewModel)
+		public async Task<BaseResponse> CreateSchool(SchoolViewModel schoolViewModel, AuthenticatedUserClaims claims)
 		{
-			try
+			using (LogContext.PushProperty("RequestedBy", claims?.UserId))
 			{
-				if (schoolViewModel is null)
+				try
 				{
-					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "object is empty", Status = "failed" };
+					if (claims is null || !Guid.TryParse(claims.UserId, out var platformUserId))
+					{
+						return new BaseResponse { ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid authentication. A valid platform user token is required.", Status = "failed" };
+					}
+
+					if (claims.Role != "PlatformAdmin" && claims.Role != "PlatformSuperAdmin")
+					{
+						return new BaseResponse { ResponseCode = ResponseCode.Forbidden, ResponseMessage = "You do not have permission to create a school", Status = "failed" };
+					}
+
+					if (schoolViewModel is null)
+					{
+						return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = "object is empty", Status = "failed" };
+					}
+					var school = _mapper.Map<School>(schoolViewModel);
+					school.CreatedBy = platformUserId;
+					school.ModifiedBy = platformUserId;
+					var getNullProperties = HelperUtil.GetNullPorpertiesName(school);
+					if(getNullProperties != string.Empty)
+					{
+						return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = getNullProperties + " cannot be null", Status = "failed" };
+					}
+
+					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+					var insertDict = new Dictionary<string, object> { { "CreationDate", now }, { "ModifiedDate", now }, { "Id", school.Id },
+						{ "SchoolName", school.SchoolName}, { "Location", school.Location}, {"CountryId", school.CountryId }, {"StateId", school.StateId },
+						{ "State", (object?)school.State ?? DBNull.Value }, {"Address", school.Address }, { "HasBranch", school.HasBranch}, { "IsActive", school.ISActive},
+						{ "CreatedBy", platformUserId }, { "ModifiedBy", platformUserId } };
+					if(_connString == null)
+					{
+						return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "Connection string not set", Status = "failed" };
+					}
+					var schoolCodeInsertDict = new Dictionary<string, object> { { "SchoolId", school.Id }, { "Code", school.Id } };
+
+					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+					//await _schCommandRespository.Create(school);
+					await _schCommandRespository.Create(scope.Transaction, scope.Connection, insertDict);
+					await _schCodeCommandRespository.Create(scope.Transaction, scope.Connection, schoolCodeInsertDict);
+
+					//if (returnedId != null)
+					//{
+					//	var schoolCodeInsertDict = new Dictionary<string, object> { { "SchoolId", returnedId }, { "Code", returnedId } };
+
+
+					//	await _schCodeCommandRespository.Create(new SchoolCode { SchoolId = returnedId, Code = returnedId.ToString() });
+					//}
+					await scope.CommitAsync();
+					//{
+
+					//	await
+					//}
+
+
+					await _platformAuditService.LogAsync(
+						claims,
+						PlatformAuditAction.SchoolCreated,
+						PlatformAuditAction.EntitySchool,
+						school.Id,
+						$"School '{school.SchoolName}' created",
+						new { Location = school.Location, CountryId = school.CountryId, StateId = school.StateId });
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "object created successfully",
+						Status = "successful",
+						Data = new { SchoolId = school.Id }
+					};
 				}
-				var school = _mapper.Map<School>(schoolViewModel);
-				var getNullProperties = HelperUtil.GetNullPorpertiesName(school);
-				if(getNullProperties != string.Empty)
+				catch (SqlException ex)
 				{
-					return new BaseResponse { ResponseCode = ResponseCode.BadRequest, ResponseMessage = getNullProperties + " cannot be null", Status = "failed" };
+					if (ex.Message.ToLower().Contains("duplicate"))
+					{
+						return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "School information exists", Status = "failed" };
+					}
+					return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
+					
+
 				}
-				var insertDict = new Dictionary<string, object> { { "CreationDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss")}, { "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss")}, { "Id", school.Id },
-					{ "SchoolName", school.SchoolName}, { "Location", school.Location}, {"CountryId", school.CountryId }, {"StateId", school.StateId },
-					{ "State", (object?)school.State ?? DBNull.Value }, {"Address", school.Address }, { "HasBranch", school.HasBranch}, { "IsActive", school.ISActive} };
-				if(_connString == null)
+				catch (Exception ex)
 				{
-					return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "Connection string not set", Status = "failed" };
+					return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
 				}
-				var schoolCodeInsertDict = new Dictionary<string, object> { { "SchoolId", school.Id }, { "Code", school.Id } };
-
-				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
-				//await _schCommandRespository.Create(school);
-				await _schCommandRespository.Create(scope.Transaction, scope.Connection, insertDict);
-				await _schCodeCommandRespository.Create(scope.Transaction, scope.Connection, schoolCodeInsertDict);
-
-				//if (returnedId != null)
-				//{
-				//	var schoolCodeInsertDict = new Dictionary<string, object> { { "SchoolId", returnedId }, { "Code", returnedId } };
-
-
-				//	await _schCodeCommandRespository.Create(new SchoolCode { SchoolId = returnedId, Code = returnedId.ToString() });
-				//}
-				await scope.CommitAsync();
-				//{
-
-				//	await
-				//}
-
-
-				return new BaseResponse
-				{
-					ResponseCode = ResponseCode.successful,
-					ResponseMessage = "object created successfully",
-					Status = "successful",
-					Data = new { SchoolId = school.Id }
-				};
 			}
-			catch (SqlException ex)
-			{
-				if (ex.Message.ToLower().Contains("duplicate"))
-				{
-					return new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = "School information exists", Status = "failed" };
-				}
-				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
-				
-
-			}
-			catch (Exception ex)
-			{
-				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = ex.Message, Status = "failed" };
-			}
-
 		}
 		
 		public async Task<BaseResponse> GetAllStates(int countryId)
@@ -5050,7 +5075,8 @@ namespace TechHub.Service.Service
 					{ "CountryId", model.CountryId }, { "StateId", model.StateId },
 					{ "State", (object?)model.State ?? DBNull.Value },
 					{ "Address", model.Address }, { "HasBranch", model.HasBranch },
-					{ "LogoUrl", (object?)model.LogoUrl ?? DBNull.Value }, { "IsActive", true }
+					{ "LogoUrl", (object?)model.LogoUrl ?? DBNull.Value }, { "IsActive", true },
+					{ "CreatedBy", platformUserId }, { "ModifiedBy", platformUserId }
 				};
 
 					using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
@@ -5379,6 +5405,9 @@ _logger.Information(
 			if (!Guid.TryParse(claims.UserId, out var platformUserId))
 				return new BaseResponse { ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid authentication", Status = "failed" };
 
+			if (claims.Role != "PlatformAdmin" && claims.Role != "PlatformSuperAdmin")
+				return new BaseResponse { ResponseCode = ResponseCode.Forbidden, ResponseMessage = "You do not have permission to approve school registration", Status = "failed" };
+
 			using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
 			try
 			{
@@ -5409,7 +5438,8 @@ _logger.Information(
 					{ "Address", request.Address }, { "HasBranch", request.HasBranch },
 					{ "LogoUrl", (object?)request.LogoUrl ?? DBNull.Value },
 					{ "LogoPublicId", (object?)request.LogoPublicId ?? DBNull.Value },
-					{ "IsActive", true }
+					{ "IsActive", true },
+					{ "CreatedBy", platformUserId }, { "ModifiedBy", platformUserId }
 				};
 				await _schCommandRespository.Create(scope.Transaction, scope.Connection, schoolInsertDict);
 
@@ -5546,6 +5576,9 @@ _logger.Information(
 			if (!Guid.TryParse(claims.UserId, out var platformUserId))
 				return new BaseResponse { ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid authentication", Status = "failed" };
 
+			if (claims.Role != "PlatformAdmin" && claims.Role != "PlatformSuperAdmin")
+				return new BaseResponse { ResponseCode = ResponseCode.Forbidden, ResponseMessage = "You do not have permission to reject school registration", Status = "failed" };
+
 			try
 			{
 				var request = await _registrationRequestQueryRepository.Get(requestId);
@@ -5590,6 +5623,12 @@ _logger.Information(
 		{
 			try
 			{
+				if (claims is null || !Guid.TryParse(claims.UserId, out _))
+					return new BaseResponse { ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid authentication", Status = "failed" };
+
+				if (claims.Role != "PlatformAdmin" && claims.Role != "PlatformSuperAdmin")
+					return new BaseResponse { ResponseCode = ResponseCode.Forbidden, ResponseMessage = "You do not have permission to edit school info", Status = "failed" };
+
 				using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
 
 				var school = await conn.QueryFirstOrDefaultAsync<dynamic>(
@@ -5614,6 +5653,10 @@ _logger.Information(
 				};
 
 				var now = DateTime.UtcNow;
+				var actorId = claims is not null && Guid.TryParse(claims.UserId, out var parsedActorId)
+					? (Guid?)parsedActorId
+					: null;
+
 				await conn.ExecuteAsync(@"
 					UPDATE School SET
 						SchoolName = COALESCE(@SchoolName, SchoolName),
@@ -5626,6 +5669,7 @@ _logger.Information(
 						ISActive = @IsActive,
 						LogoUrl = COALESCE(@LogoUrl, LogoUrl),
 						LogoPublicId = COALESCE(@LogoPublicId, LogoPublicId),
+						ModifiedBy = @ModifiedBy,
 						ModifiedDate = @Now
 					WHERE Id = @Id",
 					new
@@ -5641,6 +5685,7 @@ _logger.Information(
 						IsActive = model.IsActive ?? before.ISActive,
 						LogoUrl = model.LogoUrl,
 						LogoPublicId = model.LogoPublicId,
+						ModifiedBy = actorId,
 						Now = now
 					});
 
