@@ -71,8 +71,9 @@ TechhubMS.sln
 
 `PlatformAuditLog` table records "who did what" on platform-level actions:
 
-- **Action / EntityType constants**: `PlatformAuditAction` (e.g. `ApproveSchool`, `RejectSchool`, `EditSchool`, `CreatePlatformUser`)
+- **Action / EntityType constants**: `PlatformAuditAction` (e.g. `CreateSchool`, `ApproveSchool`, `RejectSchool`, `EditSchool`, `CreatePlatformUser`)
 - Written by `IPlatformAuditService` (Dapper-backed) for:
+  - School **create** (`POST /api/School/createschool`) — logged in `SchoolService.CreateSchool`
   - School registration **approve** and **reject** — logged in `SchoolService`
   - School **info edit** — logged in `SchoolService.EditSchoolInfoAsync`
   - Platform user creation — logged in `PlatformAdminController`
@@ -138,7 +139,7 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 
 | Table | Key Columns |
 |-------|-------------|
-| `School` | Id, SchoolName, Location, CountryId, StateId, Address, IsActive |
+| `School` | Id, SchoolName, Location, CountryId, StateId, Address, IsActive, LogoUrl, LogoPublicId, Identifier, State, CreatedBy, ModifiedBy |
 | `SchoolCode` | SchoolId, Code (used for student registration codes) |
 | `TenantInfo` | Id, SchoolId, Identifier (subdomain), IsActive |
 | `Users` | Id, FirstName, MiddleName, LastName, EmailAddress, UserName, HashPassword (SHA256), SchoolId, RoleId, IsActive |
@@ -166,7 +167,7 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 |-------|-------------|
 | `LessonContent` | Id, SchoolId, ClassroomId, SubjectId, TopicId, Aim, Description, Status (Draft\|PendingApproval\|Approved\|Rejected\|Published), QuizCode, CreatedBy |
 | `LessonMedia` | Id, LessonId, MediaUrl, MediaType |
-| `ClassPreparation` | Id, SchoolId, TeacherId, Status (Draft\|Pending\|Approved\|Rejected\|InProgress\|Completed), SubmittedAt, ApprovedAt |
+| `ClassPreparation` | Id, SchoolId, TeacherId, Status (Draft\|Pending\|Approved\|Rejected\|InProgress\|Completed), SubmittedAt, ApprovedAt, ApprovalNotes, ApprovalTimeMinutes, IsUrgent, NeedsReview, AutoApprovalEligible |
 | `ClassPreparationMedia` | Id, ClassPreparationId, MediaUrl, MediaType |
 
 ### Quiz System
@@ -218,6 +219,13 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 |-------|-------------|
 | `StudentLessonProgress` | Id, StudentId, LessonId, SchoolId, WatchedAt |
 
+### Attendance
+
+| Table | Key Columns |
+|-------|-------------|
+| `AttendanceSession` | Id, SchoolId, TeacherId, AttendanceType (0=Class\|1=Subject\|2=SubTopic), ClassroomId, SubjectId, SubTopicId, ClassPreparationId, Status (0=Open\|1=Closed\|2=Cancelled), StartedAt, EndedAt, CreatedBy |
+| `AttendanceRecord` | Id, SessionId, StudentId, SchoolId, IsPresent, IsManual, AttendedAt, CreatedBy |
+
 ---
 
 ## API Endpoints
@@ -246,8 +254,12 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| POST | `/api/School/createschool` | PlatformAdmin/SuperAdmin | Create school record |
-| POST | `/api/School/provision` | PlatformAdmin/SuperAdmin | **Full provision**: school + tenant + admin user + email |
+| POST | `/api/School/createschool` | PlatformAdmin/PlatformSuperAdmin | Create school record (platform JWT; token UserId stored as `CreatedBy`/`ModifiedBy`; audit-logged as `CreateSchool`) |
+| POST | `/api/School/provision` | PlatformAdmin/PlatformSuperAdmin | **Full provision**: school + tenant + admin user + email |
+| POST | `/api/School/register` | Anonymous | Submit a school registration request (school self-signup) |
+| GET | `/api/School/registration-requests` | Anonymous | List registration requests (`?status=Pending`) |
+| POST | `/api/School/approve/{requestId}` | PlatformAdmin/PlatformSuperAdmin | Approve + provision a registration request (`ApprovedBy` stored; audit-logged) |
+| POST | `/api/School/reject/{requestId}` | PlatformAdmin/PlatformSuperAdmin | Reject a registration request (`reason` in body) |
 | POST | `/api/School/getState` | - | Get states by country |
 | POST | `/api/School/createschoolclassroom` | JWT | Create classroom |
 | POST | `/api/School/registersubject` | JWT | Register subject |
@@ -261,7 +273,7 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | POST | `/api/School/subtopics` | JWT | Create subtopic |
 | GET | `/api/School/subtopics/{topicId}` | JWT | Subtopics by topic |
 | GET | `/api/School/classroom/{id}/curriculum` | JWT | Classroom curriculum |
-| PUT | `/api/School/edit/{schoolId}` | PlatformAdmin/SuperAdmin | Edit school info (audit-logged) |
+| PUT | `/api/School/edit/{schoolId}` | PlatformAdmin/SuperAdmin | Edit school info (audit-logged; stores `ModifiedBy`) |
 
 ### Lessons
 
@@ -332,6 +344,21 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | GET | `/api/board/session/{sessionId}/batch/{indexKey}` | Student | Get stroke batch |
 | POST | `/api/board/student/session/{sessionId}/batch` | Student | Submit assessment answer board stroke batch (upsert by boardIndex) |
 | GET | `/api/board/student/session/{sessionId}/board/{boardIndex}` | Student | Get assessment answer board strokes |
+
+### Attendance
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/Attendance/session/start` | Teacher roles (`ClassTeacher`/`SubjectTeacher`/`HeadTeacher`/Admin/SuperAdmin) | Start session; **Class → ClassTeacher only**, **Subject/SubTopic → SubjectTeacher only**, admins/HeadTeacher bypass |
+| POST | `/api/Attendance/session/{sessionId}/end` | Teacher roles | Close session (owner or admin) |
+| POST | `/api/Attendance/session/{sessionId}/scan` | Teacher roles | Mark student present via QR (`{ QrToken }`); rejects non-enrolled / non-eligible students |
+| GET | `/api/Attendance/session/{sessionId}` | JWT | Get session + records |
+| GET | `/api/Attendance/session/{sessionId}/summary` | Teacher roles | Present/absent breakdown vs roster |
+| GET | `/api/Attendance/sessions` | Teacher roles | Caller's sessions (`?attendanceType&pageNumber&pageSize`) |
+| GET | `/api/Attendance/student/{studentId}/qrcode` | JWT (staff or self) | Student QR PNG |
+| GET | `/api/Attendance/student/{studentId}/qr-token` | JWT (staff or self) | Student QR token JSON |
+| GET | `/api/Attendance/student/me/qrcode` / `student/me/qr-token` | Student | Own QR |
+| GET | `/api/Attendance/student/{studentId}/attendance` | JWT (staff or self) | Student attendance history |
 
 ### Question Bank
 
@@ -529,6 +556,8 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 
 ### Background Jobs (Hangfire)
 - `MediaUploadJob`, `MediaCleanupJob`, `AIContentAnalysisJob`, `ThumbnailGeneratorJob`, `PerformanceAggregationJob`
+- **IMPORTANT:** Use DI-based Hangfire APIs (`IRecurringJobManager`, `IBackgroundJobClient`) — never the static `RecurringJob`/`BackgroundJob` helpers. `JobStorage.Current` is only set after the `BackgroundJobServer` hosted service starts (async, after `app.Run()`). Calling a static Hangfire API synchronously at startup (e.g. in `Program.cs`) throws "Current JobStorage instance has not been initialized". `IBackgroundJobService` (`TechHub.Background/Services/BackgroundJobService.cs`) injects `IRecurringJobManager` in its constructor and uses it for `ScheduleMediaCleanup()`. The app's startup Hangfire recurring registration is safe because it resolves the concrete service through DI.
+- **Startup registration:** In `Program.cs` recurring jobs are registered in a scope right after `app.Build()` via the DI-injected `IBackgroundJobService` — do NOT switch that back to the static API.
 
 ### Background Workers (Hosted Services)
 - `QuestionJobWorker` (30s cycle) — processes AI extraction jobs
@@ -547,6 +576,9 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 
 - **No cancellation endpoint exists** for in-progress assessment attempts. To force a fresh attempt, manually update `AssessmentAttempt.Status` to `Abandoned` or delete the row.
 - **Lesson "watched" tracking** uses the `StudentLessonProgress` table. The `POST /api/performance/lesson/{lessonId}/watch` endpoint creates a row there.
+- **School actor tracking**: `School.CreatedBy` / `School.ModifiedBy` (platform user Id) are populated in `CreateSchool`, `ProvisionSchool`, `ApproveRegistrationRequest`, and `EditSchoolInfoAsync`. `createschool` requires a `PlatformAdmin`/`PlatformSuperAdmin` JWT (previously anonymous).
+- **Attendance role gating**: `StartSessionAsync` enforces **Class → `ClassTeacher` only** and **Subject/SubTopic → `SubjectTeacher` only** (via `CanManageClassroomAsync`/`CanTeachSubjectAsync`). `HeadTeacher`/`Administrator`/`SuperAdministrator` bypass both.
+- **Attendance eligibility**: `ScanStudentAsync` rejects any student not enrolled before marking present — **Class** requires `StudentClassroom` membership; **Subject/SubTopic** requires enrollment in the subject (via `ClassroomSubject` or `StudentMinorSubject`) and, when the session has a `ClassroomId`, membership in that classroom too.
 - **First PlatformSuperAdmin is seeded** via `Script_Initial.sql` (consolidated from all migration scripts) with username `platformadmin` and password `Platform@123`.
 - **ProvisisonSchool flow**: Creates School → SchoolCode → TenantInfo → Users (Administrator) → AdminPermissions (FullAdmin) → sends welcome email, all in one transaction.
 - **Assessment expiry**: `AssessmentConfig.ExpiresAt` is checked in `StartAttempt`. If expired, returns "Assessment has expired" error.

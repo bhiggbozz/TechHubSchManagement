@@ -134,6 +134,58 @@ namespace TechhubMS.Controllers
 			});
 		}
 
+		/// <summary>Get an admin attendance analytics report per class / per subject for the selected period.</summary>
+		[HttpGet("analytics")]
+		[Authorize(Roles = "HeadTeacher,Administrator,SuperAdministrator")]
+		public async Task<IActionResult> GetAnalytics(
+			[FromQuery] int period,
+			[FromQuery] string? date,
+			[FromQuery] string? month,
+			[FromQuery] string? fromMonth,
+			[FromQuery] string? toMonth,
+			[FromQuery] int? attendanceType,
+			[FromQuery] Guid? classroomId,
+			[FromQuery] Guid? subjectId)
+		{
+			return Map(await _attendanceService.GetAttendanceAnalyticsAsync(
+				User.GetAuthenticatedUserClaims(), period, date, month, fromMonth, toMonth, attendanceType, classroomId, subjectId));
+		}
+
+		/// <summary>List students who were absent in a class or subject over the selected period.</summary>
+		[HttpGet("absent-students")]
+		[Authorize(Roles = "HeadTeacher,Administrator,SuperAdministrator")]
+		public async Task<IActionResult> GetAbsentStudents(
+			[FromQuery] int attendanceType,
+			[FromQuery] Guid? classroomId,
+			[FromQuery] Guid? subjectId,
+			[FromQuery] int period,
+			[FromQuery] string? date,
+			[FromQuery] string? month,
+			[FromQuery] string? fromMonth,
+			[FromQuery] string? toMonth)
+		{
+			return Map(await _attendanceService.GetAbsentStudentsAsync(
+				User.GetAuthenticatedUserClaims(), attendanceType, classroomId, subjectId, period, date, month, fromMonth, toMonth));
+		}
+
+		/// <summary>Get a student's attendance stats for a class or subject over the selected period.</summary>
+		[HttpGet("student/{studentId:guid}/stats")]
+		[Authorize(Roles = "HeadTeacher,Administrator,SuperAdministrator")]
+		public async Task<IActionResult> GetStudentStats(
+			Guid studentId,
+			[FromQuery] int attendanceType,
+			[FromQuery] Guid? classroomId,
+			[FromQuery] Guid? subjectId,
+			[FromQuery] int period,
+			[FromQuery] string? date,
+			[FromQuery] string? month,
+			[FromQuery] string? fromMonth,
+			[FromQuery] string? toMonth)
+		{
+			return Map(await _attendanceService.GetStudentAttendanceStatsAsync(
+				User.GetAuthenticatedUserClaims(), studentId, attendanceType, classroomId, subjectId, period, date, month, fromMonth, toMonth));
+		}
+
 		/// <summary>A student's attendance history (self or staff).</summary>
 		[HttpGet("student/{studentId:guid}/attendance")]
 		public async Task<IActionResult> GetStudentAttendance(Guid studentId)
