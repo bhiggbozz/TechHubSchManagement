@@ -2,6 +2,7 @@ using Serilog;
 using Serilog.Context;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -626,6 +627,282 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public async Task<BaseResponse> GetAttendanceAnalyticsAsync(AuthenticatedUserClaims claims, int period, string? date, string? month, string? fromMonth, string? toMonth, int? attendanceType, Guid? classroomId, Guid? subjectId)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims?.UserId))
+			{
+				try
+				{
+					var schoolId = ParseSchoolId(claims);
+					if (schoolId == Guid.Empty)
+						return Fail(ResponseCode.Unauthorized, "Invalid school context");
+
+					if (!IsAdminRole(claims?.Role))
+						return Fail(ResponseCode.Forbidden, "Only administrators can view attendance analytics");
+
+					if (!Enum.IsDefined(typeof(AttendanceAnalyticsPeriod), period))
+						return Fail(ResponseCode.BadRequest, "Invalid period. Use Daily(0), Weekly(1), Monthly(2) or MonthlyRange(3)");
+
+					if (attendanceType.HasValue && !Enum.IsDefined(typeof(AttendanceType), attendanceType.Value))
+						return Fail(ResponseCode.BadRequest, "Invalid attendance type");
+
+					var buckets = BuildAnalyticsBuckets((AttendanceAnalyticsPeriod)period, date, month, fromMonth, toMonth);
+					if (buckets.Count == 0)
+						return Fail(ResponseCode.BadRequest, "Invalid date range. Provide date (yyyy-MM-dd) for daily/weekly, month (yyyy-MM) for monthly, or fromMonth/toMonth for a monthly range");
+
+					var from = buckets[0].From;
+					var to = buckets[^1].To;
+					var bucketExpr = buckets.Count == 1
+						? $"CASE WHEN s.StartedAt IS NOT NULL THEN N'{buckets[0].Label.Replace("'", "''")}' END"
+						: "SUBSTRING(s.StartedAt, 1, 7)";
+
+					var (classSql, classParams) = BuildClassAnalyticsSql(schoolId, bucketExpr, from, to, attendanceType, classroomId);
+					var classRows = (await _sessionQueryRepo.QueryAsync<AnalyticsRow>(classSql, classParams)).ToList();
+					var (subjectSql, subjectParams) = BuildSubjectAnalyticsSql(schoolId, bucketExpr, from, to, attendanceType, subjectId);
+					var subjectRows = (await _sessionQueryRepo.QueryAsync<AnalyticsRow>(subjectSql, subjectParams)).ToList();
+					var (totalsSql, totalsParams) = BuildTotalsSql(schoolId, bucketExpr, from, to, attendanceType, classroomId, subjectId);
+					var totalsRows = (await _sessionQueryRepo.QueryAsync<AnalyticsTotalsRow>(totalsSql, totalsParams)).ToList();
+
+					var analyticsBuckets = new List<AttendanceAnalyticsBucketDto>();
+					var overall = new AttendanceAnalyticsTotalsDto();
+					foreach (var bucket in buckets)
+					{
+						var bucketTotals = ToTotalsDto(totalsRows.FirstOrDefault(t => t.Bucket == bucket.Label));
+						analyticsBuckets.Add(new AttendanceAnalyticsBucketDto
+						{
+							Label = bucket.Label,
+							FromDate = bucket.From.Substring(0, 10),
+							ToDate = bucket.To.Substring(0, 10),
+							ByClass = classRows.Where(r => r.Bucket == bucket.Label).Select(MapAnalyticsRow).ToList(),
+							BySubject = subjectRows.Where(r => r.Bucket == bucket.Label).Select(MapAnalyticsRow).ToList(),
+							Totals = bucketTotals
+						});
+						overall.Sessions += bucketTotals.Sessions;
+						overall.Expected += bucketTotals.Expected;
+						overall.Present += bucketTotals.Present;
+					}
+					overall.Absent = Math.Max(0, overall.Expected - overall.Present);
+					overall.AttendanceRate = overall.Expected > 0 ? Math.Round((decimal)overall.Present / overall.Expected * 100, 1) : 0;
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = overall.Sessions > 0 ? "Attendance analytics retrieved" : "No attendance sessions found in the selected period",
+						Status = "successful",
+						Data = new AttendanceAnalyticsDto
+						{
+							Period = ((AttendanceAnalyticsPeriod)period).ToString(),
+							PeriodLabel = BuildPeriodLabel((AttendanceAnalyticsPeriod)period, buckets),
+							FromDate = buckets[0].From.Substring(0, 10),
+							ToDate = buckets[^1].To.Substring(0, 10),
+							Buckets = analyticsBuckets,
+							Totals = overall
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Attendance: error generating analytics for period {Period}", period);
+					return Fail(ResponseCode.ErrorOccured, "An error occurred while generating the attendance analytics");
+				}
+			}
+		}
+
+		#endregion
+
+		#region Analytics reports
+
+		public async Task<BaseResponse> GetAbsentStudentsAsync(AuthenticatedUserClaims claims, int attendanceType, Guid? classroomId, Guid? subjectId, int period, string? date, string? month, string? fromMonth, string? toMonth)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims?.UserId))
+			{
+				try
+				{
+					var schoolId = ParseSchoolId(claims);
+					if (schoolId == Guid.Empty)
+						return Fail(ResponseCode.Unauthorized, "Invalid school context");
+
+					if (!IsAdminRole(claims?.Role))
+						return Fail(ResponseCode.Forbidden, "Only administrators can view attendance reports");
+
+					if (attendanceType != (int)AttendanceType.Class && attendanceType != (int)AttendanceType.Subject)
+						return Fail(ResponseCode.BadRequest, "Invalid attendance type. Use Class(0) or Subject(1)");
+
+					if (!Enum.IsDefined(typeof(AttendanceAnalyticsPeriod), period))
+						return Fail(ResponseCode.BadRequest, "Invalid period. Use Daily(0), Weekly(1), Monthly(2) or MonthlyRange(3)");
+
+					var buckets = BuildAnalyticsBuckets((AttendanceAnalyticsPeriod)period, date, month, fromMonth, toMonth);
+					if (buckets.Count == 0)
+						return Fail(ResponseCode.BadRequest, "Invalid date range. Provide date (yyyy-MM-dd) for daily/weekly, month (yyyy-MM) for monthly, or fromMonth/toMonth for a monthly range");
+
+					var from = buckets[0].From;
+					var to = buckets[^1].To;
+
+					Guid? entityId = null;
+					string entityName = null;
+					if (attendanceType == (int)AttendanceType.Class)
+					{
+						if (!classroomId.HasValue)
+							return Fail(ResponseCode.BadRequest, "ClassroomId is required for class absence report");
+						var classroom = await _classroomQueryRepo.Get(classroomId.Value);
+						if (classroom is null || classroom.SchoolId != schoolId || !classroom.IsActive)
+							return Fail(ResponseCode.NotFound, "Classroom not found");
+						entityId = classroom.Id;
+						entityName = classroom.Name;
+					}
+					else
+					{
+						if (!subjectId.HasValue)
+							return Fail(ResponseCode.BadRequest, "SubjectId is required for subject absence report");
+						var subject = await _subjectQueryRepo.Get(subjectId.Value);
+						if (subject is null || subject.SchoolId != schoolId || !subject.IsActive)
+							return Fail(ResponseCode.NotFound, "Subject not found");
+						entityId = subject.Id;
+						entityName = subject.Subject;
+					}
+
+					var (sql, parameters) = BuildAbsentStudentsSql(schoolId, attendanceType, entityId.Value, from, to);
+					var students = (await _recordQueryRepo.QueryAsync<AttendanceStudentStatsDto>(sql, parameters)).ToList();
+					foreach (var student in students)
+						student.AttendanceRate = student.Sessions > 0 ? Math.Round((decimal)student.PresentCount / student.Sessions * 100, 1) : 0;
+
+					var totals = new AttendanceStudentStatsTotalsDto
+					{
+						Students = students.Count,
+						Sessions = students.Sum(s => s.Sessions),
+						PresentCount = students.Sum(s => s.PresentCount),
+						AbsentCount = students.Sum(s => s.AbsentCount)
+					};
+					totals.AttendanceRate = totals.Sessions > 0 ? Math.Round((decimal)totals.PresentCount / totals.Sessions * 100, 1) : 0;
+
+					var totalStudents = await GetRosterCountAsync(schoolId, attendanceType, entityId.Value);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = students.Count > 0 ? $"{students.Count} student(s) absent" : "No absent students found",
+						Status = "successful",
+						Data = new AttendanceAbsentStudentsDto
+						{
+							AttendanceType = attendanceType,
+							AttendanceTypeName = ((AttendanceType)attendanceType).ToString(),
+							ClassroomId = attendanceType == (int)AttendanceType.Class ? entityId : null,
+							ClassroomName = attendanceType == (int)AttendanceType.Class ? entityName : null,
+							SubjectId = attendanceType == (int)AttendanceType.Subject ? entityId : null,
+							SubjectName = attendanceType == (int)AttendanceType.Subject ? entityName : null,
+							Period = ((AttendanceAnalyticsPeriod)period).ToString(),
+							PeriodLabel = BuildPeriodLabel((AttendanceAnalyticsPeriod)period, buckets),
+							FromDate = from.Substring(0, 10),
+							ToDate = to.Substring(0, 10),
+							TotalStudents = totalStudents,
+							Sessions = totals.Sessions,
+							Students = students,
+							Totals = totals
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Attendance: error generating absent-students report for type {Type}", attendanceType);
+					return Fail(ResponseCode.ErrorOccured, "An error occurred while generating the absent students report");
+				}
+			}
+		}
+
+		public async Task<BaseResponse> GetStudentAttendanceStatsAsync(AuthenticatedUserClaims claims, Guid studentId, int attendanceType, Guid? classroomId, Guid? subjectId, int period, string? date, string? month, string? fromMonth, string? toMonth)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims?.UserId))
+			{
+				try
+				{
+					var schoolId = ParseSchoolId(claims);
+					if (schoolId == Guid.Empty)
+						return Fail(ResponseCode.Unauthorized, "Invalid school context");
+
+					if (!IsAdminRole(claims?.Role))
+						return Fail(ResponseCode.Forbidden, "Only administrators can view attendance reports");
+
+					if (attendanceType != (int)AttendanceType.Class && attendanceType != (int)AttendanceType.Subject)
+						return Fail(ResponseCode.BadRequest, "Invalid attendance type. Use Class(0) or Subject(1)");
+
+					if (!Enum.IsDefined(typeof(AttendanceAnalyticsPeriod), period))
+						return Fail(ResponseCode.BadRequest, "Invalid period. Use Daily(0), Weekly(1), Monthly(2) or MonthlyRange(3)");
+
+					var buckets = BuildAnalyticsBuckets((AttendanceAnalyticsPeriod)period, date, month, fromMonth, toMonth);
+					if (buckets.Count == 0)
+						return Fail(ResponseCode.BadRequest, "Invalid date range. Provide date (yyyy-MM-dd) for daily/weekly, month (yyyy-MM) for monthly, or fromMonth/toMonth for a monthly range");
+
+					var student = await _userQueryRepo.Get(studentId);
+					if (student is null || student.SchoolId != schoolId || !student.IsActive)
+						return Fail(ResponseCode.NotFound, "Student not found in this school");
+
+					var from = buckets[0].From;
+					var to = buckets[^1].To;
+
+					Guid? entityId = null;
+					string entityName = null;
+					if (attendanceType == (int)AttendanceType.Class)
+					{
+						if (!classroomId.HasValue)
+							return Fail(ResponseCode.BadRequest, "ClassroomId is required for class attendance stats");
+						var classroom = await _classroomQueryRepo.Get(classroomId.Value);
+						if (classroom is null || classroom.SchoolId != schoolId || !classroom.IsActive)
+							return Fail(ResponseCode.NotFound, "Classroom not found");
+						entityId = classroom.Id;
+						entityName = classroom.Name;
+					}
+					else
+					{
+						if (!subjectId.HasValue)
+							return Fail(ResponseCode.BadRequest, "SubjectId is required for subject attendance stats");
+						var subject = await _subjectQueryRepo.Get(subjectId.Value);
+						if (subject is null || subject.SchoolId != schoolId || !subject.IsActive)
+							return Fail(ResponseCode.NotFound, "Subject not found");
+						entityId = subject.Id;
+						entityName = subject.Subject;
+					}
+
+					var (sql, parameters) = BuildStudentStatsSql(schoolId, studentId, attendanceType, entityId.Value, from, to);
+					var row = (await _recordQueryRepo.QueryAsync<StudentStatsRow>(sql, parameters)).FirstOrDefault();
+					var sessions = row?.Sessions ?? 0;
+					var presentCount = row?.PresentCount ?? 0;
+					var absentCount = row?.AbsentCount ?? 0;
+					var rate = sessions > 0 ? Math.Round((decimal)presentCount / sessions * 100, 1) : 0;
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = sessions > 0 ? "Student attendance stats retrieved" : "No attendance sessions found for this student",
+						Status = "successful",
+						Data = new AttendanceStudentStatsResponseDto
+						{
+							StudentId = studentId,
+							StudentName = $"{student.FirstName} {student.LastName}".Trim(),
+							AttendanceType = attendanceType,
+							AttendanceTypeName = ((AttendanceType)attendanceType).ToString(),
+							ClassroomId = attendanceType == (int)AttendanceType.Class ? entityId : null,
+							ClassroomName = attendanceType == (int)AttendanceType.Class ? entityName : null,
+							SubjectId = attendanceType == (int)AttendanceType.Subject ? entityId : null,
+							SubjectName = attendanceType == (int)AttendanceType.Subject ? entityName : null,
+							Period = ((AttendanceAnalyticsPeriod)period).ToString(),
+							PeriodLabel = BuildPeriodLabel((AttendanceAnalyticsPeriod)period, buckets),
+							FromDate = from.Substring(0, 10),
+							ToDate = to.Substring(0, 10),
+							Sessions = sessions,
+							PresentCount = presentCount,
+							AbsentCount = absentCount,
+							AttendanceRate = rate
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Attendance: error getting stats for student {StudentId}", studentId);
+					return Fail(ResponseCode.ErrorOccured, "An error occurred while retrieving the student attendance stats");
+				}
+			}
+		}
+
 		#endregion
 
 		#region Private helpers
@@ -680,6 +957,331 @@ namespace TechHub.Service.Service
 			using var qrData = generator.CreateQrCode(content, QRCoder.QRCodeGenerator.ECCLevel.Q);
 			using var qrCode = new QRCoder.PngByteQRCode(qrData);
 			return qrCode.GetGraphic(20);
+		}
+
+		private static List<(string Label, string From, string To)> BuildAnalyticsBuckets(AttendanceAnalyticsPeriod period, string? date, string? month, string? fromMonth, string? toMonth)
+		{
+			var format = CultureInfo.InvariantCulture;
+			switch (period)
+			{
+				case AttendanceAnalyticsPeriod.Daily:
+					if (string.IsNullOrWhiteSpace(date) || !DateTime.TryParseExact(date, "yyyy-MM-dd", format, DateTimeStyles.None, out var day))
+						return new List<(string, string, string)>();
+					return new List<(string, string, string)>
+					{
+						(day.ToString("yyyy-MM-dd"), day.ToString("yyyy-MM-dd 00:00:00"), day.ToString("yyyy-MM-dd 23:59:59"))
+					};
+
+				case AttendanceAnalyticsPeriod.Weekly:
+					if (string.IsNullOrWhiteSpace(date) || !DateTime.TryParseExact(date, "yyyy-MM-dd", format, DateTimeStyles.None, out var weekDay))
+						return new List<(string, string, string)>();
+					var weekStart = weekDay.AddDays(-(((int)weekDay.DayOfWeek + 6) % 7));
+					var weekEnd = weekStart.AddDays(6);
+					return new List<(string, string, string)>
+					{
+						($"{weekStart:yyyy-MM-dd} - {weekEnd:yyyy-MM-dd}", weekStart.ToString("yyyy-MM-dd 00:00:00"), weekEnd.ToString("yyyy-MM-dd 23:59:59"))
+					};
+
+				case AttendanceAnalyticsPeriod.Monthly:
+					if (string.IsNullOrWhiteSpace(month) || !DateTime.TryParseExact(month, "yyyy-MM", format, DateTimeStyles.None, out var m))
+						return new List<(string, string, string)>();
+					var first = new DateTime(m.Year, m.Month, 1);
+					var last = first.AddMonths(1).AddDays(-1);
+					return new List<(string, string, string)>
+					{
+						(m.ToString("yyyy-MM"), first.ToString("yyyy-MM-dd 00:00:00"), last.ToString("yyyy-MM-dd 23:59:59"))
+					};
+
+				case AttendanceAnalyticsPeriod.MonthlyRange:
+					if (string.IsNullOrWhiteSpace(fromMonth) || string.IsNullOrWhiteSpace(toMonth)
+						|| !DateTime.TryParseExact(fromMonth, "yyyy-MM", format, DateTimeStyles.None, out var from)
+						|| !DateTime.TryParseExact(toMonth, "yyyy-MM", format, DateTimeStyles.None, out var to))
+						return new List<(string, string, string)>();
+					var bucketList = new List<(string, string, string)>();
+					for (var cursor = new DateTime(from.Year, from.Month, 1); cursor <= new DateTime(to.Year, to.Month, 1); cursor = cursor.AddMonths(1))
+						bucketList.Add((cursor.ToString("yyyy-MM"), cursor.ToString("yyyy-MM-dd 00:00:00"), cursor.AddMonths(1).AddDays(-1).ToString("yyyy-MM-dd 23:59:59")));
+					return bucketList;
+
+				default:
+					return new List<(string, string, string)>();
+			}
+		}
+
+		private static string BuildPeriodLabel(AttendanceAnalyticsPeriod period, List<(string Label, string From, string To)> buckets)
+		{
+			if (buckets.Count == 0)
+				return string.Empty;
+			return (period == AttendanceAnalyticsPeriod.MonthlyRange && buckets.Count > 1)
+				? $"{buckets[0].Label} to {buckets[^1].Label}"
+				: buckets[0].Label;
+		}
+
+		private (string Sql, Dictionary<string, object> Params) BuildClassAnalyticsSql(Guid schoolId, string bucketExpr, string from, string to, int? attendanceType, Guid? classroomId)
+		{
+			var parameters = new Dictionary<string, object> { { "SchoolId", schoolId }, { "From", from }, { "To", to } };
+			var conditions = new List<string>
+			{
+				"s.SchoolId = @SchoolId",
+				"s.ClassroomId IS NOT NULL",
+				"s.IsActive = 1",
+				"s.Status = 1",
+				"s.StartedAt >= @From",
+				"s.StartedAt <= @To"
+			};
+			if (attendanceType.HasValue) { conditions.Add("s.AttendanceType = @AttendanceType"); parameters["AttendanceType"] = attendanceType.Value; }
+			if (classroomId.HasValue) { conditions.Add("s.ClassroomId = @ClassroomId"); parameters["ClassroomId"] = classroomId.Value; }
+			var where = string.Join(" AND ", conditions);
+			var sql = $@"SELECT {bucketExpr} AS Bucket, s.ClassroomId AS Id, c.Name AS Name,
+						COUNT(s.Id) AS Sessions,
+						ISNULL(SUM(rosterCount.RosterSize), 0) AS Expected,
+						ISNULL(SUM(presentCount.Present), 0) AS Present
+					FROM dbo.AttendanceSession s
+					JOIN dbo.Classroom c ON c.Id = s.ClassroomId
+					LEFT JOIN (SELECT ClassroomId, COUNT(*) AS RosterSize FROM dbo.StudentClassroom
+								WHERE SchoolId = @SchoolId AND IsActive = 1 GROUP BY ClassroomId) rosterCount ON rosterCount.ClassroomId = s.ClassroomId
+					LEFT JOIN (SELECT SessionId, COUNT(*) AS Present FROM dbo.AttendanceRecord
+								WHERE SchoolId = @SchoolId AND IsPresent = 1 AND IsActive = 1 GROUP BY SessionId) presentCount ON presentCount.SessionId = s.Id
+					WHERE {where}
+					GROUP BY {bucketExpr}, s.ClassroomId, c.Name
+					ORDER BY c.Name ASC";
+			return (sql, parameters);
+		}
+
+		private (string Sql, Dictionary<string, object> Params) BuildSubjectAnalyticsSql(Guid schoolId, string bucketExpr, string from, string to, int? attendanceType, Guid? subjectId)
+		{
+			var parameters = new Dictionary<string, object> { { "SchoolId", schoolId }, { "From", from }, { "To", to } };
+			var conditions = new List<string>
+			{
+				"s.SchoolId = @SchoolId",
+				"s.SubjectId IS NOT NULL",
+				"s.IsActive = 1",
+				"s.Status = 1",
+				"s.StartedAt >= @From",
+				"s.StartedAt <= @To"
+			};
+			if (attendanceType.HasValue) { conditions.Add("s.AttendanceType = @AttendanceType"); parameters["AttendanceType"] = attendanceType.Value; }
+			if (subjectId.HasValue) { conditions.Add("s.SubjectId = @SubjectId"); parameters["SubjectId"] = subjectId.Value; }
+			var where = string.Join(" AND ", conditions);
+			var sql = $@"SELECT {bucketExpr} AS Bucket, s.SubjectId AS Id, sj.Subject AS Name,
+						COUNT(s.Id) AS Sessions,
+						ISNULL(SUM(CASE WHEN s.ClassroomId IS NOT NULL THEN classRoster.RosterSize ELSE subjectRoster.RosterSize END), 0) AS Expected,
+						ISNULL(SUM(presentCount.Present), 0) AS Present
+					FROM dbo.AttendanceSession s
+					JOIN dbo.Subjects sj ON sj.Id = s.SubjectId
+					LEFT JOIN (SELECT ClassroomId, COUNT(*) AS RosterSize FROM dbo.StudentClassroom
+								WHERE SchoolId = @SchoolId AND IsActive = 1 GROUP BY ClassroomId) classRoster ON classRoster.ClassroomId = s.ClassroomId
+					LEFT JOIN (SELECT SubjectId, COUNT(*) AS RosterSize FROM (
+									SELECT cs.SubjectId, sc.StudentId FROM dbo.StudentClassroom sc
+									JOIN dbo.ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+									WHERE cs.SchoolId = @SchoolId AND sc.IsActive = 1 AND cs.IsActive = 1
+									UNION
+									SELECT sms.SubjectId, sms.StudentId FROM dbo.StudentMinorSubject sms
+									WHERE sms.SchoolId = @SchoolId AND sms.IsActive = 1
+								) subRoster GROUP BY SubjectId) subjectRoster ON subjectRoster.SubjectId = s.SubjectId
+					LEFT JOIN (SELECT SessionId, COUNT(*) AS Present FROM dbo.AttendanceRecord
+								WHERE SchoolId = @SchoolId AND IsPresent = 1 AND IsActive = 1 GROUP BY SessionId) presentCount ON presentCount.SessionId = s.Id
+					WHERE {where}
+					GROUP BY {bucketExpr}, s.SubjectId, sj.Subject
+					ORDER BY sj.Subject ASC";
+			return (sql, parameters);
+		}
+
+		private (string Sql, Dictionary<string, object> Params) BuildTotalsSql(Guid schoolId, string bucketExpr, string from, string to, int? attendanceType, Guid? classroomId, Guid? subjectId)
+		{
+			var parameters = new Dictionary<string, object> { { "SchoolId", schoolId }, { "From", from }, { "To", to } };
+			var conditions = new List<string>
+			{
+				"s.SchoolId = @SchoolId",
+				"s.IsActive = 1",
+				"s.Status = 1",
+				"s.ClassroomId IS NOT NULL OR s.SubjectId IS NOT NULL",
+				"s.StartedAt >= @From",
+				"s.StartedAt <= @To"
+			};
+			if (attendanceType.HasValue) { conditions.Add("s.AttendanceType = @AttendanceType"); parameters["AttendanceType"] = attendanceType.Value; }
+			if (classroomId.HasValue) { conditions.Add("s.ClassroomId = @ClassroomId"); parameters["ClassroomId"] = classroomId.Value; }
+			if (subjectId.HasValue) { conditions.Add("s.SubjectId = @SubjectId"); parameters["SubjectId"] = subjectId.Value; }
+			var where = string.Join(" AND ", conditions);
+			var sql = $@"SELECT {bucketExpr} AS Bucket,
+						COUNT(s.Id) AS Sessions,
+						ISNULL(SUM(CASE WHEN s.ClassroomId IS NOT NULL THEN classRoster.RosterSize ELSE subjectRoster.RosterSize END), 0) AS Expected,
+						ISNULL(SUM(presentCount.Present), 0) AS Present
+					FROM dbo.AttendanceSession s
+					LEFT JOIN (SELECT ClassroomId, COUNT(*) AS RosterSize FROM dbo.StudentClassroom
+								WHERE SchoolId = @SchoolId AND IsActive = 1 GROUP BY ClassroomId) classRoster ON classRoster.ClassroomId = s.ClassroomId
+					LEFT JOIN (SELECT SubjectId, COUNT(*) AS RosterSize FROM (
+									SELECT cs.SubjectId, sc.StudentId FROM dbo.StudentClassroom sc
+									JOIN dbo.ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+									WHERE cs.SchoolId = @SchoolId AND sc.IsActive = 1 AND cs.IsActive = 1
+									UNION
+									SELECT sms.SubjectId, sms.StudentId FROM dbo.StudentMinorSubject sms
+									WHERE sms.SchoolId = @SchoolId AND sms.IsActive = 1
+								) subRoster GROUP BY SubjectId) subjectRoster ON subjectRoster.SubjectId = s.SubjectId
+					LEFT JOIN (SELECT SessionId, COUNT(*) AS Present FROM dbo.AttendanceRecord
+								WHERE SchoolId = @SchoolId AND IsPresent = 1 AND IsActive = 1 GROUP BY SessionId) presentCount ON presentCount.SessionId = s.Id
+					WHERE {where}
+					GROUP BY {bucketExpr}";
+			return (sql, parameters);
+		}
+
+		private static AttendanceAnalyticsTotalsDto ToTotalsDto(AnalyticsTotalsRow row)
+		{
+			var totals = new AttendanceAnalyticsTotalsDto
+			{
+				Sessions = row?.Sessions ?? 0,
+				Expected = row?.Expected ?? 0,
+				Present = row?.Present ?? 0
+			};
+			totals.Absent = Math.Max(0, totals.Expected - totals.Present);
+			totals.AttendanceRate = totals.Expected > 0 ? Math.Round((decimal)totals.Present / totals.Expected * 100, 1) : 0;
+			return totals;
+		}
+
+		private static AttendanceAnalyticsRowDto MapAnalyticsRow(AnalyticsRow row)
+		{
+			var dto = new AttendanceAnalyticsRowDto
+			{
+				Id = row.Id,
+				Name = row.Name,
+				Sessions = row.Sessions,
+				Expected = row.Expected,
+				Present = row.Present,
+				Absent = Math.Max(0, row.Expected - row.Present)
+			};
+			dto.AttendanceRate = dto.Expected > 0 ? Math.Round((decimal)dto.Present / dto.Expected * 100, 1) : 0;
+			return dto;
+		}
+
+		private class AnalyticsRow
+		{
+			public string Bucket { get; set; }
+			public Guid Id { get; set; }
+			public string Name { get; set; }
+			public int Sessions { get; set; }
+			public int Expected { get; set; }
+			public int Present { get; set; }
+		}
+
+		private class AnalyticsTotalsRow
+		{
+			public string Bucket { get; set; }
+			public int Sessions { get; set; }
+			public int Expected { get; set; }
+			public int Present { get; set; }
+		}
+
+		private (string Sql, Dictionary<string, object> Params) BuildAbsentStudentsSql(Guid schoolId, int attendanceType, Guid entityId, string from, string to)
+		{
+			var parameters = new Dictionary<string, object> { { "SchoolId", schoolId }, { "From", from }, { "To", to } };
+			if (attendanceType == (int)AttendanceType.Class)
+			{
+				parameters["ClassroomId"] = entityId;
+				var sql = @"SELECT u.Id AS StudentId, (u.FirstName + ' ' + u.LastName) AS StudentName,
+							COUNT(s.Id) AS Sessions,
+							SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END) AS AbsentCount,
+							SUM(CASE WHEN r.Id IS NOT NULL THEN 1 ELSE 0 END) AS PresentCount
+						FROM dbo.AttendanceSession s
+						JOIN dbo.StudentClassroom sc ON sc.ClassroomId = s.ClassroomId AND sc.SchoolId = @SchoolId AND sc.IsActive = 1
+						JOIN dbo.Users u ON u.Id = sc.StudentId AND u.IsActive = 1
+						LEFT JOIN dbo.AttendanceRecord r ON r.SessionId = s.Id AND r.StudentId = u.Id AND r.SchoolId = @SchoolId AND r.IsPresent = 1 AND r.IsActive = 1
+						WHERE s.SchoolId = @SchoolId AND s.AttendanceType = 0 AND s.ClassroomId = @ClassroomId AND s.IsActive = 1 AND s.Status = 1
+							AND s.StartedAt >= @From AND s.StartedAt <= @To
+						GROUP BY u.Id, u.FirstName, u.LastName
+						HAVING SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END) > 0
+						ORDER BY AbsentCount DESC, u.FirstName ASC";
+				return (sql, parameters);
+			}
+			else
+			{
+				parameters["SubjectId"] = entityId;
+				var sql = @"SELECT u.Id AS StudentId, (u.FirstName + ' ' + u.LastName) AS StudentName,
+							COUNT(s.Id) AS Sessions,
+							SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END) AS AbsentCount,
+							SUM(CASE WHEN r.Id IS NOT NULL THEN 1 ELSE 0 END) AS PresentCount
+						FROM dbo.AttendanceSession s
+						CROSS APPLY (
+							SELECT sc.StudentId FROM dbo.StudentClassroom sc
+							WHERE s.ClassroomId IS NOT NULL AND sc.ClassroomId = s.ClassroomId AND sc.SchoolId = @SchoolId AND sc.IsActive = 1
+							UNION
+							SELECT sc2.StudentId FROM dbo.StudentClassroom sc2
+							JOIN dbo.ClassroomSubject cs ON cs.ClassroomId = sc2.ClassroomId
+							WHERE s.ClassroomId IS NULL AND cs.SubjectId = s.SubjectId AND cs.SchoolId = @SchoolId AND sc2.IsActive = 1 AND cs.IsActive = 1
+							UNION
+							SELECT sms.StudentId FROM dbo.StudentMinorSubject sms
+							WHERE s.ClassroomId IS NULL AND sms.SubjectId = s.SubjectId AND sms.SchoolId = @SchoolId AND sms.IsActive = 1
+						) roster
+						JOIN dbo.Users u ON u.Id = roster.StudentId AND u.IsActive = 1
+						LEFT JOIN dbo.AttendanceRecord r ON r.SessionId = s.Id AND r.StudentId = u.Id AND r.SchoolId = @SchoolId AND r.IsPresent = 1 AND r.IsActive = 1
+						WHERE s.SchoolId = @SchoolId AND s.AttendanceType IN (1,2) AND s.SubjectId = @SubjectId AND s.IsActive = 1 AND s.Status = 1
+							AND s.StartedAt >= @From AND s.StartedAt <= @To
+						GROUP BY u.Id, u.FirstName, u.LastName
+						HAVING SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END) > 0
+						ORDER BY AbsentCount DESC, u.FirstName ASC";
+				return (sql, parameters);
+			}
+		}
+
+		private (string Sql, Dictionary<string, object> Params) BuildStudentStatsSql(Guid schoolId, Guid studentId, int attendanceType, Guid entityId, string from, string to)
+		{
+			var parameters = new Dictionary<string, object> { { "SchoolId", schoolId }, { "StudentId", studentId }, { "From", from }, { "To", to } };
+			if (attendanceType == (int)AttendanceType.Class)
+			{
+				parameters["ClassroomId"] = entityId;
+				var sql = @"SELECT COUNT(s.Id) AS Sessions,
+							ISNULL(SUM(CASE WHEN r.Id IS NULL THEN 0 ELSE 1 END), 0) AS PresentCount,
+							ISNULL(SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END), 0) AS AbsentCount
+						FROM dbo.AttendanceSession s
+						LEFT JOIN dbo.AttendanceRecord r ON r.SessionId = s.Id AND r.StudentId = @StudentId AND r.SchoolId = @SchoolId AND r.IsPresent = 1 AND r.IsActive = 1
+						WHERE s.SchoolId = @SchoolId AND s.AttendanceType = 0 AND s.ClassroomId = @ClassroomId AND s.IsActive = 1 AND s.Status = 1
+							AND s.StartedAt >= @From AND s.StartedAt <= @To
+							AND EXISTS (SELECT 1 FROM dbo.StudentClassroom sc WHERE sc.ClassroomId = s.ClassroomId AND sc.StudentId = @StudentId AND sc.SchoolId = @SchoolId AND sc.IsActive = 1)";
+				return (sql, parameters);
+			}
+			else
+			{
+				parameters["SubjectId"] = entityId;
+				var sql = @"SELECT COUNT(s.Id) AS Sessions,
+							ISNULL(SUM(CASE WHEN r.Id IS NULL THEN 0 ELSE 1 END), 0) AS PresentCount,
+							ISNULL(SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END), 0) AS AbsentCount
+						FROM dbo.AttendanceSession s
+						LEFT JOIN dbo.AttendanceRecord r ON r.SessionId = s.Id AND r.StudentId = @StudentId AND r.SchoolId = @SchoolId AND r.IsPresent = 1 AND r.IsActive = 1
+						WHERE s.SchoolId = @SchoolId AND s.AttendanceType IN (1,2) AND s.SubjectId = @SubjectId AND s.IsActive = 1 AND s.Status = 1
+							AND s.StartedAt >= @From AND s.StartedAt <= @To
+							AND (
+								EXISTS (SELECT 1 FROM dbo.StudentClassroom sc JOIN dbo.ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+										WHERE cs.SubjectId = s.SubjectId AND sc.StudentId = @StudentId AND sc.SchoolId = @SchoolId AND sc.IsActive = 1 AND cs.IsActive = 1)
+								OR EXISTS (SELECT 1 FROM dbo.StudentMinorSubject sms
+										WHERE sms.SubjectId = s.SubjectId AND sms.StudentId = @StudentId AND sms.SchoolId = @SchoolId AND sms.IsActive = 1)
+							)";
+				return (sql, parameters);
+			}
+		}
+
+		private async Task<int> GetRosterCountAsync(Guid schoolId, int attendanceType, Guid entityId)
+		{
+			if (attendanceType == (int)AttendanceType.Class)
+			{
+				return await _recordQueryRepo.CountAsync(
+					"SELECT COUNT(*) FROM dbo.StudentClassroom WHERE ClassroomId = @ClassroomId AND SchoolId = @SchoolId AND IsActive = 1",
+					new Dictionary<string, object> { { "ClassroomId", entityId }, { "SchoolId", schoolId } });
+			}
+			return await _recordQueryRepo.CountAsync(
+				@"SELECT COUNT(*) FROM (
+					SELECT sc.StudentId FROM dbo.StudentClassroom sc
+					JOIN dbo.ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
+					WHERE cs.SubjectId = @SubjectId AND cs.SchoolId = @SchoolId AND sc.IsActive = 1 AND cs.IsActive = 1
+					UNION
+					SELECT sms.StudentId FROM dbo.StudentMinorSubject sms
+					WHERE sms.SubjectId = @SubjectId AND sms.SchoolId = @SchoolId AND sms.IsActive = 1
+				) t",
+				new Dictionary<string, object> { { "SubjectId", entityId }, { "SchoolId", schoolId } });
+		}
+
+		private class StudentStatsRow
+		{
+			public int Sessions { get; set; }
+			public int PresentCount { get; set; }
+			public int AbsentCount { get; set; }
 		}
 
 		private async Task<bool> ClassroomExistsAsync(Guid classroomId, Guid schoolId)
