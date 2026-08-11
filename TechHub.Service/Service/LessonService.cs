@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using TechHub.BackgroundJobs.Interfaces;
 using TechHub.Core;
 using TechHub.Core.DTO;
 using TechHub.Core.Entities;
@@ -33,7 +34,7 @@ public class LessonService : ILessonService
 	private readonly IEmailService _emailService;
 	private readonly IConfiguration _configuration;	
 	private readonly ILogger _logger;
-
+	private readonly IBackgroundJobService _backgroundJobService;
 
 	public LessonService(
 	ICommandRespository<LessonContent> lessonCommand,
@@ -48,7 +49,8 @@ public class LessonService : ILessonService
 	IDbTransactionScopeFactory scopeFactory,
 	IEmailService emailService,
 	IConfiguration configuration,
-	ILogger logger)
+	ILogger logger,
+	IBackgroundJobService backgroundJobService)
 	{
 		_lessonCommand = lessonCommand;
 		_mediaCommand = mediaCommand;
@@ -59,6 +61,7 @@ public class LessonService : ILessonService
 		_studentClassroomQuery = studentClassroomQuery;
 
 		_approvalQuery = approvalQuery;
+		_backgroundJobService = backgroundJobService;
 		_approvalCommand = approvalCommand;
 		_scopeFactory = scopeFactory;
 		_emailService = emailService;
@@ -165,7 +168,12 @@ public class LessonService : ILessonService
 				{ "AccessDate",      model.AccessDate.HasValue ? (object)model.AccessDate.Value.Date : DBNull.Value },
 				{ "AccessTime",      model.AccessTime.HasValue ? (object)model.AccessTime.Value: DBNull.Value },
 				{ "DurationMinutes", model.DurationMinutes.HasValue ? (object)model.DurationMinutes.Value : DBNull.Value },
-				{ "AccessEndsAt",    accessEndsAt.HasValue ? (object)accessEndsAt.Value : DBNull.Value }
+				{ "AccessEndsAt",    accessEndsAt.HasValue ? (object)accessEndsAt.Value : DBNull.Value },
+				{ "ShouldGenerateImage", model.ShouldGenerateImage },
+				{ "ImageMaterialWords", string.IsNullOrWhiteSpace(model.ImageMaterialWords)
+											  ? (object)DBNull.Value
+											  : model.ImageMaterialWords.Trim() },
+				{ "ImageCount", model.ImageCount }
 			};
 
 			// ===== BUILD MEDIA DICTS =====
@@ -336,6 +344,23 @@ public class LessonService : ILessonService
 							lessonId);
 					}
 				});
+			}
+
+			// Auto-generate a teaching image when the lesson is auto-approved (background)
+			// Only when the teacher opted in (and this is not a draft).
+			if (autoPublish && model.ShouldGenerateImage && !model.IsDraft)
+			{
+				try
+				{
+					_backgroundJobService.EnqueueLessonImageGeneration(
+						lessonId, schoolId, teacherId);
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Failed to enqueue auto image generation - LessonId: {LessonId}",
+						lessonId);
+				}
 			}
 
 			_logger.Information(
@@ -574,6 +599,22 @@ public class LessonService : ILessonService
 						lessonId);
 				}
 			});
+
+			// Auto-generate a teaching image once the lesson is approved (background)
+			if (approved)
+			{
+				try
+				{
+					_backgroundJobService.EnqueueLessonImageGeneration(
+						lessonId, schoolId, lesson.CreatedBy);
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex,
+						"Failed to enqueue auto image generation - LessonId: {LessonId}",
+						lessonId);
+				}
+			}
 
 			_logger.Information(
 				"Lesson {Status} - LessonId: {LessonId}, By: {ApproverId}",

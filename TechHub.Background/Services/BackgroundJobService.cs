@@ -8,10 +8,12 @@ namespace TechHub.BackgroundJobs.Services;
 	public class BackgroundJobService : IBackgroundJobService
 	{
 		private readonly IRecurringJobManager _recurringJobManager;
+		private readonly IBackgroundJobClient _backgroundJobClient;
 
-		public BackgroundJobService(IRecurringJobManager recurringJobManager)
+		public BackgroundJobService(IRecurringJobManager recurringJobManager, IBackgroundJobClient backgroundJobClient)
 		{
 			_recurringJobManager = recurringJobManager;
+			_backgroundJobClient = backgroundJobClient;
 		}
 
 	//	/// <summary>
@@ -116,6 +118,18 @@ namespace TechHub.BackgroundJobs.Services;
 			var jobId = BackgroundJob.Schedule<AIContentAnalysisJob>(
 				job => job.Execute(mediaId, cdnUrl, duration),
 				TimeSpan.FromMinutes(2));
+
+			return jobId;
+		}
+
+		/// <summary>
+		/// Enqueue auto image generation for an approved lesson.
+		/// Uses the DI-based IBackgroundJobClient (never the static API).
+		/// </summary>
+		public string EnqueueLessonImageGeneration(Guid lessonId, Guid schoolId, Guid userId)
+		{
+			var jobId = _backgroundJobClient.Enqueue<LessonImageGenerationJob>(
+				job => job.ExecuteAsync(lessonId, schoolId, userId));
 
 			return jobId;
 		}

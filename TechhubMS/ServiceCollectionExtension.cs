@@ -9,13 +9,16 @@ using TechHub.Background.Jobs;
 using TechHub.BackgroundJobs.Interfaces;
 using TechHub.BackgroundJobs.Jobs;
 using TechHub.BackgroundJobs.Services;
+using TechHub.Core.Configuration;
 using TechHub.Core.Entities;
+using TechHub.Core.Interface;
 using TechHub.Core.Utilities;
 using TechHub.QuestionBank.Services;
 using TechHub.Service.Interface;
 using TechHub.Service.Repository;
 using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
+using TechHub.Service.Service.ImageGeneration;
 using TechHub.Service.util;
 using TechhubMS.Middleware.Interface;
 using TechhubMS.Middleware.Services;
@@ -54,6 +57,7 @@ namespace TechhubMS
 
 			services.AddScoped<MediaUploadJob>();
 			services.AddScoped<MediaCleanupJob>();
+			services.AddScoped<LessonImageGenerationJob>();
 
 			services.AddScoped<IMediaService, MediaService>();
 			services.AddScoped<IClassPreparationService, ClassPreparationService>();
@@ -108,6 +112,37 @@ namespace TechhubMS
 
 			// Register QuestionBank module
 			services.AddQuestionBankServices();
+
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			// AI IMAGE GENERATION MODULE
+			// Feature-gated per school via the SchoolFeature table.
+			// The active agent is selected by ImageGeneration:Provider,
+			// so providers are swappable through configuration alone.
+			// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+			services.Configure<ImageGenerationSettings>(
+				configuration.GetSection(ImageGenerationSettings.SectionName));
+			services.AddHttpClient("ImageGeneration");
+
+			// Claude-backed instructional prompt refinement — redefines the
+			// lesson's draft image prompt (aim + objectives + teacher materials)
+			// before it is sent to the image agent. Falls back to the draft if
+			// the Anthropic key is missing or the call fails.
+			services.Configure<AnthropicSettings>(
+				configuration.GetSection(AnthropicSettings.SectionName));
+			services.AddScoped<IInstructionalPromptRefiner, ClaudeInstructionalPromptRefiner>();
+
+			services.AddScoped<IImageGenerationAgent, StabilityImageGenerationAgent>();
+			services.AddScoped<IImageGenerationAgent, OpenAiImageGenerationAgent>();
+			services.AddScoped<IImageGenerationAgentFactory, ImageGenerationAgentFactory>();
+			services.AddScoped<IImageGenerationService, ImageGenerationService>();
+			services.AddScoped<ISchoolFeatureService, SchoolFeatureService>();
+
+			services.AddScoped<IQueryRepository<SchoolFeature>, QueryRepositoryService<SchoolFeature>>();
+			services.AddScoped<ICommandRespository<SchoolFeature>, CommandRepositoryService<SchoolFeature>>();
+			services.AddScoped<IQueryRepository<LessonGenerationPrompt>, QueryRepositoryService<LessonGenerationPrompt>>();
+			services.AddScoped<ICommandRespository<LessonGenerationPrompt>, CommandRepositoryService<LessonGenerationPrompt>>();
+			services.AddScoped<IQueryRepository<LessonMedia>, QueryRepositoryService<LessonMedia>>();
+			services.AddScoped<ICommandRespository<LessonMedia>, CommandRepositoryService<LessonMedia>>();
 
 
 			var jwtSettings = configuration.GetSection("Jwt");

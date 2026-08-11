@@ -73,10 +73,17 @@ public class DatabaseInitializer : IHostedService
             var schemaMigrations = new[]
             {
                 "IF OBJECT_ID('LessonContent', 'U') IS NOT NULL AND COL_LENGTH('LessonContent', 'IsActive') IS NULL ALTER TABLE LessonContent ADD IsActive BIT NOT NULL DEFAULT 1",
+                "IF OBJECT_ID('LessonContent', 'U') IS NOT NULL AND COL_LENGTH('LessonContent', 'ShouldGenerateImage') IS NULL ALTER TABLE LessonContent ADD ShouldGenerateImage BIT NOT NULL DEFAULT 1",
+                "IF OBJECT_ID('LessonContent', 'U') IS NOT NULL AND COL_LENGTH('LessonContent', 'ImageMaterialWords') IS NULL ALTER TABLE LessonContent ADD ImageMaterialWords NVARCHAR(2000) NULL",
+                "IF OBJECT_ID('LessonContent', 'U') IS NOT NULL AND COL_LENGTH('LessonContent', 'ImageCount') IS NULL ALTER TABLE LessonContent ADD ImageCount INT NOT NULL DEFAULT 1",
                 "IF OBJECT_ID('ClassPreparation', 'U') IS NOT NULL AND COL_LENGTH('ClassPreparation', 'AutoApprovalEligible') IS NULL ALTER TABLE ClassPreparation ADD AutoApprovalEligible BIT NOT NULL DEFAULT 0",
                 "IF OBJECT_ID('ClassPreparation', 'U') IS NOT NULL AND COL_LENGTH('ClassPreparation', 'IsActive') IS NULL ALTER TABLE ClassPreparation ADD IsActive BIT DEFAULT 1",
                 "ALTER TABLE AssessmentQuestion ADD SubTopicId UNIQUEIDENTIFIER NULL",
-                "ALTER TABLE School ADD State NVARCHAR(100) NULL"
+                "ALTER TABLE School ADD State NVARCHAR(100) NULL",
+                "IF OBJECT_ID('SchoolFeature', 'U') IS NULL CREATE TABLE SchoolFeature (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), SchoolId UNIQUEIDENTIFIER NOT NULL, FeatureKey NVARCHAR(100) NOT NULL, IsEnabled BIT NOT NULL DEFAULT 0, ConfigurationJson NVARCHAR(MAX) NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), UpdatedAt DATETIME2 NULL, CreatedBy UNIQUEIDENTIFIER NULL, IsActive BIT NOT NULL DEFAULT 1, CONSTRAINT PK_SchoolFeature PRIMARY KEY (Id), CONSTRAINT UQ_SchoolFeature_School_Key UNIQUE (SchoolId, FeatureKey))",
+                "IF OBJECT_ID('SchoolFeature', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SchoolFeature_SchoolId' AND object_id = OBJECT_ID('SchoolFeature')) CREATE INDEX IX_SchoolFeature_SchoolId ON SchoolFeature(SchoolId)",
+                "IF OBJECT_ID('LessonGenerationPrompt', 'U') IS NULL CREATE TABLE LessonGenerationPrompt (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), SchoolId UNIQUEIDENTIFIER NOT NULL, LessonId UNIQUEIDENTIFIER NOT NULL, CreatedBy UNIQUEIDENTIFIER NOT NULL, PromptText NVARCHAR(MAX) NOT NULL, TeacherPrompt NVARCHAR(MAX) NULL, AgentType NVARCHAR(100) NOT NULL, Style NVARCHAR(200) NULL, [Status] NVARCHAR(20) NOT NULL DEFAULT 'Pending', MediaId UNIQUEIDENTIFIER NULL, ImageUrl NVARCHAR(1000) NULL, ImagePublicId NVARCHAR(500) NULL, ErrorMessage NVARCHAR(2000) NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), IsActive BIT NOT NULL DEFAULT 1, CONSTRAINT PK_LessonGenerationPrompt PRIMARY KEY (Id))",
+                "IF OBJECT_ID('LessonGenerationPrompt', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LessonGenerationPrompt_LessonId_SchoolId' AND object_id = OBJECT_ID('LessonGenerationPrompt')) CREATE INDEX IX_LessonGenerationPrompt_LessonId_SchoolId ON LessonGenerationPrompt(LessonId, SchoolId, CreatedAt DESC)"
             };
 
             await using var connection = new SqlConnection(connStr);

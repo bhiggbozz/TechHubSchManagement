@@ -50,6 +50,27 @@ public class SubmitLessonViewModel
 	public DateTime? AccessDate { get; set; }  
 	public TimeSpan? AccessTime { get; set; } 
 	public int? DurationMinutes { get; set; }
+
+	/// <summary>
+	/// Whether the system should auto-generate an AI image for this lesson
+	/// once it is approved. When false, no image is generated for the lesson.
+	/// </summary>
+	public bool ShouldGenerateImage { get; set; } = true;
+
+	/// <summary>
+	/// Optional teacher-supplied words describing the kind of materials / images
+	/// needed for this lesson. The system combines these with the lesson's aim
+	/// and objectives when generating the image.
+	/// </summary>
+	[StringLength(2000, ErrorMessage = "Image material words cannot exceed 2000 characters")]
+	public string? ImageMaterialWords { get; set; }
+
+	/// <summary>
+	/// Number of AI images to generate for this lesson once it is approved.
+	/// Clamped to the configured maximum (ImageGeneration:MaxImagesPerLesson).
+	/// </summary>
+	[Range(1, 5, ErrorMessage = "Image count must be between 1 and 5")]
+	public int ImageCount { get; set; } = 1;
 }
 
 public class LessonMediaViewModel

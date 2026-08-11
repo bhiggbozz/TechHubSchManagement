@@ -462,6 +462,9 @@ BEGIN
         DurationMinutes   INT              NULL,
         AccessEndsAt      DATETIME2        NULL,
         AssessmentSetId   UNIQUEIDENTIFIER NULL,
+        ShouldGenerateImage BIT           NOT NULL DEFAULT 1,
+        ImageMaterialWords  NVARCHAR(2000) NULL,
+        ImageCount          INT            NOT NULL DEFAULT 1,
         IsActive          BIT              NOT NULL DEFAULT 1,
         CONSTRAINT FK_LessonContent_Classroom FOREIGN KEY (ClassroomId) REFERENCES Classroom(Id),
         CONSTRAINT FK_LessonContent_CreatedBy FOREIGN KEY (CreatedBy)   REFERENCES Users(Id)
@@ -1509,6 +1512,66 @@ BEGIN
 
     CREATE INDEX IX_SchoolRegistrationRequest_Status
         ON SchoolRegistrationRequest([Status]);
+END;
+
+-- ========================================================================
+-- SECTION 13: SCHOOL FEATURES (feature-flag gate)
+-- One row per (SchoolId, FeatureKey) — a school must have a key enabled
+-- before the corresponding capability (e.g. AI image generation) is usable.
+-- ========================================================================
+
+IF OBJECT_ID('SchoolFeature', 'U') IS NULL
+BEGIN
+    CREATE TABLE SchoolFeature (
+        Id               UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        SchoolId         UNIQUEIDENTIFIER NOT NULL,
+        FeatureKey       NVARCHAR(100)    NOT NULL,
+        IsEnabled        BIT              NOT NULL DEFAULT 0,
+        ConfigurationJson NVARCHAR(MAX)   NULL,
+        CreatedAt        DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        UpdatedAt        DATETIME2        NULL,
+        CreatedBy        UNIQUEIDENTIFIER NULL,
+        IsActive         BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_SchoolFeature PRIMARY KEY (Id),
+        CONSTRAINT UQ_SchoolFeature_School_Key UNIQUE (SchoolId, FeatureKey)
+    );
+
+    CREATE INDEX IX_SchoolFeature_SchoolId   ON SchoolFeature(SchoolId);
+    CREATE INDEX IX_SchoolFeature_FeatureKey ON SchoolFeature(FeatureKey);
+END;
+
+-- ========================================================================
+-- SECTION 14: LESSON GENERATION PROMPTS (AI image generation history)
+-- One row per AI generation attempt for a lesson. The latest row (by
+-- CreatedAt DESC, Id DESC) is the prompt a teacher reviews / edits before
+-- regenerating.
+-- ========================================================================
+
+IF OBJECT_ID('LessonGenerationPrompt', 'U') IS NULL
+BEGIN
+    CREATE TABLE LessonGenerationPrompt (
+        Id            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        SchoolId      UNIQUEIDENTIFIER NOT NULL,
+        LessonId      UNIQUEIDENTIFIER NOT NULL,
+        CreatedBy     UNIQUEIDENTIFIER NOT NULL,
+        PromptText    NVARCHAR(MAX)    NOT NULL,
+        TeacherPrompt NVARCHAR(MAX)    NULL,
+        AgentType     NVARCHAR(100)    NOT NULL,
+        Style         NVARCHAR(200)    NULL,
+        [Status]      NVARCHAR(20)     NOT NULL DEFAULT 'Pending',
+        MediaId       UNIQUEIDENTIFIER NULL,
+        ImageUrl      NVARCHAR(1000)   NULL,
+        ImagePublicId NVARCHAR(500)    NULL,
+        ErrorMessage  NVARCHAR(2000)   NULL,
+        CreatedAt     DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        IsActive      BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_LessonGenerationPrompt PRIMARY KEY (Id),
+        CONSTRAINT FK_LessonGenerationPrompt_School FOREIGN KEY (SchoolId) REFERENCES School(Id)
+    );
+
+    CREATE INDEX IX_LessonGenerationPrompt_LessonId_SchoolId
+        ON LessonGenerationPrompt(LessonId, SchoolId, CreatedAt DESC);
+    CREATE INDEX IX_LessonGenerationPrompt_SchoolId ON LessonGenerationPrompt(SchoolId);
 END;
 
 -- ========================================================================

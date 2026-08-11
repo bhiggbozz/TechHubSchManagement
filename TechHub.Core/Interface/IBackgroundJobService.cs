@@ -53,10 +53,17 @@
 	/// 
 	/// ANALYZES:
 	/// - Content flags (inappropriate, educational)
-	/// - Quality metrics (resolution, audio, video)
+	/// - Quality metrics (resolution, video, audio)
 	/// - Key moments (intro, main content, summary)
 	/// - Detected topics (subject matter)
 	/// </summary>
 	string EnqueueAIContentAnalysis(Guid mediaId,string cdnUrl,decimal? duration);
+
+	/// <summary>
+	/// ✅ NEW: Enqueue auto image generation for an approved lesson.
+	/// Generates a teaching image from the lesson's aim + objectives in the
+	/// background and attaches it as LessonMedia — no teacher click required.
+	/// </summary>
+	string EnqueueLessonImageGeneration(Guid lessonId, Guid schoolId, Guid userId);
 }
 
