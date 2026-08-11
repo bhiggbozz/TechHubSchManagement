@@ -36,6 +36,7 @@ using TechHub.Core.ViewModel.Platform;
 using TechHub.Core.ViewModel.school;
 using TechHub.Core.ViewModel.Users;
 using TechHub.Service.Extension;
+using TechHub.BackgroundJobs.Interfaces;
 using TechHub.Service.Interface;
 using TechHub.Service.Service;
 using TechHub.Service.Service.DatabaseService;
@@ -88,6 +89,7 @@ namespace TechHub.Service.Service
 		private readonly ILogger _logger;
 		private readonly IEmailService _emailService;
 		private readonly ITenantService _tenantService;
+		private readonly IBackgroundJobService _backgroundJobService;
 		private readonly string? _connString;
 
 		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<Users> queryrepositoryUser,
@@ -101,7 +103,8 @@ namespace TechHub.Service.Service
 			IQueryRepository<TeacherClassroom> teacherClassroomQueryRespository, IQueryRepository<TeacherSubject> teacherSubjectQueryRespository,
 			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository, IQueryRepository<Subjects> subjectQueryRespository, IQueryRepository<ClassroomSubject> classroomSubjectQueryRespository,
 			IQueryRepository<StudentMinorSubject> studentMinorSubjectQueryRespository,
-			IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator)
+			IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator,
+			IBackgroundJobService backgroundJobService)
 		{
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
@@ -136,6 +139,7 @@ namespace TechHub.Service.Service
 			_configuration = configuration;
 			_tenantService = tenantService;
 			_jwtTokenGenerator = jwtTokenGenerator;
+			_backgroundJobService = backgroundJobService;
 
 			_mapper = mapper;
 			_connString = _configuration.GetConnectionString("DbConnectionString") ?? throw new ArgumentNullException("Db Config is null");
@@ -3537,6 +3541,24 @@ namespace TechHub.Service.Service
 
 				// Post-commit — fire and forget
 				_ = Task.Run(() => NotifyRequester(approval, model.Approved, model.RejectionReason));
+
+				// Auto-generate a teaching image when a lesson is approved (background)
+				if (model.Approved &&
+					approval.OperationType == OperationType.SubmitLesson &&
+					approval.EntityId.HasValue)
+				{
+					try
+					{
+						_backgroundJobService.EnqueueLessonImageGeneration(
+							approval.EntityId.Value, approval.SchoolId, approval.RequestedBy);
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(ex,
+							"Failed to enqueue auto image generation - LessonId: {LessonId}",
+							approval.EntityId.Value);
+					}
+				}
 
 				_logger.Information(
 					"Approval {ApprovalId} {Status} by {ApproverId}",

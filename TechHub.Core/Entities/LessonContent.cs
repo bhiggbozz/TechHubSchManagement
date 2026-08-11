@@ -31,5 +31,22 @@ public class LessonContent
 	public int? DurationMinutes { get; set; }
 	public DateTime? AccessEndsAt { get; set; }
 	public Guid? AssessmentSetId { get; set; }
+
+	/// <summary>
+	/// Whether the system should auto-generate an AI image for this lesson
+	/// once it is approved. Set by the teacher at submit time.
+	/// </summary>
+	public bool ShouldGenerateImage { get; set; } = true;
+
+	/// <summary>
+	/// Optional teacher-supplied words describing the materials / visuals the
+	/// generated image must include. Combined with the lesson aim + objectives.
+	/// </summary>
+	public string? ImageMaterialWords { get; set; }
+
+	/// <summary>
+	/// Number of AI images to generate for this lesson once it is approved.
+	/// </summary>
+	public int ImageCount { get; set; } = 1;
 }
 

@@ -53,7 +53,7 @@ TechhubMS.sln
 ### 2. Platform Users (PlatformUser table — separate system)
 
 - Roles: `PlatformSuperAdmin`, `PlatformAdmin`, `PlatformUser`
-- Login: `POST /api/Platform/login`
+- Login: `POST /api/PlatformAuth/login`
 - JWT claims: `ClaimTypes.NameIdentifier`, `ClaimTypes.Role` (no SchoolId — not tied to any school)
 - Token expiry: 1 hour
 - Manages the platform, not individual schools
@@ -64,7 +64,7 @@ TechhubMS.sln
 | Role | Created By | Can Do |
 |------|-----------|--------|
 | `PlatformSuperAdmin` | Seeded in DB migration | Create all platform roles, access all platform endpoints |
-| `PlatformAdmin` | PlatformSuperAdmin via `POST /api/Platform/admin/create` | Provision schools, create `PlatformUser` accounts, manage platform operations |
+| `PlatformAdmin` | PlatformSuperAdmin via `POST /api/PlatformAdmin/create` | Provision schools, create `PlatformUser` accounts, manage platform operations |
 | `PlatformUser` | PlatformSuperAdmin / PlatformAdmin | Lower-privilege operational access (defined by future endpoint gates) |
 
 ### Platform Audit Trail
@@ -77,7 +77,7 @@ TechhubMS.sln
   - School registration **approve** and **reject** — logged in `SchoolService`
   - School **info edit** — logged in `SchoolService.EditSchoolInfoAsync`
   - Platform user creation — logged in `PlatformAdminController`
-- Retrievable via `GET /api/Platform/admin/audit-logs`
+- Retrievable via `GET /api/PlatformAdmin/audit-logs`
 
 ### AdminPermission Bit-Flag System (school-level)
 
@@ -226,6 +226,13 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | `AttendanceSession` | Id, SchoolId, TeacherId, AttendanceType (0=Class\|1=Subject\|2=SubTopic), ClassroomId, SubjectId, SubTopicId, ClassPreparationId, Status (0=Open\|1=Closed\|2=Cancelled), StartedAt, EndedAt, CreatedBy |
 | `AttendanceRecord` | Id, SessionId, StudentId, SchoolId, IsPresent, IsManual, AttendedAt, CreatedBy |
 
+### AI Image Generation (per-school feature flag)
+
+| Table | Key Columns |
+|-------|-------------|
+| `SchoolFeature` | Id, SchoolId, FeatureKey (`ai_image_generation`), IsEnabled, ConfigurationJson, CreatedAt, UpdatedAt, CreatedBy, IsActive. One row per (SchoolId, FeatureKey) — capability is granted only when `IsEnabled = 1` AND `IsActive = 1` |
+| `LessonGenerationPrompt` | Id, SchoolId, LessonId, CreatedBy, PromptText (final prompt sent to agent), TeacherPrompt (raw teacher override, null if auto-built), AgentType (Stability/OpenAI), Style, Status (Pending\|Completed\|Failed), MediaId (LessonMedia row, null on failure), ImageUrl, ImagePublicId, ErrorMessage, CreatedAt, IsActive. One row per generation attempt; "last prompt" = `ORDER BY CreatedAt DESC, Id DESC` |
+
 ---
 
 ## API Endpoints
@@ -244,11 +251,11 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | GET | `/api/User/GetAdminPermissions` | JWT | Get user's permissions |
 | POST | `/api/User/RevokePermissions` | SuperAdmin | Revoke permissions |
 | POST | `/api/User/refresh-token` | Anonymous | Refresh JWT |
-| POST | `/api/Platform/login` | Anonymous | Platform user login |
-| POST | `/api/Platform/admin/create` | PlatformSuperAdmin/PlatformAdmin | Create platform user (Role field: PlatformSuperAdmin/PlatformAdmin/PlatformUser; hierarchy enforced in service) |
-| GET | `/api/Platform/admin/users` | PlatformSuperAdmin/PlatformAdmin | List platform users |
-| GET | `/api/Platform/admin/login-history` | PlatformSuperAdmin/PlatformAdmin | Platform login history (filter by userId) |
-| GET | `/api/Platform/admin/audit-logs` | PlatformSuperAdmin/PlatformAdmin | Platform audit trail (filter by action/entityType) |
+| POST | `/api/PlatformAuth/login` | Anonymous | Platform user login |
+| POST | `/api/PlatformAdmin/create` | PlatformSuperAdmin/PlatformAdmin | Create platform user (Role field: PlatformSuperAdmin/PlatformAdmin/PlatformUser; hierarchy enforced in service) |
+| GET | `/api/PlatformAdmin/users` | PlatformSuperAdmin/PlatformAdmin | List platform users |
+| GET | `/api/PlatformAdmin/login-history` | PlatformSuperAdmin/PlatformAdmin | Platform login history (filter by userId) |
+| GET | `/api/PlatformAdmin/audit-logs` | PlatformSuperAdmin/PlatformAdmin | Platform audit trail (filter by action/entityType) |
 
 ### School Management
 
@@ -374,6 +381,22 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | POST | `/api/questions/sync` | JWT | Sync offline questions |
 | POST | `/api/questionjob/submit` | JWT | Submit image for AI extraction |
 | GET | `/api/questionjob/{jobId}/status` | JWT | Poll job status |
+
+### AI Image Generation
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/image-generation/lesson/{lessonId}/generate` | JWT | Generate an image for a lesson (body: `{ prompt?, style?, negativePrompt?, width?, height? }`). Builds prompt from lesson aim + objectives unless `prompt` supplied; uploads to Cloudinary; attaches as `LessonMedia`; writes a `LessonGenerationPrompt` row. Feature-gated (`ai_image_generation` must be enabled for the school) |
+| GET | `/api/image-generation/lesson/{lessonId}/prompt` | JWT | Last prompt used for the lesson (for review/edit + regenerate) |
+| GET | `/api/image-generation/lesson/{lessonId}/history` | JWT | Full generation/prompt history, newest first |
+
+### School Features
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/school-features` | JWT | Create/update a feature flag for a school (body: `{ schoolId, featureKey, isEnabled, configurationJson? }`). Idempotent per (SchoolId, FeatureKey) |
+| GET | `/api/school-features` | JWT | List features. Platform admins may pass `?schoolId`; school users always read their own school |
+| GET | `/api/school-features/check` | JWT | `?schoolId&featureKey` — whether a feature is enabled for a school |
 
 ---
 
@@ -555,9 +578,18 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 - Frontend calls `confirm-upload` to update DB
 
 ### Background Jobs (Hangfire)
-- `MediaUploadJob`, `MediaCleanupJob`, `AIContentAnalysisJob`, `ThumbnailGeneratorJob`, `PerformanceAggregationJob`
-- **IMPORTANT:** Use DI-based Hangfire APIs (`IRecurringJobManager`, `IBackgroundJobClient`) — never the static `RecurringJob`/`BackgroundJob` helpers. `JobStorage.Current` is only set after the `BackgroundJobServer` hosted service starts (async, after `app.Run()`). Calling a static Hangfire API synchronously at startup (e.g. in `Program.cs`) throws "Current JobStorage instance has not been initialized". `IBackgroundJobService` (`TechHub.Background/Services/BackgroundJobService.cs`) injects `IRecurringJobManager` in its constructor and uses it for `ScheduleMediaCleanup()`. The app's startup Hangfire recurring registration is safe because it resolves the concrete service through DI.
+- `MediaUploadJob`, `MediaCleanupJob`, `AIContentAnalysisJob`, `ThumbnailGeneratorJob`, `PerformanceAggregationJob`, `LessonImageGenerationJob` (auto-generates a lesson's AI image on approval; skips if a `Completed` prompt row already exists)
+- **IMPORTANT:** Use DI-based Hangfire APIs (`IRecurringJobManager`, `IBackgroundJobClient`) — never the static `RecurringJob`/`BackgroundJob` helpers. `JobStorage.Current` is only set after the `BackgroundJobServer` hosted service starts (async, after `app.Run()`). Calling a static Hangfire API synchronously at startup (e.g. in `Program.cs`) throws "Current JobStorage instance has not been initialized". `IBackgroundJobService` (`TechHub.Background/Services/BackgroundJobService.cs`) injects `IRecurringJobManager` in its constructor and uses it for `ScheduleMediaCleanup()`; it also injects `IBackgroundJobClient` for one-off enqueues like `EnqueueLessonImageGeneration`. The app's startup Hangfire recurring registration is safe because it resolves the concrete service through DI.
 - **Startup registration:** In `Program.cs` recurring jobs are registered in a scope right after `app.Build()` via the DI-injected `IBackgroundJobService` — do NOT switch that back to the static API.
+
+### AI Image Generation Pipeline
+- Flow: `ImageGenerationService.GenerateImageAsync` → feature-gate check (`SchoolFeature` must have `ai_image_generation` IsEnabled + IsActive) → build prompt (`TeachingPromptBuilder`) or use teacher `prompt` override → resolve agent via `IImageGenerationAgentFactory` keyed by agent `Name` (active provider = `ImageGeneration:Provider` in appsettings, default `Stability`) → call agent → upload PNG to Cloudinary → insert `LessonMedia` (MediaType image) → write `LessonGenerationPrompt` row (`Completed` with MediaId/ImageUrl, or `Failed` with ErrorMessage).
+- **Agent swap:** add a new `IImageGenerationAgent` impl + register it in DI; the factory selects by the configured provider name. No service code changes needed.
+- **Auto-generation on approval:** `EnqueueLessonImageGeneration(lessonId, schoolId, userId)` is fired via `IBackgroundJobClient` when a lesson becomes `Approved`. The job runs `LessonImageGenerationJob`, which uses `Role="Administrator"` claims and skips if a `Completed` prompt row already exists.
+- **Trigger points (all 3 paths that set `Status = Approved`):**
+  1. `LessonService.RespondToLesson` (manual approve via `POST /api/lessons/{id}/respond`)
+  2. `LessonService.SubmitLesson` (auto-publish when teacher has no LineManager / admin submits)
+  3. `UserService.RespondToApproval` (OperationType.SubmitLesson)
 
 ### Background Workers (Hosted Services)
 - `QuestionJobWorker` (30s cycle) — processes AI extraction jobs
@@ -580,6 +612,8 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 - **Attendance role gating**: `StartSessionAsync` enforces **Class → `ClassTeacher` only** and **Subject/SubTopic → `SubjectTeacher` only** (via `CanManageClassroomAsync`/`CanTeachSubjectAsync`). `HeadTeacher`/`Administrator`/`SuperAdministrator` bypass both.
 - **Attendance eligibility**: `ScanStudentAsync` rejects any student not enrolled before marking present — **Class** requires `StudentClassroom` membership; **Subject/SubTopic** requires enrollment in the subject (via `ClassroomSubject` or `StudentMinorSubject`) and, when the session has a `ClassroomId`, membership in that classroom too.
 - **First PlatformSuperAdmin is seeded** via `Script_Initial.sql` (consolidated from all migration scripts) with username `platformadmin` and password `Platform@123`.
+- **AI image generation keys are placeholders** in `appsettings.json` (`ImageGeneration:Providers:Stability:ApiKey`, `ImageGeneration:Providers:OpenAI:ApiKey`) — generation fails (writes a `Failed` `LessonGenerationPrompt` row) until real Stability/OpenAI API keys are configured. Provider is switched via `ImageGeneration:Provider`.
+- **Image-generation feature gate**: a school can only generate lesson images when its `SchoolFeature` row for `ai_image_generation` has `IsEnabled = 1` AND `IsActive = 1` (managed via `POST /api/school-features`).
 - **ProvisisonSchool flow**: Creates School → SchoolCode → TenantInfo → Users (Administrator) → AdminPermissions (FullAdmin) → sends welcome email, all in one transaction.
 - **Assessment expiry**: `AssessmentConfig.ExpiresAt` is checked in `StartAttempt`. If expired, returns "Assessment has expired" error.
 - **Student board sessionId format**: `{assessmentId}_{studentId}_{questionId}` for assessment answer board strokes.
