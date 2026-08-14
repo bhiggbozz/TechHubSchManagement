@@ -65,5 +65,12 @@
 	/// background and attaches it as LessonMedia — no teacher click required.
 	/// </summary>
 	string EnqueueLessonImageGeneration(Guid lessonId, Guid schoolId, Guid userId);
+
+	/// <summary>
+	/// ✅ NEW: Schedule the daily cleanup of the ApplicationLogs table
+	/// (rows older than 90 days, batched deletes of 5,000).
+	/// Job id: "cleanup-application-logs".
+	/// </summary>
+	void ScheduleApplicationLogsCleanup();
 }
 
