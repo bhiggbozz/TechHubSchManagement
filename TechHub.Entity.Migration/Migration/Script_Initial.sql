@@ -92,7 +92,7 @@ BEGIN
         DOB           NVARCHAR(19)     NULL,
         LineManagerId UNIQUEIDENTIFIER NULL,
         QrCodeToken   NVARCHAR(100)    NULL,
-        CONSTRAINT PK_Users PRIMARY KEY (Id, CreationDate)
+        CONSTRAINT PK_Users PRIMARY KEY (Id)
     );
 END;
 
@@ -165,7 +165,7 @@ END;
 IF OBJECT_ID('LoginHistory', 'U') IS NULL
 BEGIN
     CREATE TABLE LoginHistory (
-        Id            UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+        Id            UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_LoginHistory PRIMARY KEY NONCLUSTERED,
         CreationDate  NVARCHAR(19)     NOT NULL,
         ModifiedDate  NVARCHAR(19)     NOT NULL,
         UserId        UNIQUEIDENTIFIER NULL,
@@ -252,7 +252,7 @@ BEGIN
         CreatedBy     UNIQUEIDENTIFIER NOT NULL,
         SchoolId      UNIQUEIDENTIFIER NOT NULL,
         IsActive      BIT              NOT NULL DEFAULT 1,
-        CONSTRAINT PK_Classroom PRIMARY KEY (Id, CreationDate)
+        CONSTRAINT PK_Classroom PRIMARY KEY (Id)
     );
 
     CREATE UNIQUE INDEX UQ_Classroom_SchoolId_Name
@@ -272,7 +272,7 @@ BEGIN
         SchoolId       UNIQUEIDENTIFIER NOT NULL,
         CreatedBy      UNIQUEIDENTIFIER NOT NULL,
         IsActive       BIT              NOT NULL DEFAULT 1,
-        CONSTRAINT PK_Subjects PRIMARY KEY (Id, SchoolId)
+        CONSTRAINT PK_Subjects PRIMARY KEY (Id)
     );
 
     CREATE INDEX IX_Subjects_SchoolId ON Subjects(SchoolId);
@@ -761,9 +761,7 @@ BEGIN
         CreatedBy                 UNIQUEIDENTIFIER NOT NULL,
         CreationDate              NVARCHAR(30)     NOT NULL,
         ModifiedDate              NVARCHAR(30)     NOT NULL,
-        IsActive                  BIT              NOT NULL DEFAULT 1,
-        CONSTRAINT FK_QuizConfig_DefaultAssessmentSet
-            FOREIGN KEY (DefaultAssessmentSetId) REFERENCES AssessmentSet(Id)
+        IsActive                  BIT              NOT NULL DEFAULT 1
     );
 
     CREATE INDEX IX_QuizConfig_Teacher ON QuizConfig(TeacherId, SchoolId, IsActive);
@@ -797,6 +795,16 @@ BEGIN
     );
 
     CREATE INDEX IX_AssessmentSet_Teacher ON AssessmentSet(TeacherId, SchoolId, IsActive);
+END;
+
+-- AssessmentSet FK from LessonContent (mirrors deployed schema; added after
+-- AssessmentSet is created because LessonContent is created earlier in the file)
+IF OBJECT_ID('FK_LessonContent_AssessmentSet', 'F') IS NULL
+   AND OBJECT_ID('AssessmentSet', 'U') IS NOT NULL
+BEGIN
+    ALTER TABLE LessonContent
+        ADD CONSTRAINT FK_LessonContent_AssessmentSet
+            FOREIGN KEY (AssessmentSetId) REFERENCES AssessmentSet(Id);
 END;
 
 -- 5.5 QuizAttempt
@@ -1572,6 +1580,59 @@ BEGIN
     CREATE INDEX IX_LessonGenerationPrompt_LessonId_SchoolId
         ON LessonGenerationPrompt(LessonId, SchoolId, CreatedAt DESC);
     CREATE INDEX IX_LessonGenerationPrompt_SchoolId ON LessonGenerationPrompt(SchoolId);
+END;
+
+-- ========================================================================
+-- ApplicationLogs (database error logging)
+-- Fire-and-forget, channel-based error logging written by IDbLogger /
+-- GlobalExceptionMiddleware, flushed in batches by the LogWriterService
+-- background service, cleaned up daily by the Hangfire job
+-- "cleanup-application-logs" (rows older than 90 days).
+-- ========================================================================
+
+IF OBJECT_ID('ApplicationLogs', 'U') IS NULL
+BEGIN
+    CREATE TABLE ApplicationLogs (
+        Id            BIGINT IDENTITY(1,1) NOT NULL,
+        LogLevel      VARCHAR(20)   NOT NULL,
+        Message       NVARCHAR(MAX) NOT NULL,
+        Exception     NVARCHAR(MAX) NULL,
+        Source        NVARCHAR(500) NULL,
+        Endpoint      NVARCHAR(500) NULL,
+        RequestPath   NVARCHAR(500) NULL,
+        RequestMethod VARCHAR(10)   NULL,
+        UserId        NVARCHAR(100) NULL,
+        TenantId      NVARCHAR(100) NULL,
+        CorrelationId NVARCHAR(100) NULL,
+        CreatedAt     DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+        CONSTRAINT PK_ApplicationLogs PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_Logs_CreatedAt ON ApplicationLogs(CreatedAt DESC);
+    CREATE INDEX IX_Logs_Level_Date ON ApplicationLogs(LogLevel, CreatedAt DESC);
+END;
+
+-- Idempotent ALTER for tables created before the Endpoint column existed.
+IF OBJECT_ID('ApplicationLogs', 'U') IS NOT NULL
+   AND COL_LENGTH('ApplicationLogs', 'Endpoint') IS NULL
+BEGIN
+    ALTER TABLE ApplicationLogs ADD Endpoint NVARCHAR(500) NULL;
+END;
+
+-- ========================================================================
+-- School audit columns (kept idempotent for tables that predate them)
+-- School.CreatedBy  - platform user who created the school
+-- School.ModifiedBy - platform user who last edited the school
+-- ========================================================================
+
+IF COL_LENGTH('School', 'CreatedBy') IS NULL
+BEGIN
+    ALTER TABLE School ADD CreatedBy UNIQUEIDENTIFIER NULL;
+END;
+
+IF COL_LENGTH('School', 'ModifiedBy') IS NULL
+BEGIN
+    ALTER TABLE School ADD ModifiedBy UNIQUEIDENTIFIER NULL;
 END;
 
 -- ========================================================================
