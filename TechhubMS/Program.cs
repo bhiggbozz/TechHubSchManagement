@@ -16,6 +16,7 @@ using TechHub.Core.Profiles;
 using TechHub.Entity.Migration;
 using TechHub.QuestionBank.Controllers;
 using TechHub.Service.Extensions;
+using TechHub.Service.Infrastructure.Logging;
 using TechhubMS;
 using TechhubMS.Middleware;
 
@@ -124,6 +125,9 @@ try
 	builder.Services.AddControllers()
 	.AddApplicationPart(typeof(QuestionJobController).Assembly);
 
+	// Fire-and-forget database error logging (channel + writer + logger)
+	builder.Services.AddDatabaseLogging();
+
 	// Board session recording services
 	builder.Services.AddBoardServices(builder.Configuration);
 	builder.Services.AddBoardWorkers();
@@ -140,9 +144,14 @@ try
 	{
 		var backgroundJobService = scope.ServiceProvider.GetRequiredService<IBackgroundJobService>();
 		backgroundJobService.ScheduleMediaCleanup();
+		backgroundJobService.ScheduleApplicationLogsCleanup();
 	}
 
 	app.UseSerilogRequestLogging();
+
+	// Global exception handler — outermost, before auth/endpoints, so any
+	// unhandled exception is logged to ApplicationLogs and answered with 500.
+	app.UseMiddleware<GlobalExceptionMiddleware>();
 
 	// Configure the HTTP request pipeline
 	//if (app.Environment.IsDevelopment())

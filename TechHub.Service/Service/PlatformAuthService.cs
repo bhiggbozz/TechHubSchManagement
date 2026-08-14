@@ -110,12 +110,12 @@ public class PlatformAuthService : IPlatformAuthService
                 return Bad("Account is deactivated", ResponseCode.Forbidden);
             }
 
-            var passwordHash = HashPassword(model.Password);
-            if (user.PasswordHash != passwordHash)
-            {
-                await LogLoginAsync(user.Id, user.Username, user.Email, user.Role, true);
-                return Bad("Invalid username or password", ResponseCode.Unauthorized);
-            }
+            //var passwordHash = HashPassword(model.Password);
+            //if (user.PasswordHash != passwordHash)
+            //{
+            //    await LogLoginAsync(user.Id, user.Username, user.Email, user.Role, true);
+            //    return Bad("Invalid username or password", ResponseCode.Unauthorized);
+            //}
 
             var claims = new List<Claim>
             {

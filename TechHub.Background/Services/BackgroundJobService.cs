@@ -134,5 +134,16 @@ namespace TechHub.BackgroundJobs.Services;
 			return jobId;
 		}
 
+		/// <summary>
+		/// Schedule the daily cleanup of old ApplicationLogs rows.
+		/// Runs at 3 AM every day. Uses the DI-based IRecurringJobManager.
+		/// </summary>
+		public void ScheduleApplicationLogsCleanup()
+		{
+			_recurringJobManager.AddOrUpdate<ApplicationLogsCleanupJob>("cleanup-application-logs",
+				job => job.ExecuteAsync(),
+				Cron.Daily(3));  // 3 AM every day
+		}
+
 	}
 
