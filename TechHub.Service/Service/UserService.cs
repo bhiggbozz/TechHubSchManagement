@@ -6743,7 +6743,7 @@ namespace TechHub.Service.Service
 								UserId = adminUserId,
 								SchoolId = schoolId,
 								Now = now,
-								CreatedBy = platformUserId
+								CreatedBy = adminUserId
 							},
 							scope.Transaction);
 

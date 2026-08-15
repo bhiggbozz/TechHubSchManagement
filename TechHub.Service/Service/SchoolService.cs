@@ -5162,7 +5162,7 @@ namespace TechHub.Service.Service
 								UserId = adminUserId,
 								SchoolId = schoolId,
 								Now = now,
-								CreatedBy = platformUserId
+								CreatedBy = adminUserId
 							},
 							scope.Transaction);
 
@@ -5486,7 +5486,7 @@ _logger.Information(
 						UserId = adminUserId,
 						SchoolId = schoolId,
 						Now = now,
-						CreatedBy = platformUserId
+						CreatedBy = adminUserId
 					},
 					scope.Transaction);
 
@@ -5567,7 +5567,7 @@ _logger.Information(
 			{
 				await scope.RollbackAsync();
 				_logger.Error(ex, "Error approving school registration");
-				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = "An error occurred while approving registration", Status = "failed" };
+				return new BaseResponse { ResponseCode = ResponseCode.ErrorOccured, ResponseMessage = $"An error occurred while approving registration: {ex.Message}", Status = "failed" };
 			}
 		}
 
