@@ -38,7 +38,19 @@ public class ImageGenerationResult
 public class PromptRefinementResult
 {
 	public bool Success { get; set; }
+
+	/// <summary>
+	/// First refined prompt, kept for backward compatibility with callers that
+	/// only ever requested a single image.
+	/// </summary>
 	public string Prompt { get; set; } = string.Empty;
+
+	/// <summary>
+	/// All refined prompts produced by the LLM. For a multi-image request this
+	/// contains one distinct, scaffolded prompt per requested image (ordered
+	/// from the foundational idea through how-it-works to a real-life example).
+	/// </summary>
+	public List<string> Prompts { get; set; } = new();
 
 	/// <summary>The LLM model that produced the refined prompt (for auditing).</summary>
 	public string? ModelUsed { get; set; }

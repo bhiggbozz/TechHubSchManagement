@@ -48,6 +48,7 @@ public class ImageGenerationService : IImageGenerationService
 			lc.Description  AS Description,
 			s.Subject       AS SubjectName,
 			t.Name          AS TopicName,
+			lc.SubTopic     AS SubTopicName,
 			c.Name          AS ClassName,
 			sch.SchoolName  AS SchoolName
 		FROM   LessonContent lc
@@ -141,12 +142,18 @@ public class ImageGenerationService : IImageGenerationService
 			var teacherPrompt = SanitizePrompt(model?.Prompt, maxPromptLength);
 			var materialWords = SanitizePrompt(model?.MaterialWords, maxPromptLength);
 
-			string finalPrompt;
+			var targetCount = ResolveImageCount(model?.ImageCount);
+
+			// Used to pick the prompt for each requested image. Builds an ordered
+			// scaffolded set (foundational → how-it-works → real-life) when Claude
+			// refines for multiple images.
+			List<string> promptSet;
 			if (!string.IsNullOrWhiteSpace(teacherPrompt))
 			{
-				finalPrompt = string.IsNullOrWhiteSpace(model?.Style)
+				var overridePrompt = string.IsNullOrWhiteSpace(model?.Style)
 					? teacherPrompt
 					: $"{teacherPrompt}\n\nStyle: {model.Style.Trim()}";
+				promptSet = new List<string> { overridePrompt };
 			}
 			else
 			{
@@ -154,6 +161,7 @@ public class ImageGenerationService : IImageGenerationService
 					ctx.SchoolName,
 					ctx.SubjectName,
 					ctx.TopicName,
+					ctx.SubTopicName,
 					ctx.ClassName,
 					ctx.Aim,
 					ctx.Description,
@@ -165,7 +173,7 @@ public class ImageGenerationService : IImageGenerationService
 				// DECLINE when the teacher's requested materials do not align
 				// with the subject / aim / objectives — in that case no image
 				// should be generated and the reason is surfaced to the teacher.
-				var refined = await _promptRefiner.RefineLessonImagePromptAsync(draftPrompt, ctx.ClassName);
+				var refined = await _promptRefiner.RefineLessonImagePromptAsync(draftPrompt, ctx.ClassName, targetCount);
 
 				if (refined.Declined)
 				{
@@ -191,21 +199,22 @@ public class ImageGenerationService : IImageGenerationService
 					};
 				}
 
-				finalPrompt = refined.Success && !string.IsNullOrWhiteSpace(refined.Prompt)
-					? refined.Prompt
-					: draftPrompt;
+				promptSet = refined.Success && refined.Prompts.Count > 0
+					? refined.Prompts
+					: refined.Success
+						? new List<string> { refined.Prompt }
+						: new List<string> { draftPrompt };
 			}
 
 			var agent = _agentFactory.GetAgent();
-			var targetCount = ResolveImageCount(model?.ImageCount);
 
 			var generated = new List<object>();
 			var failures = new List<string>();
 
-			for (var i = 1; i <= targetCount; i++)
+			for (var i = 0; i < targetCount; i++)
 			{
 				var single = await GenerateSingleImageAsync(
-					lessonId, schoolId, userId, finalPrompt,
+					lessonId, schoolId, userId, promptSet[Math.Min(i, promptSet.Count - 1)],
 					teacherPrompt, materialWords, model, agent);
 
 				if (single.Success)

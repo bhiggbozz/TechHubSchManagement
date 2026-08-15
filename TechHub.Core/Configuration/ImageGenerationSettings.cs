@@ -10,7 +10,7 @@ public class ImageGenerationSettings
 	public const string SectionName = "ImageGeneration";
 
 	/// <summary>Active agent name — must match a key in <see cref="Providers"/>.</summary>
-	public string Provider { get; set; } = "Stability";
+	public string Provider { get; set; } = "OpenAI";
 
 	/// <summary>Maximum accepted prompt length (characters).</summary>
 	public int MaxPromptLength { get; set; } = 4000;
@@ -41,4 +41,10 @@ public class ImageGenerationProviderOptions
 	public string? Model { get; set; }
 	public string? Endpoint { get; set; }
 	public string? Size { get; set; }
+
+	/// <summary>
+	/// Optional quality hint for OpenAI GPT Image (low / medium / high / auto).
+	/// Only sent when set, so the provider default is used otherwise.
+	/// </summary>
+	public string? Quality { get; set; }
 }

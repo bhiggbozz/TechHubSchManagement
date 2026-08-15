@@ -14,7 +14,7 @@ namespace TechHub.Core.Interface;
 public interface IInstructionalPromptRefiner
 {
 	/// <summary>
-	/// Returns the refined prompt, or a failed result when refinement is
+	/// Returns the refined prompt(s), or a failed result when refinement is
 	/// unavailable (no API key, disabled, or LLM error) so the caller can fall
 	/// back to the draft prompt. The LLM is also instructed to DECLINE (with
 	/// reasons) when the teacher's requested materials do not align with the
@@ -24,5 +24,6 @@ public interface IInstructionalPromptRefiner
 	Task<PromptRefinementResult> RefineLessonImagePromptAsync(
 		string draftPrompt,
 		string? className,
+		int imageCount = 1,
 		CancellationToken cancellationToken = default);
 }

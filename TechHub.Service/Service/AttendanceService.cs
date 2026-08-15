@@ -91,7 +91,7 @@ namespace TechHub.Service.Service
 						ResponseCode = ResponseCode.successful,
 						ResponseMessage = "QR token retrieved",
 						Status = "successful",
-						Data = new { studentId = student.Id, qrToken = token }
+						Data = new { studentId = student.Id, studentName = $"{student.FirstName} {student.LastName}".Trim(), qrToken = token }
 					};
 				}
 				catch (Exception ex)
@@ -118,7 +118,7 @@ namespace TechHub.Service.Service
 					return new StudentQrCodeResult { Success = false, ResponseCode = ResponseCode.Forbidden, ResponseMessage = "You can only view your own QR code" };
 
 				var token = await EnsureQrTokenAsync(student);
-				var bytes = GenerateQrPng(token);
+				var bytes = GenerateQrPng(BuildQrPayload(student, token));
 
 				return new StudentQrCodeResult
 				{
@@ -331,7 +331,7 @@ namespace TechHub.Service.Service
 					if (session.TeacherId != callerId && !IsAdminRole(claims?.Role))
 						return Fail(ResponseCode.Forbidden, "You are not authorized to scan for this session");
 
-					var student = await _userQueryRepo.GetByPropertyName("QrCodeToken", qrToken);
+					var student = await _userQueryRepo.GetByPropertyName("QrCodeToken", ResolveQrToken(qrToken));
 					if (student is null || student.SchoolId != schoolId || !student.IsActive || student.RoleId != (int)UserRole.Student)
 						return Fail(ResponseCode.BadRequest, "Invalid QR code");
 
@@ -949,6 +949,52 @@ namespace TechHub.Service.Service
 		{
 			var bytes = RandomNumberGenerator.GetBytes(16);
 			return Convert.ToHexString(bytes);
+		}
+
+		/// <summary>
+		/// QR content sent to the frontend. Carries the student name so a scanner
+		/// can display it, while the qrToken stays the lookup key for scanning.
+		/// </summary>
+		private static string BuildQrPayload(Users student, string token)
+		{
+			var name = $"{student.FirstName} {student.LastName}".Trim();
+			return System.Text.Json.JsonSerializer.Serialize(new
+			{
+				qrToken = token,
+				studentId = student.Id,
+				studentName = name
+			});
+		}
+
+		/// <summary>
+		/// Extracts the raw qrToken from a scanned value. Accepts both the new JSON
+		/// payload and the legacy plain token so already-printed QR codes keep working.
+		/// </summary>
+		private static string ResolveQrToken(string scannedValue)
+		{
+			if (string.IsNullOrWhiteSpace(scannedValue))
+				return scannedValue;
+
+			var trimmed = scannedValue.Trim();
+			if (trimmed.StartsWith("{") && trimmed.EndsWith("}"))
+			{
+				try
+				{
+					using var doc = System.Text.Json.JsonDocument.Parse(trimmed);
+					if (doc.RootElement.TryGetProperty("qrToken", out var tokenProp) && tokenProp.ValueKind == System.Text.Json.JsonValueKind.String)
+					{
+						var token = tokenProp.GetString();
+						if (!string.IsNullOrWhiteSpace(token))
+							return token;
+					}
+				}
+				catch (System.Text.Json.JsonException)
+				{
+					// Not JSON — fall back to the raw value below.
+				}
+			}
+
+			return trimmed;
 		}
 
 		private static byte[] GenerateQrPng(string content)

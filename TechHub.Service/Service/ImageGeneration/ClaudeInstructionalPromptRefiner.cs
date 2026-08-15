@@ -41,8 +41,11 @@ public class ClaudeInstructionalPromptRefiner : IInstructionalPromptRefiner
 	public async Task<PromptRefinementResult> RefineLessonImagePromptAsync(
 		string draftPrompt,
 		string? className,
+		int imageCount = 1,
 		CancellationToken cancellationToken = default)
 	{
+		var target = Math.Clamp(imageCount, 1, 10);
+
 		if (!_settings.EnablePromptRefinement)
 		{
 			_logger.Information("Claude prompt refinement is disabled - using draft prompt");
@@ -63,30 +66,45 @@ public class ClaudeInstructionalPromptRefiner : IInstructionalPromptRefiner
 				"You are an expert instructional-content designer and prompt engineer for an African EdTech platform.\n" +
 				$"Target class (year group / grade): {className ?? "Not specified"}\n" +
 				"\n" +
-				"Your job: rewrite the provided draft image-generation prompt into ONE optimal, highly detailed, " +
-				"pedagogically effective prompt for generating a teaching image for a secondary-school classroom.\n" +
+				"Core mission: the refined prompt(s) you write must BUILD a correct mental model of the lesson's concept. " +
+				"Each image must help students understand HOW the thing works at a basic, foundational level, using simple, " +
+				"correct mechanics - the visible basics, the key parts, how the parts connect and interact, cause and effect, " +
+				"and an everyday example. Never merely decorate; teach the working.\n" +
+				"\n" +
+				$"Your job: rewrite the provided draft image-generation prompt into {target} optimal, highly detailed, " +
+				"pedagogically effective prompt(s) for generating teaching image(s) for the classroom.\n" +
 				"\n" +
 				"Context you must consider:\n" +
-				"- The draft contains the school, subject, topic, class, lesson AIM and OBJECTIVES.\n" +
+				"- The draft contains the school, subject, topic, subtopic, class, lesson AIM and OBJECTIVES.\n" +
 				"- The 'REQUIRED MATERIALS / VISUAL ELEMENTS (teacher's words)' section lists materials the teacher explicitly requested.\n" +
 				"- Keep the content age-appropriate for the target class/year group.\n" +
 				"\n" +
+				"When more than one image is requested, split the lesson into that many distinct, complementary images that " +
+				"together scaffold understanding - ordered from foundational to applied - and cover each aspect in ONLY ONE " +
+				"image (no repetition):\n" +
+				"  1) The foundational idea - what the concept IS, shown simply and correctly.\n" +
+				"  2) How it works - the mechanism: key parts, how they connect, movement or flow, cause and effect.\n" +
+				"  3) Relationships and nuances - interactions, comparisons or special cases.\n" +
+				"  4) Real-life application - an everyday example the students already know.\n" +
+				"For fewer images, keep the same priority order and fold the remaining aspects into the earlier prompts.\n" +
+				"\n" +
 				"Validation rule (very important):\n" +
 				"- If the teacher's requested materials or visual elements do NOT align with the lesson's subject, aim or objectives, " +
-				"you must DECLINE instead of writing a prompt.\n" +
+				"you must DECLINE instead of writing prompt(s).\n" +
 				"- In the decline, explain clearly why it is not suitable, referencing the conflict with the subject/aim/objectives " +
 				"and suggesting what would be more appropriate.\n" +
-				"- If the materials are absent or align with the lesson, do NOT decline - just refine the prompt.\n" +
+				"- If the materials are absent or align with the lesson, do NOT decline - just refine.\n" +
 				"\n" +
 				"Prompt quality (when not declining):\n" +
 				"- Keep every constraint from the draft: culturally appropriate, classroom-safe, and the image must contain " +
 				"NO text, no words, no letters, no numbers, no watermarks and no logos.\n" +
+				"- Keep the science and mechanics simple and correct for a secondary-school class.\n" +
 				"- Make the scene concrete, vivid and specific enough that the image genuinely helps students grasp and " +
 				"remember the lesson's core concept. Incorporate the teacher's requested materials/visual elements explicitly " +
 				"when they align with the lesson.\n" +
 				"\n" +
 				"Respond in this strict JSON format only, with no markdown, no preamble and no extra text:\n" +
-				"{\"declined\": true/false, \"prompt\": \"the refined prompt, or empty string when declined\", \"reason\": \"empty when accepted, or the decline explanation when declined\"}";
+				"{\"declined\": true/false, \"prompts\": [\"prompt 1\", \"prompt 2\", ...], \"reason\": \"empty when accepted, or the decline explanation when declined\"}";
 
 			var messages = new List<Message>
 			{
@@ -147,18 +165,31 @@ public class ClaudeInstructionalPromptRefiner : IInstructionalPromptRefiner
 					};
 				}
 
-				if (!string.IsNullOrWhiteSpace(parsed.Prompt))
+				var prompts = new List<string>();
+				if (parsed.Prompts is { Count: > 0 })
 				{
-					var refined = ClampLength(parsed.Prompt.Trim());
+					foreach (var p in parsed.Prompts)
+					{
+						if (!string.IsNullOrWhiteSpace(p))
+							prompts.Add(ClampLength(p.Trim()));
+					}
+				}
+				else if (!string.IsNullOrWhiteSpace(parsed.Prompt))
+				{
+					prompts.Add(ClampLength(parsed.Prompt.Trim()));
+				}
 
+				if (prompts.Count > 0)
+				{
 					_logger.Information(
-						"Lesson image prompt refined by Claude - Model: {Model}, RefinedLength: {Length}",
-						_settings.Model, refined.Length);
+						"Lesson image prompt(s) refined by Claude - Model: {Model}, PromptCount: {Count}, FirstLength: {Length}",
+						_settings.Model, prompts.Count, prompts[0].Length);
 
 					return new PromptRefinementResult
 					{
 						Success = true,
-						Prompt = refined,
+						Prompt = prompts[0],
+						Prompts = prompts,
 						ModelUsed = _settings.Model
 					};
 				}
@@ -172,6 +203,7 @@ public class ClaudeInstructionalPromptRefiner : IInstructionalPromptRefiner
 			{
 				Success = true,
 				Prompt = fallback,
+				Prompts = new List<string> { fallback },
 				ModelUsed = _settings.Model
 			};
 		}
@@ -228,6 +260,7 @@ public class ClaudeInstructionalPromptRefiner : IInstructionalPromptRefiner
 	{
 		public bool Declined { get; set; }
 		public string? Prompt { get; set; }
+		public List<string>? Prompts { get; set; }
 		public string? Reason { get; set; }
 	}
 }

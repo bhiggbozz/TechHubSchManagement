@@ -1,4 +1,5 @@
 using Dapper;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Serilog;
@@ -11,6 +12,7 @@ using TechHub.Core;
 using TechHub.Core.Entities.Performance;
 using TechHub.Core.Model;
 using TechHub.Core.ViewModel.classroom;
+using TechHub.Service.Infrastructure.Logging;
 using TechHub.Service.Interface;
 
 namespace TechHub.Service.Service;
@@ -20,13 +22,22 @@ public class StudentDashboardService : IStudentDashboardService
     private readonly IConfiguration _configuration;
     private readonly IPerformanceRepository _perfRepo;
     private readonly ILogger _logger;
+    private readonly IDbLogger _dbLogger;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly string _connString;
 
-    public StudentDashboardService(IConfiguration configuration, IPerformanceRepository perfRepo, ILogger logger)
+    public StudentDashboardService(
+        IConfiguration configuration,
+        IPerformanceRepository perfRepo,
+        ILogger logger,
+        IDbLogger dbLogger,
+        IHttpContextAccessor httpContextAccessor)
     {
         _configuration = configuration;
         _perfRepo = perfRepo;
         _logger = logger;
+        _dbLogger = dbLogger;
+        _httpContextAccessor = httpContextAccessor;
         _connString = _configuration.GetConnectionString("DbConnectionString") ?? string.Empty;
     }
 
@@ -145,7 +156,8 @@ public class StudentDashboardService : IStudentDashboardService
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Error fetching student summary");
+                _dbLogger.LogError(ex, "StudentDashboardService.GetStudentSummaryAsync", _httpContextAccessor?.HttpContext);
+                _logger.Error(ex, "Error fetching student summary: {ErrorMessage}", ex.Message);
                 return Bad("An error occurred while fetching student summary", ResponseCode.ErrorOccured);
             }
         }
@@ -188,7 +200,8 @@ public class StudentDashboardService : IStudentDashboardService
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Error marking lesson as watched");
+                _dbLogger.LogError(ex, "StudentDashboardService.MarkLessonAsWatched", _httpContextAccessor?.HttpContext);
+                _logger.Error(ex, "Error marking lesson as watched: {ErrorMessage}", ex.Message);
                 return Bad("An error occurred while marking lesson", ResponseCode.ErrorOccured);
             }
         }
@@ -221,7 +234,8 @@ public class StudentDashboardService : IStudentDashboardService
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Error fetching student subject scores");
+                _dbLogger.LogError(ex, "StudentDashboardService.GetStudentSubjectScoresAsync", _httpContextAccessor?.HttpContext);
+                _logger.Error(ex, "Error fetching student subject scores: {ErrorMessage}", ex.Message);
                 return Bad("An error occurred while fetching subject scores", ResponseCode.ErrorOccured);
             }
         }
@@ -256,7 +270,8 @@ public class StudentDashboardService : IStudentDashboardService
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Error fetching student subtopic scores");
+                _dbLogger.LogError(ex, "StudentDashboardService.GetStudentSubTopicScoresAsync", _httpContextAccessor?.HttpContext);
+                _logger.Error(ex, "Error fetching student subtopic scores: {ErrorMessage}", ex.Message);
                 return Bad("An error occurred while fetching subtopic scores", ResponseCode.ErrorOccured);
             }
         }
@@ -390,7 +405,8 @@ public class StudentDashboardService : IStudentDashboardService
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Error fetching student dashboard stats");
+                _dbLogger.LogError(ex, "StudentDashboardService.GetStudentDashboardStatsAsync", _httpContextAccessor?.HttpContext);
+                _logger.Error(ex, "Error fetching student dashboard stats: {ErrorMessage}", ex.Message);
                 return Bad("An error occurred while fetching dashboard stats", ResponseCode.ErrorOccured);
             }
         }

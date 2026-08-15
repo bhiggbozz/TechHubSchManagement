@@ -13,6 +13,7 @@ public static class TeachingPromptBuilder
 		string? schoolName,
 		string? subjectName,
 		string? topicName,
+		string? subTopicName,
 		string? className,
 		string aim,
 		string objectives,
@@ -22,9 +23,11 @@ public static class TeachingPromptBuilder
 		var sb = new StringBuilder();
 
 		sb.AppendLine("You are an instructional illustration generator for an African EdTech platform.");
-		sb.AppendLine("Generate ONE high-quality, culturally appropriate, classroom-safe educational image for a lesson.");
-		sb.AppendLine("The image must contain NO text, no words, no letters, no numbers, no watermarks and no logos.");
-		sb.AppendLine("It will be projected to a secondary-school class, so keep the content clear, age-appropriate and easy to read at a distance.");
+		sb.AppendLine("PEDAGOGICAL GOAL: build a correct mental model in the students' minds. The image must help them understand HOW the concept works at a basic, foundational level - not merely show what it looks like.");
+		sb.AppendLine("Generate educational images that are culturally appropriate, classroom-safe and age-appropriate.");
+		sb.AppendLine("The images must contain NO text, no words, no letters, no numbers, no watermarks and no logos.");
+		sb.AppendLine("They will be projected to a secondary-school class, so keep the content clear, simple and easy to read at a distance.");
+		sb.AppendLine("BASIC UNDERSTANDING: ground the image in the basics - what the concept is, its key parts, how the parts connect and interact, cause and effect, and one simple everyday example. Prefer simple, correct mechanics over visual flourish.");
 		sb.AppendLine();
 
 		if (!string.IsNullOrWhiteSpace(schoolName))
@@ -35,6 +38,9 @@ public static class TeachingPromptBuilder
 
 		if (!string.IsNullOrWhiteSpace(topicName))
 			sb.AppendLine($"Topic: {topicName.Trim()}");
+
+		if (!string.IsNullOrWhiteSpace(subTopicName))
+			sb.AppendLine($"Subtopic: {subTopicName.Trim()}");
 
 		if (!string.IsNullOrWhiteSpace(className))
 			sb.AppendLine($"Class: {className.Trim()}");
@@ -61,7 +67,7 @@ public static class TeachingPromptBuilder
 		}
 
 		sb.AppendLine();
-		sb.AppendLine("Illustrate the core concept of this lesson, not a generic scene.");
+		sb.AppendLine("Illustrate the core concept of this lesson and make its underlying mechanism visible and easy for a learner to reason about.");
 
 		return sb.ToString().Trim();
 	}
