@@ -14,16 +14,20 @@ using TechHub.Core.Model;
 namespace TechHub.Service.Service.ImageGeneration;
 
 /// <summary>
-/// OpenAI DALL-E 3 image agent.
+/// OpenAI GPT Image agent (the successor to DALL·E, which was removed from the
+/// OpenAI API on 2026-05-12). Works with gpt-image-1 / gpt-image-1.5 /
+/// gpt-image-2 via POST /v1/images/generations (always returns base64).
 ///
 /// SWAPPABLE: registered under Name = "OpenAI" and resolved by the factory
-/// from ImageGeneration:Provider. Switching providers is a config change.
+/// from ImageGeneration:Provider. The model id itself is read from
+/// ImageGeneration:Providers:OpenAI:Model — switching models or providers is a
+/// configuration change, not a code change.
 /// </summary>
 public class OpenAiImageGenerationAgent : IImageGenerationAgent
 {
 	private const string DefaultBaseUrl = "https://api.openai.com";
 	private const string DefaultEndpoint = "/v1/images/generations";
-	private const string DefaultModel = "dall-e-3";
+	private const string DefaultModel = "gpt-image-1";
 
 	private readonly HttpClient _httpClient;
 	private readonly ImageGenerationProviderOptions _options;
@@ -59,14 +63,16 @@ public class OpenAiImageGenerationAgent : IImageGenerationAgent
 			var endpoint = string.IsNullOrWhiteSpace(_options.Endpoint) ? DefaultEndpoint : _options.Endpoint;
 			var model = string.IsNullOrWhiteSpace(_options.Model) ? DefaultModel : _options.Model;
 
-			var payload = new
+			var payload = new Dictionary<string, object?>
 			{
-				model,
-				prompt = request.Prompt,
-				n = 1,
-				size = ResolveSize(request),
-				response_format = "b64_json"
+				["model"] = model,
+				["prompt"] = request.Prompt,
+				["n"] = 1,
+				["size"] = ResolveSize(request)
 			};
+
+			if (!string.IsNullOrWhiteSpace(_options.Quality))
+				payload["quality"] = _options.Quality;
 
 			using var httpRequest = new HttpRequestMessage(HttpMethod.Post, baseUrl + endpoint);
 			httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
@@ -123,7 +129,10 @@ public class OpenAiImageGenerationAgent : IImageGenerationAgent
 		}
 	}
 
-	/// <summary>DALL-E 3 only supports three fixed sizes; map request dims to the closest.</summary>
+	/// <summary>
+	/// GPT Image models accept 1024x1024, 1024x1536 (portrait), 1536x1024
+	/// (landscape) and "auto". Map requested dims to the closest supported size.
+	/// </summary>
 	private string ResolveSize(ImageGenerationRequest request)
 	{
 		if (!string.IsNullOrWhiteSpace(_options.Size))
@@ -132,8 +141,8 @@ public class OpenAiImageGenerationAgent : IImageGenerationAgent
 		var width = request.Width ?? 1024;
 		var height = request.Height ?? 1024;
 
-		if (width > height) return "1792x1024";
-		if (height > width) return "1024x1792";
+		if (width > height) return "1536x1024";
+		if (height > width) return "1024x1536";
 		return "1024x1024";
 	}
 
