@@ -2,6 +2,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 WORKDIR /app
 EXPOSE 80
 
+# Avoid hitting the host inotify instance limit (128) inside the container by
+# polling for config/file changes instead of using inotify watchers.
+ENV DOTNET_USE_POLLING_FILE_WATCHER=1
+
 # ── Install SkiaSharp native dependencies ────────────────────────────────
 RUN apt-get update && apt-get install -y \
     libfontconfig1 \
