@@ -9,6 +9,10 @@
 !.env.example
 docker-compose.override.yml
 
+# SSH keys for GitHub Actions deployment
+github_actions
+github_actions.pub
+
 # User-specific files
 *.rsuser
 *.suo

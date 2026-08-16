@@ -3,7 +3,6 @@ using System.Reflection.Metadata;
 using System.Security.Claims;
 using System.Text.Json;
 using TechHub.Core.Model;
-using TechHub.Service.Infrastructure.Logging;
 
 namespace TechhubMS.Middleware
 {
@@ -24,7 +23,7 @@ namespace TechhubMS.Middleware
 		{
 			_next = next;
 		}
-		public async Task Invoke(HttpContext context, LogChannel logChannel)
+		public async Task Invoke(HttpContext context)
 		{
 
 			var originalBodyStream = context.Response.Body;
@@ -53,15 +52,12 @@ namespace TechhubMS.Middleware
 						{
 							context.Response.StatusCode = statusCode;
 
-							// Services swallow their exceptions into a BaseResponse
-							// with ResponseCode 99101 (they never throw to the global
-							// handler), so this is the single place that sees every
-							// server error returned by the application. Record it in
-							// ApplicationLogs — fire-and-forget, never await, never throw.
-							if (responseCode == ResponseCode.ErrorOccured)
-							{
-								EnqueueError(context, json, logChannel);
-							}
+							// Note: swallowed exceptions (ResponseCode 99101) are
+							// persisted to ApplicationLogs centrally by the
+							// ApplicationLogsSink — every service logs the real
+							// exception via _logger.Error(ex, ...) before returning
+							// the generic BaseResponse, so the row carries the
+							// actual message + stack trace. No logging here.
 						}
 					}
 				}
@@ -84,42 +80,6 @@ namespace TechhubMS.Middleware
 				{
 					context.Response.Body = originalBodyStream;
 				}
-			}
-		}
-
-		/// <summary>
-		/// Builds a LogEntry from the service's 500 BaseResponse and queues it
-		/// through the shared LogChannel. The full stack trace stays in Serilog
-		/// (services log it before returning); here we capture everything a row
-		/// in ApplicationLogs can hold about the response. Fully exception-safe.
-		/// </summary>
-		private static void EnqueueError(HttpContext context, Dictionary<string, string> json, LogChannel channel)
-		{
-			try
-			{
-				json.TryGetValue("responseMessage", out var message);
-				if (string.IsNullOrWhiteSpace(message))
-					message = "Server error occurred";
-
-				context.Items.TryGetValue("TenantId", out var tenantId);
-
-				channel.Enqueue(new LogEntry
-				{
-					LogLevel = "Error",
-					Message = message,
-					Source = "ResponseCodeMiddleware",
-					Endpoint = ResolveEndpoint(context),
-					RequestPath = context.Request.Path.ToString(),
-					RequestMethod = context.Request.Method,
-					UserId = context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value
-					        ?? context.User?.FindFirst("sub")?.Value,
-					TenantId = tenantId?.ToString(),
-					CorrelationId = context.TraceIdentifier
-				});
-			}
-			catch
-			{
-				// Logging must never break the request pipeline.
 			}
 		}
 
