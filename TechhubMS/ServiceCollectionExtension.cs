@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
 using System.Text;
@@ -28,7 +29,7 @@ namespace TechhubMS
 {
     public static class ServiceCollectionExtensions
     {
-        public static IServiceCollection AddMultiTenantServices(this IServiceCollection services, IConfiguration configuration)
+        public static IServiceCollection AddMultiTenantServices(this IServiceCollection services, IConfiguration configuration, IHostEnvironment env)
         {
             // Register HttpContextAccessor
             services.AddHttpContextAccessor();
@@ -188,6 +189,25 @@ namespace TechhubMS
 							var uri = new Uri(origin);
 							var host = uri.Host;
 
+							// ── Production: strict ──────────────────────────────────
+							// Only bluetsch.com school subdomains, localhost, and the
+							// explicit AllowedOrigins list are accepted.
+							if (env.IsProduction())
+							{
+								if (host.EndsWith(".bluetsch.com"))
+									return true;
+
+								if (host == "localhost" || host.EndsWith(".localhost"))
+									return true;
+
+								var prodAllowedOrigins = configuration
+									.GetSection("Cors:AllowedOrigins")
+									.Get<string[]>() ?? Array.Empty<string>();
+
+								return prodAllowedOrigins.Contains(origin);
+							}
+
+							// ── Non-production: keep staging/preview rules ──────────
 							if (host.EndsWith(".vluethub.com"))
 								return true;
 

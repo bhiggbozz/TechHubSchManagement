@@ -129,7 +129,7 @@ try
 	builder.Services.AddHostedService<AdminDashboardAggregationWorker>();
 
 	// Multi-tenant services
-	builder.Services.AddMultiTenantServices(builder.Configuration);
+	builder.Services.AddMultiTenantServices(builder.Configuration, builder.Environment);
 	builder.Services.AddControllers()
 	.AddApplicationPart(typeof(QuestionJobController).Assembly);
 
