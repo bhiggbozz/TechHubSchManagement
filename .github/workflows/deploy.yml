@@ -33,6 +33,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -e
             cd /var/www/schooly
             docker load -i techhub-api.tar.gz
             docker compose up -d --no-build
