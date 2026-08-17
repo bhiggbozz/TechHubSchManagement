@@ -82,7 +82,7 @@ public class MultiTenantMiddleware
 			await context.Response.WriteAsJsonAsync(new
 			{
 				error = "TENANT_REQUIRED",
-				message = "Tenant identifier required. Access via subdomain (e.g., pearl.vluethub.com) or include X-Tenant-ID header."
+				message = "Tenant identifier required. Access your school via its subdomain (e.g., kingscollege.bluetsch.com) or include X-Tenant-ID header."
 			});
 			return;
 		}
@@ -124,10 +124,14 @@ public class MultiTenantMiddleware
 	/// <summary>
 	/// Extracts tenant identifier from host
 	/// Examples:
+	///   - kingscollege.bluetsch.com → "kingscollege"
+	///   - pearl.bluethub.online → "pearl"
+	///   - school-a.onrender.com → "school-a"
 	///   - pearl.myapp.com → "pearl"
 	///   - oxford.myapp.com → "oxford"
+	///   - api.bluetsch.com / www.bluetsch.com → null (reserved)
+	///   - bluetsch.com → null (no subdomain)
 	///   - localhost → "dev-tenant" (for development)
-	///   - myapp.com → null (no subdomain)
 	/// </summary>
 	private string? ExtractTenantFromHost(string host)
 	{
@@ -136,8 +140,40 @@ public class MultiTenantMiddleware
 
 		var hostWithoutPort = host.Split(':')[0].ToLowerInvariant();
 
-		// Production: *.vluethub.com → subdomain
-		if (hostWithoutPort.EndsWith(".techhubschmanagement.onrender.com.com"))
+		// Production: *.bluetsch.com → subdomain
+		//   kingscollege.bluetsch.com → "kingscollege"
+		if (hostWithoutPort.EndsWith(".bluetsch.com"))
+		{
+			var parts = hostWithoutPort.Split('.');
+			if (parts.Length >= 3)
+			{
+				var subdomain = parts[0];
+
+				if (subdomain == "www" || subdomain == "api" || subdomain == "admin")
+					return null;
+
+				return subdomain;
+			}
+		}
+
+		// Production: *.bluethub.online → subdomain
+		//   pearl.bluethub.online → "pearl"
+		if (hostWithoutPort.EndsWith(".bluethub.online"))
+		{
+			var parts = hostWithoutPort.Split('.');
+			if (parts.Length >= 3)
+			{
+				var subdomain = parts[0];
+
+				if (subdomain == "www" || subdomain == "api" || subdomain == "admin")
+					return null;
+
+				return subdomain;
+			}
+		}
+
+		// Staging: *.onrender.com → subdomain
+		if (hostWithoutPort.EndsWith(".onrender.com"))
 		{
 			var parts = hostWithoutPort.Split('.');
 			if (parts.Length >= 3)

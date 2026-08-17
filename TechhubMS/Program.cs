@@ -2,6 +2,7 @@
 //using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Hangfire;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
@@ -21,6 +22,12 @@ using TechhubMS;
 using TechhubMS.Middleware;
 
 
+// Bridges every Error/Fatal log event into the shared LogChannel that feeds
+// the ApplicationLogs table (real exception message + stack trace for ALL
+// exceptions across all services — no per-service wiring needed). Its channel
+// is bound to DI after the host is built.
+var applicationLogsSink = new ApplicationLogsSink();
+
 Log.Logger = new LoggerConfiguration()
 	.MinimumLevel.Debug()
 	.MinimumLevel.Override("Microsoft", LogEventLevel.Information)
@@ -34,6 +41,7 @@ Log.Logger = new LoggerConfiguration()
 		rollingInterval: RollingInterval.Day,
 		outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"
 	)
+	.WriteTo.Sink(applicationLogsSink)
 	.CreateLogger();
 try
 {
@@ -121,7 +129,7 @@ try
 	builder.Services.AddHostedService<AdminDashboardAggregationWorker>();
 
 	// Multi-tenant services
-	builder.Services.AddMultiTenantServices(builder.Configuration);
+	builder.Services.AddMultiTenantServices(builder.Configuration, builder.Environment);
 	builder.Services.AddControllers()
 	.AddApplicationPart(typeof(QuestionJobController).Assembly);
 
@@ -137,7 +145,14 @@ try
 	var hangfireConnectionString = builder.Configuration.GetConnectionString("DbConnectionString");
 	builder.Services.AddHangfireServices(hangfireConnectionString, builder.Configuration);
 
-	var app = builder.Build();
+var app = builder.Build();
+
+	// Bind the ApplicationLogs Serilog sink to the DI-resolved channel and
+	// context accessor (they are singletons shared with LogWriterService, so
+	// every Error/Fatal event drains into the ApplicationLogs table).
+	applicationLogsSink.Initialize(
+		app.Services.GetRequiredService<LogChannel>(),
+		app.Services.GetRequiredService<IHttpContextAccessor>());
 
 	// Register recurring background jobs (Hangfire)
 	using (var scope = app.Services.CreateScope())

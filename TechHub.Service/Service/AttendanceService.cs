@@ -106,7 +106,7 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
-				var schoolId = ParseSchoolId(claims);
+var schoolId = ParseSchoolId(claims);
 				if (schoolId == Guid.Empty)
 					return new StudentQrCodeResult { Success = false, ResponseCode = ResponseCode.Unauthorized, ResponseMessage = "Invalid school context" };
 
@@ -819,9 +819,6 @@ namespace TechHub.Service.Service
 					if (schoolId == Guid.Empty)
 						return Fail(ResponseCode.Unauthorized, "Invalid school context");
 
-					if (!IsAdminRole(claims?.Role))
-						return Fail(ResponseCode.Forbidden, "Only administrators can view attendance reports");
-
 					if (attendanceType != (int)AttendanceType.Class && attendanceType != (int)AttendanceType.Subject)
 						return Fail(ResponseCode.BadRequest, "Invalid attendance type. Use Class(0) or Subject(1)");
 
@@ -860,6 +857,25 @@ namespace TechHub.Service.Service
 							return Fail(ResponseCode.NotFound, "Subject not found");
 						entityId = subject.Id;
 						entityName = subject.Subject;
+					}
+
+					// ClassTeacher/SubjectTeacher are scoped to the class/subject they
+					// teach; HeadTeacher/Administrator/SuperAdministrator bypass the check.
+					if (!IsAdminRole(claims?.Role))
+					{
+						if (!Guid.TryParse(claims?.UserId, out var callerId))
+							return Fail(ResponseCode.Unauthorized, "Invalid user context");
+
+						if (attendanceType == (int)AttendanceType.Class)
+						{
+							if (!await CanManageClassroomAsync(callerId, classroomId.Value, schoolId, claims?.Role))
+								return Fail(ResponseCode.Forbidden, "You can only view attendance for a class you teach");
+						}
+						else
+						{
+							if (!await CanTeachSubjectAsync(callerId, subjectId.Value, schoolId, claims?.Role))
+								return Fail(ResponseCode.Forbidden, "You can only view attendance for a subject you teach");
+						}
 					}
 
 					var (sql, parameters) = BuildStudentStatsSql(schoolId, studentId, attendanceType, entityId.Value, from, to);

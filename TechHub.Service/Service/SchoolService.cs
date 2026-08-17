@@ -5047,6 +5047,30 @@ namespace TechHub.Service.Service
 			return Convert.ToHexString(hash).ToLower();
 		}
 
+		/// <summary>
+		/// Generates a random password for a provisioned school admin. Guarantees
+		/// at least one character from each required class (upper, lower, digit,
+		/// symbol), then shuffles so the first character is not always a letter.
+		/// </summary>
+		private static string GenerateRandomPassword(int length = 12)
+		{
+			const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+			const string lower = "abcdefghijkmnpqrstuvwxyz";
+			const string digits = "23456789";
+			const string symbols = "!@#$%^&*";
+			var all = upper + lower + digits + symbols;
+
+			var chars = new char[length];
+			chars[0] = upper[Random.Shared.Next(upper.Length)];
+			chars[1] = lower[Random.Shared.Next(lower.Length)];
+			chars[2] = digits[Random.Shared.Next(digits.Length)];
+			chars[3] = symbols[Random.Shared.Next(symbols.Length)];
+			for (int i = 4; i < length; i++)
+				chars[i] = all[Random.Shared.Next(all.Length)];
+
+			return string.Concat(chars.OrderBy(_ => Random.Shared.Next()));
+		}
+
 		public async Task<BaseResponse> ProvisionSchool(ProvisionSchoolViewModel model, AuthenticatedUserClaims claims)
 		{
 			using (LogContext.PushProperty("RequestedBy", claims.UserId))
@@ -5068,6 +5092,7 @@ namespace TechHub.Service.Service
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 				var schoolId = Guid.NewGuid();
 				var adminUserId = Guid.NewGuid();
+				var generatedPassword = GenerateRandomPassword();
 
 				var insertDict = new Dictionary<string, object> {
 					{ "CreationDate", now }, { "ModifiedDate", now }, { "Id", schoolId },
@@ -5131,7 +5156,7 @@ namespace TechHub.Service.Service
 							scope.Transaction);
 
 					// 4. Insert Admin User (Administrator role)
-					var passwordHash = HashPassword(model.AdminPassword);
+					var passwordHash = HashPassword(generatedPassword);
 					await scope.Connection.ExecuteAsync(@"
 						INSERT INTO Users (Id, CreationDate, ModifiedDate, FirstName, MiddleName, LastName, EmailAddress, HashPassword,
 							IsActive, HasAccess, UserName, SchoolId, RoleId, CreatedBy)
@@ -5196,7 +5221,7 @@ namespace TechHub.Service.Service
 									<h3>Admin Login Credentials</h3>
 									<ul>
 										<li><strong>Username:</strong> {model.AdminUsername}</li>
-										<li><strong>Password:</strong> {model.AdminPassword}</li>
+										<li><strong>Password:</strong> {generatedPassword}</li>
 									</ul>
 									<p>Please log in and change your password on first login.</p>
 									<p>Best regards,<br/>TechHub Platform Team</p>
@@ -5299,7 +5324,7 @@ _logger.Information(
 					AdminLastName = model.AdminLastName,
 					AdminEmail = model.AdminEmail,
 					AdminUsername = model.AdminUsername,
-					AdminPassword = model.AdminPassword,
+					AdminPassword = string.Empty,
 					Status = "Pending",
 					CreatedAt = DateTime.UtcNow
 				};
@@ -5455,7 +5480,8 @@ _logger.Information(
 					scope.Transaction);
 
 				// 4. Insert Admin User (SuperAdministrator role - RoleId = 3)
-				var passwordHash = HashPassword(request.AdminPassword);
+				var generatedPassword = GenerateRandomPassword();
+				var passwordHash = HashPassword(generatedPassword);
 				await scope.Connection.ExecuteAsync(@"
 					INSERT INTO Users (Id, CreationDate, ModifiedDate, FirstName, MiddleName, LastName, EmailAddress, HashPassword,
 						IsActive, HasAccess, UserName, SchoolId, RoleId, CreatedBy)
@@ -5531,7 +5557,7 @@ _logger.Information(
 								<h3>Admin Login Credentials</h3>
 								<ul>
 									<li><strong>Username:</strong> {request.AdminUsername}</li>
-									<li><strong>Password:</strong> {request.AdminPassword}</li>
+									<li><strong>Password:</strong> {generatedPassword}</li>
 								</ul>
 								<p>Please log in and change your password on first login.</p>
 								<p>Best regards,<br/>TechHub Platform Team</p>
