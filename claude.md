@@ -379,7 +379,7 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | POST | `/api/questions/scan/token/request` | JWT | Request scan token |
 | POST | `/api/questions/scan/process/{tokenId}` | JWT | AI scan (SSE streaming) |
 | POST | `/api/questions/sync` | JWT | Sync offline questions |
-| POST | `/api/questionjob/submit` | JWT | Submit image for AI extraction |
+| POST | `/api/questionjob/submit` | JWT | Submit image for AI extraction — multipart/form-data; `image` file **or** pre-uploaded reference (`FileUrl` + `FilePublicId` + `FileType`), plus `SubTopicId` + `QuestionType` (Objective/Theory/TrueFalse) + optional `ClassroomId`/`SubjectId`/`HasImages`/`MarksAllocation` |
 | GET | `/api/questionjob/{jobId}/status` | JWT | Poll job status |
 
 ### AI Image Generation
@@ -618,3 +618,44 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 - **Assessment expiry**: `AssessmentConfig.ExpiresAt` is checked in `StartAttempt`. If expired, returns "Assessment has expired" error.
 - **Student board sessionId format**: `{assessmentId}_{studentId}_{questionId}` for assessment answer board strokes.
 - **Student subject scores** are pre-computed by `PerformanceAggregationWorker` (24h cycle) and stored as `student_subject` DocType in MongoDB — not queried live. Ranking uses `RANK() OVER (PARTITION BY SubjectId ORDER BY AvgScore DESC)`.
+
+---
+
+## Deployment & Infrastructure
+
+### Production VPS
+- **Host**: `191.215.35.9` (root SSH)
+- **SSH key (local)**: `C:\Users\hp\Desktop\TechHub\github_actions` (`-i` flag; `.pub` alongside). Used for all scp/ssh deploys.
+- **Monolith API**: container `techhub-api` → host `8080:80`, image `techhub-api:latest`, domain `api.bluetsch.com`. Deploy dir `/var/www/schooly` (docker-compose + `techhub-api.tar.gz` artifact; source staged at `/var/www/schooly/src` for manual `docker build`). Env overrides live in `/var/www/schooly/.env` (DB, Mongo, RabbitMQ, JWT, Cloudinary, Email, etc.). `ASPNETCORE_ENVIRONMENT=Production` is forced in compose.
+- **Platform microservice (TechSchPlatform)**: container `techschplatform-api` → host `8082:80`, image `techschplatform-api:latest`, served at `https://platform.bluetsch.com/api/*` (nginx `location /api/` → `127.0.0.1:8082`). Source at `/docker/techschplatform(-src)`.
+- **Frontend containers** (`/docker/bluethub-or/docker-compose.yml`): `bluethub-web` (3010→80, image `bluethub-or-web:latest`, domain bluetsch.com/www), `bluethub-landing` (3001→80), `scholarlyhub` (3011→80, domain platform.bluetsch.com `/`).
+- **nginx**: `api.bluetsch.com`→8080, `www`+apex `bluetsch.com`→3010, `platform.bluetsch.com`→3011 (+ `/api/`→8082); Let's Encrypt via certbot (reload: `nginx -t && systemctl reload nginx`).
+- **Container port gotcha**: modern `aspnet:8.0` images default `ASPNETCORE_HTTP_PORTS=8080` — pin `ENV ASPNETCORE_HTTP_PORTS=80` in Dockerfiles or map `-p 8082:8080`. A bare `-p 8082:80` gives 502/`000` if not pinned.
+
+### Email (Mailtrap)
+- **Production**: `EmailSettings:Provider=MailtrapApi` → `POST https://send.api.mailtrap.io/api/send` with `Authorization: Bearer <EmailSettings:MailtrapApiToken>` (token in appsettings / `.env`), JSON `{from, to[], subject, html, category}`, and a non-empty `User-Agent` (edge protection may block bare requests). Response `200 {success:true, message_ids:[...]}`.
+- **Dev**: `Provider=Smtp` (sandbox `sandbox.smtp.mailtrap.io:2525`) via `appsettings.Development.json` override (`EmailSettings:Provider=Smtp`). The monolith has this override too (`TechhubMS/appsettings.Development.json`).
+- **Verified sending domain (currently the only one)**: `www.bluetsch.com`. From addresses must end in `@www.bluetsch.com` or the API rejects (401/403). Monolith `EMAIL_FROM=noreply@www.bluetsch.com` (in `/var/www/schooly/.env`); TechSchPlatform `FromEmail=support@www.bluetsch.com` (appsettings). To send from `@bluetsch.com`/`@bluethub.com`, verify that domain in Mailtrap first.
+- **Mailtrap account**: id `2493070` ("gbenga omoyele"). Verified domains: `www.bluetsch.com` (DNS pass), `demomailtrap.co` (demo_exhausted). Verify domains via `GET https://mailtrap.io/api/accounts/{id}/sending_domains` (Bearer token).
+- **EmailService design** (both monolith `TechHub.Service/Service/EmailService.cs` and `TechSchPlatform.Service/Services/EmailService.cs`): `Provider` switch — `MailtrapApi` → HTTP API; anything else → SMTP. Errors are logged, never thrown (email must not block user creation).
+
+### TechSchPlatform microservice (`TechSchPlatform/`)
+- Solution `TechSchPlatform.sln` (Core / Service / Api, net8.0), Dapper + Microsoft.Data.SqlClient; shares the monolith DB (`SQL8010.site4now.net` / `db_ac4720_techhub`).
+- Separate platform-only JWT (same `Jwt:SecretKey/Issuer/Audience`). No MultiTenantMiddleware. Real SHA256-hex-lowercase password check. `PlatformSeedService` upserts `platformadmin` / `Platform@123` at startup. Parameterized Dapper. Response codes copied from monolith (`99000`/`99001`/`99101`/`99134`/`99107`/`AX1003`/`99161`).
+- Endpoints: `POST /api/PlatformAuth/login`, `POST /api/PlatformAdmin/create`, `GET /api/PlatformAdmin/users`, `GET /api/PlatformAdmin/login-history`, `GET /api/PlatformAdmin/audit-logs`, `POST /api/School/createschool`, `POST /api/School/provision`, `POST /api/School/register`, `POST /api/School/approve/{requestId}`, `POST /api/School/reject/{requestId}`, `POST /api/School/getState`.
+- Deployed: VPS `:8082` behind `platform.bluetsch.com/api/*`, plus **Render** (Root Directory = `TechSchPlatform`, Dockerfile = `TechSchPlatform/Dockerfile`; it lives inside the monolith repo, so Render must NOT use the repo-root Dockerfile, which builds `TechhubMS`).
+- Build/run caveats: `dotnet build` to a temp `-o` dir (VS file locks on `bin/`); run the Api dll with `-WorkingDirectory` = build output (content-root for appsettings), `--urls http://127.0.0.1:5299`. Source deploys via `tar -czf` (exclude `bin/obj/logs/.git/github_actions`), then `docker build` on the VPS.
+
+### Frontend CI/CD (BLUETHUB-OR)
+- Repo `C:\Users\hp\Desktop\TechHubFE-V2\BLUETHUB-OR`; Turborepo+pnpm; `apps/web` (main), `apps/landing`; Dockerfile target `web-nginx`.
+- `.github/workflows/deploy.yml` on push to `Main`: build `web-nginx` (VITE args; defaults `https://api.bluetsch.com`, `https://www.bluetsch.com`, tenant `green`, RC `rc_live_732628123a4b4c21931bf0c8196408ec`) → save `bluethub-or-web.tar.gz` → scp to `/docker/bluethub-or` → `docker load` → `docker compose up -d --no-build web` → `docker image prune -f`.
+- Branch `Main` created from `feature/lesson`, commit `51a9320`; origin `bhiggbozz/BLUETHUB-OR`, upstream `Paulolutosoye45/BLUETHUB-OR` (private). Workflow needs secrets `VPS_HOST=191.215.35.9`, `VPS_USER=root`, `VPS_SSH_KEY` (contents of `github_actions`) in the **upstream** repo — the scp step fails with "can't connect without a private SSH key or password" until they are added.
+
+---
+
+## Session Progress (2026-08-19)
+
+- **TechSchPlatform built + deployed**: platform microservice (school register → approve → provision) extracted to `TechSchPlatform/`, shared DB, deployed to VPS `:8082` behind `platform.bluetsch.com/api/*` and to Render. Login/`PlatformAdmin/users` verified live.
+- **Production email fixed (monolith + platform)**: monolith `EmailService.cs`, `TechhubMS/appsettings.json`, and `/var/www/schooly/.env` switched to Mailtrap API with a `MailtrapApi`/`Smtp` provider switch; verified live send (`HTTP 200`, message_id) to `plutonish007@yahoo.com`. Root cause of prior failure: production was using ElasticEmail SMTP (bad creds) → "Authentication required".
+- **Containers rebuilt & re-deployed on VPS**: `techhub-api` (email fix) and `techschplatform-api` (FromEmail → verified domain).
+- **Outstanding**: frontend deploy secrets still need adding to the upstream BLUETHUB-OR repo; local monolith + platform changes are not yet committed/pushed to GitHub.

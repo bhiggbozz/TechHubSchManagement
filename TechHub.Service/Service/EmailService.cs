@@ -6,8 +6,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.Mail;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using TechHub.Core.Entities;
 using TechHub.Core.Enum;
@@ -20,6 +23,10 @@ namespace TechHub.Service.Service;
 
 public class EmailService : IEmailService
 {
+    private const string MailtrapSendUrl = "https://send.api.mailtrap.io/api/send";
+
+    private static readonly HttpClient _httpClient = new();
+
     //private readonly IEmailService _realEmailService;
 	private readonly IQueryRepository<EmailTemplate>_templateRepository;
 	private readonly IConfiguration _configuration;
@@ -72,6 +79,72 @@ public class EmailService : IEmailService
 	//public async Task SendAsync(string toEmail,string toName,string subject,string htmlBody)
 	//{
 	public async Task SendAsync(string toEmail, string toName, string subject, string htmlBody)
+	{
+		var provider = _configuration["EmailSettings:Provider"] ?? "Smtp";
+
+		if (provider.Equals("MailtrapApi", StringComparison.OrdinalIgnoreCase))
+		{
+			await SendViaMailtrapApiAsync(toEmail, toName, subject, htmlBody);
+			return;
+		}
+
+		await SendViaSmtpAsync(toEmail, toName, subject, htmlBody);
+	}
+
+	/// <summary>Production path — Mailtrap Email Sending API (token-based, not SMTP).</summary>
+	private async Task SendViaMailtrapApiAsync(string toEmail, string toName, string subject, string htmlBody)
+	{
+		try
+		{
+			var apiToken = _configuration["EmailSettings:MailtrapApiToken"];
+			var fromEmail = _configuration["EmailSettings:FromEmail"];
+			var fromName = _configuration["EmailSettings:FromName"] ?? "TechHub";
+
+			if (string.IsNullOrEmpty(apiToken) || string.IsNullOrEmpty(fromEmail))
+			{
+				_logger.Warning("Mailtrap API settings incomplete; skipping send to {Email}", toEmail);
+				return;
+			}
+
+			var payload = new
+			{
+				from = new { email = fromEmail, name = fromName },
+				to = new object[] { new { email = toEmail, name = toName } },
+				subject,
+				html = htmlBody,
+				category = "TechHub"
+			};
+
+			using var request = new HttpRequestMessage(HttpMethod.Post, MailtrapSendUrl);
+			request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiToken);
+			request.Headers.UserAgent.ParseAdd("TechHub/1.0");
+			request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+			using var response = await _httpClient.SendAsync(request);
+
+			var body = await response.Content.ReadAsStringAsync();
+
+			if (response.IsSuccessStatusCode)
+			{
+				_logger.Information("Email sent to {Email} Subject: {Subject} (HTTP {Status})",
+					toEmail, subject, (int)response.StatusCode);
+			}
+			else
+			{
+				_logger.Warning(
+					"Mailtrap API send failed to {Email} (HTTP {Status}): {Body}",
+					toEmail, (int)response.StatusCode, body);
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex, "Failed to send email to {Email}", toEmail);
+			// Don't throw — email failure should not block user creation.
+		}
+	}
+
+	/// <summary>Sandbox / SMTP path — Mailtrap sandbox host or any SMTP relay.</summary>
+	private async Task SendViaSmtpAsync(string toEmail, string toName, string subject, string htmlBody)
 	{
 		try
 		{

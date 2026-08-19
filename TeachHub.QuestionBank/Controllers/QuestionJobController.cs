@@ -34,21 +34,26 @@ public class QuestionJobController : ControllerBase
 	}
 
 	/// <summary>
-	/// Step 1 — Teacher uploads question image
+	/// Step 1 — Teacher uploads question image (or submits an already-uploaded file)
 	/// Returns JobId immediately (~200ms)
 	/// Teacher stores JobId and polls GetStatus
 	///
 	/// POST api/questionjob/submit
 	/// Body: multipart/form-data
-	///   image       : file
-	///   SubTopicId  : guid
-	///   QuestionType: string  (Objective | Theory | TrueFalse)
-	///   HasImages   : bool
+	///   image        : file (optional — required unless FileUrl/FilePublicId supplied)
+	///   SubTopicId   : guid
+	///   ClassroomId  : guid
+	///   SubjectId    : guid
+	///   QuestionType : string  (Objective | Theory | TrueFalse)
+	///   HasImages    : bool
 	///   MarksAllocation: int
+	///   FileUrl      : string  (optional — pre-uploaded Cloudinary file)
+	///   FilePublicId : string  (optional — pre-uploaded Cloudinary publicId)
+	///   FileType     : string  (optional — "image" | "pdf")
 	/// </summary>
 	[HttpPost("submit")]
 	[Consumes("multipart/form-data")]
-	public async Task<IActionResult> SubmitJob([FromForm] IFormFile image,[FromForm] SubmitQuestionJobViewModel model)
+	public async Task<IActionResult> SubmitJob([FromForm] IFormFile? image,[FromForm] SubmitQuestionJobViewModel model)
 	{
 		var userClaims = User.GetAuthenticatedUserClaims();
 		var result = await _jobService.SubmitJob(image, model, userClaims);

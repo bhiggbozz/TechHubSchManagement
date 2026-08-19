@@ -37,5 +37,15 @@ public class SubmitQuestionJobViewModel
 
 	// Marks for this question
 	public int MarksAllocation { get; set; } = 1;
+
+	// ── Pre-uploaded file reference (frontend direct-to-Cloudinary) ─────
+	// When the frontend already uploaded the file (direct-to-CDN), it can
+	// pass FileUrl + FilePublicId + FileType instead of the `image` file part.
+	public string? FileUrl { get; set; }
+
+	public string? FilePublicId { get; set; }
+
+	// "image" | "pdf" (lowercase, as returned by Cloudinary upload)
+	public string? FileType { get; set; }
 }
 
