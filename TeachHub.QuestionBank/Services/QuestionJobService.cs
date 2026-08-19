@@ -116,33 +116,12 @@ public class QuestionJobService : IQuestionJobService
 				if (!Guid.TryParse(userClaims.SchoolId, out var schoolId))
 					return Fail<SubmitJobResponse>("Invalid school identification");
 
-				// ── Validate file ────────────────────────────────────
-				if (file == null || file.Length == 0)
+				// ── Validate input: raw file OR pre-uploaded reference ─
+				var hasRawFile = file != null && file.Length > 0;
+				var hasUploadedRef = !string.IsNullOrWhiteSpace(model.FilePublicId) || !string.IsNullOrWhiteSpace(model.FileUrl);
+
+				if (!hasRawFile && !hasUploadedRef)
 					return Fail<SubmitJobResponse>("File is required");
-
-				var allowedTypes = new[]
-				{
-                // Images
-                "image/jpeg",
-				"image/jpg",
-				"image/png",
-				"image/webp",
-                // PDF
-                "application/pdf"
-			};
-
-				if (!allowedTypes.Contains(file.ContentType?.ToLower()))
-					return Fail<SubmitJobResponse>(
-						"Only JPEG, PNG, WebP and PDF files are supported");
-
-				var maxSizeMb = 20;  // ← increased for PDFs
-				if (file.Length > maxSizeMb * 1024 * 1024)
-					return Fail<SubmitJobResponse>(
-						$"File cannot exceed {maxSizeMb}MB");
-
-				// ── Determine file type ──────────────────────────────
-				var isPdf = file.ContentType?.ToLower() == "application/pdf";
-				var fileType = isPdf ? "PDF" : "Image";
 
 				// ── Validate question type ───────────────────────────
 				var validTypes = new[] { "Objective", "Theory", "TrueFalse" };
@@ -160,32 +139,78 @@ public class QuestionJobService : IQuestionJobService
 				if (subTopic == null || subTopic.IsDeleted || subTopic.SchoolId != schoolId)
 					return Fail<SubmitJobResponse>("SubTopic not found");
 				var jobId = Guid.NewGuid();
-				var mediaKey = $"qjob_{jobId}";
 
-				// ── Upload to correct storage based on file type ─────────────────
-				CloudinaryUploadResult uploadResult;
+				// ── Resolve the source file ───────────────────────────
+				string fileType;
+				string tempPath;
 
-				if (isPdf)
+				if (hasRawFile)
 				{
-					// PDF → Supabase (raw file, downloadable)
-					using var stream = file.OpenReadStream();
-					uploadResult = await _cloudinaryService.UploadToSupabaseAsync(
-						stream, file.FileName, schoolId);
+					var allowedTypes = new[]
+					{
+						// Images
+						"image/jpeg",
+						"image/jpg",
+						"image/png",
+						"image/webp",
+						// PDF
+						"application/pdf"
+					};
+
+					if (!allowedTypes.Contains(file.ContentType?.ToLower()))
+						return Fail<SubmitJobResponse>(
+							"Only JPEG, PNG, WebP and PDF files are supported");
+
+					var maxSizeMb = 20;  // ← increased for PDFs
+					if (file.Length > maxSizeMb * 1024 * 1024)
+						return Fail<SubmitJobResponse>(
+							$"File cannot exceed {maxSizeMb}MB");
+
+					// ── Determine file type ──────────────────────────
+					var isPdf = file.ContentType?.ToLower() == "application/pdf";
+					fileType = isPdf ? "PDF" : "Image";
+					var mediaKey = $"qjob_{jobId}";
+
+					// ── Upload to correct storage based on file type ─
+					CloudinaryUploadResult uploadResult;
+
+					if (isPdf)
+					{
+						// PDF → Supabase (raw file, downloadable)
+						using var stream = file.OpenReadStream();
+						uploadResult = await _cloudinaryService.UploadToSupabaseAsync(
+							stream, file.FileName, schoolId);
+					}
+					else
+					{
+						// Image → Cloudinary (optimized, temp)
+						using var stream = file.OpenReadStream();
+						uploadResult = await _cloudinaryService.UploadMediaAsync(
+							stream, mediaKey, schoolId, MediaType.Image, isTemporary: true);
+					}
+
+					if (!uploadResult.Success)
+					{
+						_logger.Error(
+							"File upload failed - JobId: {JobId}, Error: {Error}",
+							jobId, uploadResult.ErrorMessage);
+						return Fail<SubmitJobResponse>("Failed to save file. Please try again");
+					}
+
+					tempPath = uploadResult.PublicId;
 				}
 				else
 				{
-					// Image → Cloudinary (optimized, temp)
-					using var stream = file.OpenReadStream();
-					uploadResult = await _cloudinaryService.UploadMediaAsync(
-						stream, mediaKey, schoolId, MediaType.Image, isTemporary: true);
-				}
+					// Frontend already uploaded to Cloudinary (direct-to-CDN).
+					// Reuse the reference instead of re-uploading the bytes.
+					var uploadedType = model.FileType?.Trim().ToLower();
+					fileType = uploadedType is "pdf" or "application/pdf" ? "PDF" : "Image";
 
-				if (!uploadResult.Success)
-				{
-					_logger.Error(
-						"File upload failed - JobId: {JobId}, Error: {Error}",
-						jobId, uploadResult.ErrorMessage);
-					return Fail<SubmitJobResponse>("Failed to save file. Please try again");
+					if (string.IsNullOrWhiteSpace(model.FilePublicId))
+						return Fail<SubmitJobResponse>(
+							"FilePublicId is required when submitting an uploaded file");
+
+					tempPath = model.FilePublicId;
 				}
 
 				// ── Create QuestionJob record ─────────────────────────────────────
@@ -203,7 +228,7 @@ public class QuestionJobService : IQuestionJobService
 					QuestionType = model.QuestionType,
 					HasImages = model.HasImages,
 					FileType = fileType,           // "PDF" | "Image"
-					TempImagePath = uploadResult.PublicId, // Supabase path or Cloudinary publicId
+					TempImagePath = tempPath, // Cloudinary publicId, Supabase path, or pre-uploaded publicId
 					Status = "Pending",
 					AttemptCount = 0,
 					CreatedAt = now,
@@ -2104,32 +2129,50 @@ STRICT RULES:
 			if (string.IsNullOrWhiteSpace(publicId))
 				return null;
 
-			// Build URL directly from publicId — no reconstruction
-			var url = _cloudinaryService.GetRawUrl(publicId);
+			// Build URL directly from publicId — no reconstruction.
+			// Direct-to-Cloudinary uploads may store a publicId that already ends
+			// with the file extension (e.g. "...photo.jpg"). Cloudinary treats the
+			// trailing extension as the FORMAT and strips it from the public_id it
+			// looks up, so the resource is never found (404). Try the plain URL
+			// first, then the doubled-extension variant that resolves the resource
+			// whose public_id literally ends in the extension.
+			var candidates = new List<string> { _cloudinaryService.GetRawUrl(publicId) };
 
-			_logger.Information(
-				"Downloading temp image - PublicId: {PublicId}, URL: {Url}",
-				publicId, url);
+			var knownExts = new[] { ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".avif", ".pdf" };
+			var ext = knownExts.FirstOrDefault(e =>
+				publicId.EndsWith(e, StringComparison.OrdinalIgnoreCase));
+
+			if (ext is not null)
+				candidates.Add(_cloudinaryService.GetRawUrl(publicId + ext));
 
 			using var httpClient = new System.Net.Http.HttpClient();
 			httpClient.Timeout = TimeSpan.FromSeconds(30);
 
-			var response = await httpClient.GetAsync(url);
-
-			if (!response.IsSuccessStatusCode)
+			foreach (var url in candidates)
 			{
-				_logger.Error(
-					"Image download failed - Status: {Status}, URL: {Url}",
-					response.StatusCode, url);
-				return null;
+				_logger.Information(
+					"Downloading temp image - PublicId: {PublicId}, URL: {Url}",
+					publicId, url);
+
+				var response = await httpClient.GetAsync(url);
+
+				if (!response.IsSuccessStatusCode)
+				{
+					_logger.Warning(
+						"Image download failed - Status: {Status}, URL: {Url}",
+						response.StatusCode, url);
+					continue;
+				}
+
+				var bytes = await response.Content.ReadAsByteArrayAsync();
+
+				_logger.Information(
+					"Image downloaded successfully - Size: {Size} bytes", bytes.Length);
+
+				return bytes;
 			}
 
-			var bytes = await response.Content.ReadAsByteArrayAsync();
-
-			_logger.Information(
-				"Image downloaded successfully - Size: {Size} bytes", bytes.Length);
-
-			return bytes;
+			return null;
 		}
 		catch (Exception ex)
 		{
