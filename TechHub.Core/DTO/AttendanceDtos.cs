@@ -18,6 +18,14 @@ namespace TechHub.Core.DTO
 		public bool IsPresent { get; set; }
 		public bool IsManual { get; set; }
 		public string AttendedAt { get; set; }
+
+		/// <summary>
+		/// True when this scan matched a record that already existed for this
+		/// student in this session (no new record was created). Lets the
+		/// frontend show a distinct "already marked present" notification
+		/// instead of treating every 200 response the same.
+		/// </summary>
+		public bool AlreadyMarked { get; set; }
 	}
 
 	public class AttendanceSessionDto

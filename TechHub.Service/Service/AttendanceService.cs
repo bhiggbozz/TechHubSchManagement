@@ -349,7 +349,7 @@ var schoolId = ParseSchoolId(claims);
 							ResponseCode = ResponseCode.successful,
 							ResponseMessage = "Student already marked present",
 							Status = "successful",
-							Data = await BuildRecordDtoAsync(existing.Id, sessionId, schoolId)
+							Data = await BuildRecordDtoAsync(existing.Id, sessionId, schoolId, alreadyMarked: true)
 						};
 					}
 
@@ -1546,7 +1546,7 @@ var schoolId = ParseSchoolId(claims);
 			};
 		}
 
-		private async Task<object> BuildRecordDtoAsync(Guid recordId, Guid sessionId, Guid schoolId)
+		private async Task<object> BuildRecordDtoAsync(Guid recordId, Guid sessionId, Guid schoolId, bool alreadyMarked = false)
 		{
 			var record = await _recordQueryRepo.Get(recordId);
 			if (record is null || record.SessionId != sessionId || record.SchoolId != schoolId)
@@ -1562,7 +1562,8 @@ var schoolId = ParseSchoolId(claims);
 				StudentName = student is null ? string.Empty : $"{student.FirstName} {student.LastName}".Trim(),
 				IsPresent = record.IsPresent,
 				IsManual = record.IsManual,
-				AttendedAt = record.AttendedAt
+				AttendedAt = record.AttendedAt,
+				AlreadyMarked = alreadyMarked
 			};
 		}
 
