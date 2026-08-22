@@ -240,18 +240,24 @@ namespace TechHub.Service.Service
 					_logger.Information(
 						"First time login - UserId: {UserId}", user.Id);
 
-					var loginHistoryFirst = new LoginHistory
-					{
-						UserId = user.Id,
-						RoleId = user.RoleId,
-						PasswordFailed = false
-					};
-
-					await _commandRepositoryLoginHistory.Create(loginHistoryFirst);
+					// No LoginHistory row is written here on purpose: this branch must
+					// stay reachable on every attempt until the password is actually
+					// changed (UpdatePasswordFirstTime writes the first row on success).
+					// Writing it here on a mere attempt would let a failed password
+					// update silently fall through to a normal login next time, since
+					// the temp password would still match Users.HashPassword.
+					var schInfoFirst = await _queryrepositorySchool.Get(user.SchoolId);
+					var mappedSchInfoFirst = _mapper.Map<SchoolResponseModel>(schInfoFirst);
 
 					return new UserLoginResponse
 					{
-						SchoolInfo = new SchoolResponseModel { Id = user.SchoolId },
+						Id = user.Id,
+						FirstName = user.FirstName,
+						LastName = user.LastName,
+						EmailAddress = user.EmailAddress,
+						RoleId = user.RoleId,
+						IsActive = user.IsActive,
+						SchoolInfo = mappedSchInfoFirst,
 						FirstTimeLogin = true,
 						ResponseCode = ResponseCode.successful,
 						ResponseMessage = "First time login",
@@ -1234,7 +1240,7 @@ namespace TechHub.Service.Service
 					};
 
 				var loginHistory = await LastLoginHistorys(user.Id);
-				if (loginHistory.Count() != 1)
+				if (loginHistory.Any())
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Forbidden,

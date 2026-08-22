@@ -909,6 +909,14 @@ public class SchoolService : ISchoolService
                     <li><strong>Tenant ID:</strong> {tenantIdentifier}</li>
                     <li><strong>Location:</strong> {location}</li>
                 </ul>
+                <p style='margin-top: 24px;'>
+                    <a href='https://{tenantIdentifier}.bluetsch.com'
+                       style='background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; display: inline-block;'>
+                        Go to Your School Portal
+                    </a>
+                </p>
+                <p style='color: #64748b; font-size: 12px;'>Or paste this link into your browser:<br/>
+                    https://{tenantIdentifier}.bluetsch.com</p>
                 <h3>Admin Login Credentials</h3>
                 <ul>
                     <li><strong>Username:</strong> {adminUsername}</li>
