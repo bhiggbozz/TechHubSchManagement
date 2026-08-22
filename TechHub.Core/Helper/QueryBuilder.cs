@@ -59,7 +59,7 @@ namespace TechHub.Core.Helper
 		public static string GenerateGetQueryByProperties( string propertyName)
 		{
 			var tableName = typeof(TEntity).Name;
-			return $"select * from {tableName} where {propertyName} = '@{propertyName}'";
+			return $"select * from {tableName} where {propertyName} = @{propertyName}";
 		}
 
 		/// <summary>

@@ -38,6 +38,8 @@ namespace TechHub.Service.Interface
 		Task<SubjectsListResponse> GetAllSubjects(AuthenticatedUserClaims userInfo,int? classCategory = null,int? subjectCategory = null,int pageNumber = 1,int pageSize = 50);
 		Task<BaseResponse> UpdateClassroomTeachers(UpdateClassroomTeachersViewModel updateClassroomTeachersViewModel,AuthenticatedUserClaims userInfo);
 		Task<BaseResponse> UpdateSchoolLogoAsync(IFormFile logo, AuthenticatedUserClaims userClaims);
+		Task<BaseResponse> GetSchoolLogoSetupStatusAsync(Guid schoolId);
+		Task<BaseResponse> UploadSchoolLogoSetupAsync(Guid schoolId, IFormFile logo);
 
 		Task<CreateTopicResponse> CreateTopic(CreateTopicViewModel model,AuthenticatedUserClaims userClaims);
 

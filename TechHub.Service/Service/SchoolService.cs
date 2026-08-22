@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using Azure;
 using Dapper;
 using Microsoft.AspNetCore.Http;
@@ -419,7 +419,7 @@ namespace TechHub.Service.Service
 						await _studentClassCommandRespository.CreateBatchAsync(
 							scope.Transaction, scope.Connection, classroomsToCreate);
 
-						// Insert classroom subjects — only if any were provided
+						// Insert classroom subjects � only if any were provided
 						if (subjectsToCreate.Any())
 						{
 							await _classroomSubjectCommandRespository.CreateBatchAsync(
@@ -2348,7 +2348,7 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				// Validate file size — max 2MB for logos
+				// Validate file size � max 2MB for logos
 				if (logo.Length > 2 * 1024 * 1024)
 				{
 					return new BaseResponse
@@ -2419,6 +2419,224 @@ namespace TechHub.Service.Service
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
 					ResponseMessage = "An error occurred while " + "updating school logo",
+					Status = "failed"
+				};
+			}
+		}
+
+		private sealed class SchoolLogoInfo
+		{
+			public Guid Id { get; set; }
+			public string SchoolName { get; set; } = string.Empty;
+			public string? LogoUrl { get; set; }
+		}
+
+		/// <summary>
+		/// Resolves an active school by its Id.
+		/// </summary>
+		private async Task<SchoolLogoInfo?> GetSchoolLogoInfoAsync(Guid schoolId)
+		{
+			if (_connString == null)
+				return null;
+
+			using var conn = new Microsoft.Data.SqlClient.SqlConnection(_connString);
+
+			return await conn.QueryFirstOrDefaultAsync<SchoolLogoInfo>(
+				@"SELECT TOP 1 Id, SchoolName, LogoUrl
+				  FROM School
+				  WHERE Id = @SchoolId AND IsActive = 1",
+				new { SchoolId = schoolId });
+		}
+
+		private static bool IsValidLogoFile(IFormFile? logo, out string error)
+		{
+			error = string.Empty;
+
+			var allowedTypes = new[]
+			{"image/jpeg", "image/png", "image/webp", "image/svg+xml"};
+
+			if (!allowedTypes.Contains(logo.ContentType.ToLower()))
+			{
+				error = "Only JPEG, PNG, WebP and SVG files are allowed";
+				return false;
+			}
+
+			if (logo.Length > 2 * 1024 * 1024)
+			{
+				error = "Logo must be less than 2MB";
+				return false;
+			}
+
+			return true;
+		}
+
+		/// <summary>
+		/// Public (pre-login) logo setup status for a newly approved school,
+		/// resolved by school Id.
+		/// </summary>
+		public async Task<BaseResponse> GetSchoolLogoSetupStatusAsync(Guid schoolId)
+		{
+			try
+			{
+				if (schoolId == Guid.Empty)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "School Id is required",
+						Status = "failed"
+					};
+				}
+
+				var school = await GetSchoolLogoInfoAsync(schoolId);
+
+				if (school is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "School not found",
+						Status = "failed"
+					};
+				}
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = school.LogoUrl != null ? "Logo already uploaded" : "Logo upload pending",
+					Status = "successful",
+					Data = new SchoolLogoSetupStatus
+					{
+						SchoolId = school.Id,
+						SchoolName = school.SchoolName,
+						LogoUrl = school.LogoUrl,
+						HasLogo = !string.IsNullOrEmpty(school.LogoUrl)
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error getting logo setup status - SchoolId: {SchoolId}", schoolId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while checking logo status",
+					Status = "failed"
+				};
+			}
+		}
+
+		/// <summary>
+		/// One-time public logo upload for a newly approved school. Rejects the
+		/// upload if a logo has already been saved for the school.
+		/// </summary>
+		public async Task<BaseResponse> UploadSchoolLogoSetupAsync(Guid schoolId, IFormFile logo)
+		{
+			try
+			{
+				if (schoolId == Guid.Empty)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "School Id is required",
+						Status = "failed"
+					};
+				}
+
+				if (logo == null || logo.Length == 0)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Logo file is required",
+						Status = "failed"
+					};
+				}
+
+				if (!IsValidLogoFile(logo, out var validationError))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = validationError,
+						Status = "failed"
+					};
+				}
+
+				var school = await GetSchoolLogoInfoAsync(schoolId);
+
+				if (school is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "School not found",
+						Status = "failed"
+					};
+				}
+
+				// Guard: only one logo upload allowed through this flow.
+				// Replacements go through PUT /api/School/logo with a JWT.
+				if (!string.IsNullOrEmpty(school.LogoUrl))
+				{
+					_logger.Warning("Duplicate logo setup attempt - SchoolId: {SchoolId}", schoolId);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Conflict,
+						ResponseMessage = "A logo has already been uploaded for this school",
+						Status = "failed"
+					};
+				}
+
+				using var stream = logo.OpenReadStream();
+
+				var uploadResult = await _cloudinaryService.UploadSchoolLogoAsync(stream, logo.FileName, school.Id);
+
+				if (!uploadResult.Success)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.ErrorOccured,
+						ResponseMessage = "Failed to upload logo: " + uploadResult.ErrorMessage,
+						Status = "failed"
+					};
+				}
+
+				var updateDict = new Dictionary<string, object>
+				{
+					{ "LogoUrl", uploadResult.SecureUrl },
+					{ "LogoPublicId", uploadResult.PublicId },
+					{ "ModifiedDate", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") }
+				};
+
+				await _schCommandRespository.UpdateTableColumnById(updateDict, new KeyValuePair<string, object>("Id", school.Id));
+
+				_logger.Information("School logo uploaded via setup page - SchoolId: {SchoolId}, Url: {Url}",
+					school.Id, uploadResult.SecureUrl);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "School logo uploaded successfully",
+					Status = "successful",
+					Data = new UpdateSchoolLogoResponse
+					{
+						LogoUrl = uploadResult.SecureUrl,
+						PublicId = uploadResult.PublicId
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error uploading school logo via setup page - SchoolId: {SchoolId}", schoolId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while uploading school logo",
 					Status = "failed"
 				};
 			}
@@ -3339,7 +3557,7 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Authorization ─────────────────────────────────────────────
+				// -- Authorization ---------------------------------------------
 				if (requesterRole == UserRole.Administrator)
 				{
 					var hasPermission = await this.HasPermission(requesterId, schoolId, AdminPermission.ManageTeachers);
@@ -3362,7 +3580,7 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				// ── Verify teacher exists and belongs to school ───────────────
+				// -- Verify teacher exists and belongs to school ---------------
 				var teacher = await _queryrepositoryUser.Get(teacherId);
 				if (teacher == null || teacher.SchoolId != schoolId)
 					return new BaseResponse
@@ -3388,7 +3606,7 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Verify all incoming classrooms exist and belong to school ─
+				// -- Verify all incoming classrooms exist and belong to school -
 				foreach (var classroomId in model.ClassroomIds)
 				{
 					var classroom = await _studentClassQueryRespository.Get(classroomId);
@@ -3401,7 +3619,7 @@ namespace TechHub.Service.Service
 						};
 				}
 
-				// ── Fetch current active classroom assignments ─────────────────
+				// -- Fetch current active classroom assignments -----------------
 				var currentQuery = $@"
 					SELECT ClassroomId FROM TeacherClassroom
 					WHERE  TeacherId = '{teacherId}'
@@ -3413,7 +3631,7 @@ namespace TechHub.Service.Service
 				var currentClassroomIds = currentRows.Select(r => r.ClassroomId).ToHashSet();
 				var incomingClassroomIds = model.ClassroomIds.ToHashSet();
 
-				// ── Diff ───────────────────────────────────────────────────────
+				// -- Diff -------------------------------------------------------
 				var toAdd = incomingClassroomIds.Except(currentClassroomIds).ToList();
 				var toRemove = currentClassroomIds.Except(incomingClassroomIds).ToList();
 
@@ -3421,7 +3639,7 @@ namespace TechHub.Service.Service
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.successful,
-						ResponseMessage = "No changes detected — classrooms are already up to date",
+						ResponseMessage = "No changes detected � classrooms are already up to date",
 						Status = "successful"
 					};
 
@@ -3430,7 +3648,7 @@ namespace TechHub.Service.Service
 				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
 				try
 				{
-					// ── Soft delete removed classrooms ────────────────────────
+					// -- Soft delete removed classrooms ------------------------
 					foreach (var classroomId in toRemove)
 					{
 						var softDelete = $@"
@@ -3445,7 +3663,7 @@ namespace TechHub.Service.Service
 						await scope.Connection.ExecuteAsync(softDelete, transaction: scope.Transaction);
 					}
 
-					// ── Insert new classrooms ─────────────────────────────────
+					// -- Insert new classrooms ---------------------------------
 					foreach (var classroomId in toAdd)
 					{
 						var insertDict = new Dictionary<string, object>
@@ -3477,7 +3695,7 @@ namespace TechHub.Service.Service
 					"Added: {Added}, Removed: {Removed}, UpdatedBy: {RequesterId}",
 					teacherId, toAdd.Count, toRemove.Count, requesterId);
 
-				// ── Fetch updated assignments to return ───────────────────────
+				// -- Fetch updated assignments to return -----------------------
 				var updatedQuery = $@"
 					SELECT
 						tc.ClassroomId,
@@ -4037,7 +4255,7 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// Single query — topics + subtopics joined
+				// Single query � topics + subtopics joined
 				var query = $@"
 					SELECT
 						t.Id           AS TopicId,
@@ -4570,7 +4788,7 @@ namespace TechHub.Service.Service
 						};
 				}
 
-				// ── Check duplicate topic names within request ─────────────────
+				// -- Check duplicate topic names within request -----------------
 				var topicNames = model.Topics.Select(t => t.Name.Trim()).ToList();
 				if (topicNames.Count != topicNames.Distinct(StringComparer.OrdinalIgnoreCase).Count())
 					return new BaseResponse
@@ -4580,7 +4798,7 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Verify subject exists and belongs to school ───────────────
+				// -- Verify subject exists and belongs to school ---------------
 				var subject = await _queryrepositorySubject.Get(subjectId);
 				if (subject == null || subject.SchoolId != schoolId)
 					return new BaseResponse
@@ -4590,7 +4808,7 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Check for existing topic names in DB ──────────────────────
+				// -- Check for existing topic names in DB ----------------------
 				var sanitizedTopicNames = string.Join(",",topicNames.Select(n => $"'{StringSanitizer.Sanitize(n)}'"));
 
 				var existingTopicsQuery = $@"
@@ -4613,7 +4831,7 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				// ── Fetch teacher for approval check ──────────────────────────
+				// -- Fetch teacher for approval check --------------------------
 				var teacher = await _queryrepositoryUser.Get(userId);
 				if (teacher is null)
 					return new BaseResponse
@@ -4637,7 +4855,7 @@ namespace TechHub.Service.Service
 				var nowStr = now.ToString("yyyy-MM-dd HH:mm:ss");
 				var isActive = !requiresApproval;
 
-				// ── Build topic and subtopic dicts ────────────────────────────
+				// -- Build topic and subtopic dicts ----------------------------
 				var topicDicts = new List<Dictionary<string, object>>();
 				var subTopicDicts = new List<Dictionary<string, object>>();
 				var topicResults = new List<object>();
@@ -4688,15 +4906,15 @@ namespace TechHub.Service.Service
 				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
 				try
 				{
-					// ── Batch insert topics ───────────────────────────────────
+					// -- Batch insert topics -----------------------------------
 					await _topicCommandRepository.CreateBatchAsync(
 						scope.Transaction, scope.Connection, topicDicts);
 
-					// ── Batch insert subtopics ────────────────────────────────
+					// -- Batch insert subtopics --------------------------------
 					await _subTopicCommandRepository.CreateBatchAsync(
 						scope.Transaction, scope.Connection, subTopicDicts);
 
-					// ── Approval request for teachers ─────────────────────────
+					// -- Approval request for teachers -------------------------
 					if (requiresApproval)
 					{
 						var expiryDays = int.Parse(
@@ -5554,6 +5772,14 @@ _logger.Information(
 									<li><strong>Tenant ID:</strong> {request.TenantIdentifier}</li>
 									<li><strong>Location:</strong> {request.Location}</li>
 								</ul>
+								<p style='margin-top: 24px;'>
+									<a href='https://{request.TenantIdentifier}.bluetsch.com/api/School/logo-setup/{schoolId}'
+									   style='background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; display: inline-block;'>
+										Upload Your School Logo
+									</a>
+								</p>
+								<p style='color: #64748b; font-size: 12px;'>Or paste this link into your browser:<br/>
+									https://{request.TenantIdentifier}.bluetsch.com/api/School/logo-setup/{schoolId}</p>
 								<h3>Admin Login Credentials</h3>
 								<ul>
 									<li><strong>Username:</strong> {request.AdminUsername}</li>

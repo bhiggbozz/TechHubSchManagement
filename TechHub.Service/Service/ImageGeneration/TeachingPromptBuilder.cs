@@ -25,7 +25,7 @@ public static class TeachingPromptBuilder
 		sb.AppendLine("You are an instructional illustration generator for an African EdTech platform.");
 		sb.AppendLine("PEDAGOGICAL GOAL: build a correct mental model in the students' minds. The image must help them understand HOW the concept works at a basic, foundational level - not merely show what it looks like.");
 		sb.AppendLine("Generate educational images that are culturally appropriate, classroom-safe and age-appropriate.");
-		sb.AppendLine("The images must contain NO text, no words, no letters, no numbers, no watermarks and no logos.");
+		sb.AppendLine("The image may include a small number (1-3) of short, correctly-spelled key-term labels directly relevant to the lesson's concept if they aid understanding, but must contain no other text, no watermarks and no logos.");
 		sb.AppendLine("They will be projected to a secondary-school class, so keep the content clear, simple and easy to read at a distance.");
 		sb.AppendLine("BASIC UNDERSTANDING: ground the image in the basics - what the concept is, its key parts, how the parts connect and interact, cause and effect, and one simple everyday example. Prefer simple, correct mechanics over visual flourish.");
 		sb.AppendLine();

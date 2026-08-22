@@ -74,49 +74,61 @@ public class OpenAiImageGenerationAgent : IImageGenerationAgent
 			if (!string.IsNullOrWhiteSpace(_options.Quality))
 				payload["quality"] = _options.Quality;
 
-			using var httpRequest = new HttpRequestMessage(HttpMethod.Post, baseUrl + endpoint);
-			httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
-			httpRequest.Content = new StringContent(
-				JsonSerializer.Serialize(payload),
-				Encoding.UTF8,
-				"application/json");
-
-			_logger.Information("Calling OpenAI agent - Model: {Model}, Size: {Size}", model, ResolveSize(request));
-
-			using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
-			if (!response.IsSuccessStatusCode)
+			for (var attempt = 1; attempt <= ImageGenerationRetryPolicy.MaxAttempts; attempt++)
 			{
-				var body = await response.Content.ReadAsStringAsync(cancellationToken);
-				_logger.Error("OpenAI generation failed - Status: {Status}, Body: {Body}",
-					(int)response.StatusCode, Truncate(body, 1000));
+				using var httpRequest = new HttpRequestMessage(HttpMethod.Post, baseUrl + endpoint);
+				httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+				httpRequest.Content = new StringContent(
+					JsonSerializer.Serialize(payload),
+					Encoding.UTF8,
+					"application/json");
+
+				_logger.Information("Calling OpenAI agent - Model: {Model}, Size: {Size}, Attempt: {Attempt}", model, ResolveSize(request), attempt);
+
+				using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+				if (!response.IsSuccessStatusCode)
+				{
+					var body = await response.Content.ReadAsStringAsync(cancellationToken);
+					_logger.Error("OpenAI generation failed - Status: {Status}, Attempt: {Attempt}, Body: {Body}",
+						(int)response.StatusCode, attempt, Truncate(body, 1000));
+
+					if (ImageGenerationRetryPolicy.IsTransient(response.StatusCode) && attempt < ImageGenerationRetryPolicy.MaxAttempts)
+					{
+						await Task.Delay(ImageGenerationRetryPolicy.GetDelay(attempt), cancellationToken);
+						continue;
+					}
+
+					return new ImageGenerationResult
+					{
+						Success = false,
+						ErrorMessage = $"Image provider error ({(int)response.StatusCode})"
+					};
+				}
+
+				var json = await response.Content.ReadAsStringAsync(cancellationToken);
+				using var doc = JsonDocument.Parse(json);
+				var data = doc.RootElement.GetProperty("data");
+				if (data.GetArrayLength() == 0 ||
+					!data[0].TryGetProperty("b64_json", out var b64) ||
+					string.IsNullOrWhiteSpace(b64.GetString()))
+				{
+					return new ImageGenerationResult { Success = false, ErrorMessage = "Image provider returned no image data" };
+				}
+
+				var bytes = Convert.FromBase64String(b64.GetString()!);
+
+				_logger.Information("OpenAI generation succeeded - Bytes: {Bytes}, Attempt: {Attempt}", bytes.Length, attempt);
+
 				return new ImageGenerationResult
 				{
-					Success = false,
-					ErrorMessage = $"Image provider error ({(int)response.StatusCode})"
+					Success = true,
+					ImageBytes = bytes,
+					ContentType = "image/png",
+					ModelUsed = model
 				};
 			}
 
-			var json = await response.Content.ReadAsStringAsync(cancellationToken);
-			using var doc = JsonDocument.Parse(json);
-			var data = doc.RootElement.GetProperty("data");
-			if (data.GetArrayLength() == 0 ||
-				!data[0].TryGetProperty("b64_json", out var b64) ||
-				string.IsNullOrWhiteSpace(b64.GetString()))
-			{
-				return new ImageGenerationResult { Success = false, ErrorMessage = "Image provider returned no image data" };
-			}
-
-			var bytes = Convert.FromBase64String(b64.GetString()!);
-
-			_logger.Information("OpenAI generation succeeded - Bytes: {Bytes}", bytes.Length);
-
-			return new ImageGenerationResult
-			{
-				Success = true,
-				ImageBytes = bytes,
-				ContentType = "image/png",
-				ModelUsed = model
-			};
+			return new ImageGenerationResult { Success = false, ErrorMessage = "Image generation failed after retries" };
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{

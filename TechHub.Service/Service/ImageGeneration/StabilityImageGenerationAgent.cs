@@ -59,53 +59,66 @@ public class StabilityImageGenerationAgent : IImageGenerationAgent
 			var endpoint = string.IsNullOrWhiteSpace(_options.Endpoint) ? DefaultEndpoint : _options.Endpoint;
 			var url = baseUrl + endpoint;
 
-			using var form = new MultipartFormDataContent();
-			form.Add(new StringContent(request.Prompt), "prompt");
-
-			if (!string.IsNullOrWhiteSpace(request.NegativePrompt))
-				form.Add(new StringContent(request.NegativePrompt), "negative_prompt");
-
 			var width = Math.Clamp(request.Width ?? 1024, 256, MaxDimension);
 			var height = Math.Clamp(request.Height ?? 1024, 256, MaxDimension);
-			form.Add(new StringContent(width.ToString()), "width");
-			form.Add(new StringContent(height.ToString()), "height");
-			form.Add(new StringContent("png"), "output_format");
 
-			using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url);
-			httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
-			httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/*"));
-			httpRequest.Content = form;
-
-			_logger.Information("Calling Stability agent - Width: {Width}, Height: {Height}", width, height);
-
-			using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
-			if (!response.IsSuccessStatusCode)
+			for (var attempt = 1; attempt <= ImageGenerationRetryPolicy.MaxAttempts; attempt++)
 			{
-				var body = await response.Content.ReadAsStringAsync(cancellationToken);
-				_logger.Error("Stability generation failed - Status: {Status}, Body: {Body}",
-					(int)response.StatusCode, Truncate(body, 1000));
+				using var form = new MultipartFormDataContent();
+				form.Add(new StringContent(request.Prompt), "prompt");
+
+				if (!string.IsNullOrWhiteSpace(request.NegativePrompt))
+					form.Add(new StringContent(request.NegativePrompt), "negative_prompt");
+
+				form.Add(new StringContent(width.ToString()), "width");
+				form.Add(new StringContent(height.ToString()), "height");
+				form.Add(new StringContent("png"), "output_format");
+
+				using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url);
+				httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+				httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/*"));
+				httpRequest.Content = form;
+
+				_logger.Information("Calling Stability agent - Width: {Width}, Height: {Height}, Attempt: {Attempt}", width, height, attempt);
+
+				using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+				if (!response.IsSuccessStatusCode)
+				{
+					var body = await response.Content.ReadAsStringAsync(cancellationToken);
+					_logger.Error("Stability generation failed - Status: {Status}, Attempt: {Attempt}, Body: {Body}",
+						(int)response.StatusCode, attempt, Truncate(body, 1000));
+
+					if (ImageGenerationRetryPolicy.IsTransient(response.StatusCode) && attempt < ImageGenerationRetryPolicy.MaxAttempts)
+					{
+						await Task.Delay(ImageGenerationRetryPolicy.GetDelay(attempt), cancellationToken);
+						continue;
+					}
+
+					return new ImageGenerationResult
+					{
+						Success = false,
+						ErrorMessage = $"Image provider error ({(int)response.StatusCode})"
+					};
+				}
+
+				var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+				if (bytes == null || bytes.Length == 0)
+					return new ImageGenerationResult { Success = false, ErrorMessage = "Image provider returned an empty response" };
+
+				var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/png";
+
+				_logger.Information("Stability generation succeeded - Bytes: {Bytes}, Type: {Type}, Attempt: {Attempt}", bytes.Length, contentType, attempt);
+
 				return new ImageGenerationResult
 				{
-					Success = false,
-					ErrorMessage = $"Image provider error ({(int)response.StatusCode})"
+					Success = true,
+					ImageBytes = bytes,
+					ContentType = contentType,
+					ModelUsed = _options.Model
 				};
 			}
 
-			var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-			if (bytes == null || bytes.Length == 0)
-				return new ImageGenerationResult { Success = false, ErrorMessage = "Image provider returned an empty response" };
-
-			var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/png";
-
-			_logger.Information("Stability generation succeeded - Bytes: {Bytes}, Type: {Type}", bytes.Length, contentType);
-
-			return new ImageGenerationResult
-			{
-				Success = true,
-				ImageBytes = bytes,
-				ContentType = contentType,
-				ModelUsed = _options.Model
-			};
+			return new ImageGenerationResult { Success = false, ErrorMessage = "Image generation failed after retries" };
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{

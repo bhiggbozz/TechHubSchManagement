@@ -2837,6 +2837,234 @@ public class QuizService : IQuizService
 		}
 	}
 
+	public Task<BaseResponse> GetStudentQuizPerformanceBySubject(Guid studentId, Guid subjectId, AuthenticatedUserClaims claims)
+		=> GetStudentQuizPerformanceScoped(studentId, claims, subjectId: subjectId);
+
+	public Task<BaseResponse> GetStudentQuizPerformanceBySubTopic(Guid studentId, Guid subTopicId, AuthenticatedUserClaims claims)
+		=> GetStudentQuizPerformanceScoped(studentId, claims, subTopicId: subTopicId);
+
+	private async Task<BaseResponse> GetStudentQuizPerformanceScoped(Guid studentId, AuthenticatedUserClaims claims, Guid? subjectId = null, Guid? subTopicId = null)
+	{
+		using (LogContext.PushProperty("RequestedBy", claims.UserId))
+		{
+			try
+			{
+				if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+					return Unauthorized();
+
+				if (!Guid.TryParse(claims.UserId, out var requesterId))
+					return Unauthorized();
+
+				if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
+					return Unauthorized();
+
+				bool isTeacherOrAdmin = role switch
+				{
+					UserRole.Administrator or UserRole.SuperAdministrator
+						or UserRole.HeadTeacher or UserRole.SubjectTeacher
+						or UserRole.ClassTeacher => true,
+					_ => false
+				};
+
+				if (role == UserRole.Student && studentId != requesterId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You can only view your own quiz performance",
+						Status = "failed"
+					};
+
+				if (!isTeacherOrAdmin && role != UserRole.Student)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You do not have permission to view quiz performance",
+						Status = "failed"
+					};
+
+				string subjectName = string.Empty;
+				string subTopicName = string.Empty;
+				Guid? topicId = null;
+
+				if (subjectId.HasValue)
+				{
+					var subjects = await _lessonQuery.QueryAsync<SubjectScopeRowDto>(@"
+                        SELECT Id, Subject AS Name
+                        FROM Subjects
+                        WHERE Id = @SubjectId
+                        AND   SchoolId = @SchoolId
+                        AND   IsActive = 1", new Dictionary<string, object>
+					{
+						{ "SubjectId", subjectId.Value },
+						{ "SchoolId", schoolId }
+					});
+
+					var subject = subjects.FirstOrDefault();
+					if (subject == null)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Subject not found",
+							Status = "failed"
+						};
+
+					subjectName = subject.Name;
+				}
+				else if (subTopicId.HasValue)
+				{
+					var subTopics = await _lessonQuery.QueryAsync<SubTopicScopeRowDto>(@"
+                        SELECT st.Id, st.Name, st.TopicId, s.Subject AS SubjectName
+                        FROM SubTopic st
+                        JOIN Topic t ON t.Id = st.TopicId
+                        LEFT JOIN Subjects s ON s.Id = t.SubjectId
+                        WHERE st.Id = @SubTopicId
+                        AND   st.SchoolId = @SchoolId
+                        AND   st.IsActive = 1", new Dictionary<string, object>
+					{
+						{ "SubTopicId", subTopicId.Value },
+						{ "SchoolId", schoolId }
+					});
+
+					var subTopic = subTopics.FirstOrDefault();
+					if (subTopic == null)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Subtopic not found",
+							Status = "failed"
+						};
+
+					subTopicName = subTopic.Name;
+					topicId = subTopic.TopicId;
+					subjectName = subTopic.SubjectName ?? string.Empty;
+				}
+
+				var sql = @"
+                    SELECT
+                        att.Id               AS AttemptId,
+                        att.QuizCode         AS QuizCode,
+                        att.LessonId         AS LessonId,
+                        lc.Aim               AS LessonTitle,
+                        ISNULL(c.Name, '')   AS ClassroomName,
+                        ISNULL(s.Subject, '') AS SubjectName,
+                        att.AttemptNumber    AS AttemptNumber,
+                        att.FinalScorePercent AS FinalScorePercent,
+                        att.IsPassed         AS IsPassed,
+                        att.Status           AS Status,
+                        att.SubmittedAt      AS SubmittedAt
+                    FROM QuizAttempt att
+                    JOIN LessonContent lc ON lc.Id = att.LessonId
+                    LEFT JOIN Classroom c ON c.Id = lc.ClassroomId
+                    LEFT JOIN Subjects s ON s.Id = lc.SubjectId
+                    WHERE att.StudentId = @StudentId
+                    AND   att.SchoolId  = @SchoolId";
+
+				var parameters = new Dictionary<string, object>
+				{
+					{ "StudentId", studentId },
+					{ "SchoolId", schoolId }
+				};
+
+				if (subjectId.HasValue)
+				{
+					sql += "\nAND   lc.SubjectId = @SubjectId";
+					parameters["SubjectId"] = subjectId.Value;
+				}
+				else if (subTopicId.HasValue)
+				{
+					sql += "\nAND   lc.SubTopicId = @SubTopicId";
+					parameters["SubTopicId"] = subTopicId.Value;
+				}
+
+				sql += "\nORDER BY att.SubmittedAt DESC";
+
+				var attempts = (await _attemptQuery.QueryAsync<StudentQuizAttemptRowDto>(sql, parameters)).ToList();
+
+				var studentNames = await _lessonQuery.QueryAsync<string>(@"
+                    SELECT TOP 1 FirstName + ' ' + LastName
+                    FROM Users
+                    WHERE Id = @StudentId
+                    AND   SchoolId = @SchoolId", new Dictionary<string, object>
+				{
+					{ "StudentId", studentId },
+					{ "SchoolId", schoolId }
+				});
+				var studentName = studentNames.FirstOrDefault() ?? "Unknown";
+
+				var quizzes = attempts
+					.GroupBy(a => new { a.LessonId, a.QuizCode, a.LessonTitle, a.ClassroomName, a.SubjectName })
+					.Select(g =>
+					{
+						var best = g.OrderByDescending(a => a.FinalScorePercent).FirstOrDefault();
+						var latest = g.OrderByDescending(a => a.SubmittedAt).FirstOrDefault();
+						return new StudentQuizPerformanceItemDto
+						{
+							LessonId = g.Key.LessonId,
+							QuizCode = g.Key.QuizCode,
+							LessonTitle = g.Key.LessonTitle,
+							ClassroomName = g.Key.ClassroomName,
+							SubjectName = g.Key.SubjectName,
+							AttemptCount = g.Count(),
+							BestScorePercent = best?.FinalScorePercent,
+							BestAttemptId = best?.AttemptId,
+							IsPassed = best?.IsPassed,
+							LatestStatus = latest?.Status ?? string.Empty,
+							LatestSubmittedAt = latest?.SubmittedAt
+						};
+					})
+					.OrderByDescending(q => q.LatestSubmittedAt)
+					.ToList();
+
+				var completed = quizzes.Count(q =>
+					q.LatestStatus is QuizAttemptStatus.Submitted or QuizAttemptStatus.PartiallyGraded or QuizAttemptStatus.FullyGraded);
+
+				var dto = new StudentQuizScopedPerformanceDto
+				{
+					StudentId = studentId,
+					StudentName = studentName,
+					TotalQuizzes = quizzes.Count,
+					TotalAttempts = attempts.Count,
+					CompletedAttempts = completed,
+					InProgressAttempts = quizzes.Count(q => q.LatestStatus == QuizAttemptStatus.InProgress),
+					AverageScorePercent = attempts.Any(a => a.FinalScorePercent > 0)
+						? Math.Round(attempts.Where(a => a.FinalScorePercent > 0).Average(a => a.FinalScorePercent) ?? 0m, 1)
+						: 0m,
+					PassRate = attempts.Any()
+						? Math.Round((decimal)attempts.Count(a => a.IsPassed == true) / attempts.Count * 100, 1)
+						: 0m,
+					BestScorePercent = attempts.Any(a => a.FinalScorePercent.HasValue) ? attempts.Max(a => a.FinalScorePercent ?? 0m) : 0m,
+					Quizzes = quizzes,
+					SubjectId = subjectId,
+					SubjectName = subjectName,
+					TopicId = topicId,
+					SubTopicId = subTopicId,
+					SubTopicName = subTopicName
+				};
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = subjectId.HasValue
+						? "Student quiz performance for subject retrieved"
+						: "Student quiz performance for subtopic retrieved",
+					Status = "successful",
+					Data = dto
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Error fetching scoped student quiz performance for {StudentId} (SubjectId: {SubjectId}, SubTopicId: {SubTopicId})",
+					studentId, subjectId, subTopicId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An error occurred while fetching student quiz performance",
+					Status = "failed"
+				};
+			}
+		}
+	}
+
 	public async Task<BaseResponse> GetStudentQuizHistory(Guid studentId, AuthenticatedUserClaims claims)
 	{
 		using (LogContext.PushProperty("RequestedBy", claims.UserId))
@@ -3912,6 +4140,20 @@ public class QuizService : IQuizService
 		public bool? IsPassed { get; set; }
 		public string Status { get; set; } = string.Empty;
 		public string? SubmittedAt { get; set; }
+	}
+
+	private class SubjectScopeRowDto
+	{
+		public Guid Id { get; set; }
+		public string Name { get; set; } = string.Empty;
+	}
+
+	private class SubTopicScopeRowDto
+	{
+		public Guid Id { get; set; }
+		public string Name { get; set; } = string.Empty;
+		public Guid TopicId { get; set; }
+		public string? SubjectName { get; set; }
 	}
 
 	private class QuestionDifficultyDto

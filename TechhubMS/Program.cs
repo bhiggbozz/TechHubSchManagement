@@ -119,6 +119,9 @@ try
 			Array.Empty<string>()
 		}
 	});
+
+	// Platform endpoints (PlatformAuth / PlatformAdmin) don't need X-Tenant-ID
+	c.OperationFilter<RemoveTenantRequirementOperationFilter>();
 	});
 	builder.Services.AddAutoMapper(typeof(AutoMapperProfile));
 	builder.Services.AddHttpContextAccessor();
