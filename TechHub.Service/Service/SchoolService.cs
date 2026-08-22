@@ -5773,13 +5773,13 @@ _logger.Information(
 									<li><strong>Location:</strong> {request.Location}</li>
 								</ul>
 								<p style='margin-top: 24px;'>
-									<a href='https://{request.TenantIdentifier}.bluetsch.com/api/School/logo-setup/{schoolId}'
+									<a href='https://{request.TenantIdentifier}.bluetsch.com'
 									   style='background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; display: inline-block;'>
-										Upload Your School Logo
+										Go to Your School Portal
 									</a>
 								</p>
 								<p style='color: #64748b; font-size: 12px;'>Or paste this link into your browser:<br/>
-									https://{request.TenantIdentifier}.bluetsch.com/api/School/logo-setup/{schoolId}</p>
+									https://{request.TenantIdentifier}.bluetsch.com</p>
 								<h3>Admin Login Credentials</h3>
 								<ul>
 									<li><strong>Username:</strong> {request.AdminUsername}</li>

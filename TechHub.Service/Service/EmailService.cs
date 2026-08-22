@@ -175,8 +175,6 @@ public class EmailService : IEmailService
 			_logger.Error(
 				ex,
 				"Failed to send email to {Email}", toEmail);
-			// Don't throw — email failure
-			// should not block user creation
 		}
 	}
 
