@@ -94,6 +94,16 @@ public class StudentQuizPerformanceDetailDto
     public List<StudentQuizPerformanceItemDto> Quizzes { get; set; } = new();
 }
 
+// ── Per-Student Performance scoped to a Subject / SubTopic ────────────────
+public class StudentQuizScopedPerformanceDto : StudentQuizPerformanceDetailDto
+{
+    public Guid? SubjectId { get; set; }
+    public string SubjectName { get; set; } = string.Empty;
+    public Guid? TopicId { get; set; }
+    public Guid? SubTopicId { get; set; }
+    public string SubTopicName { get; set; } = string.Empty;
+}
+
 public class StudentQuizPerformanceItemDto
 {
     public Guid AttemptId { get; set; }

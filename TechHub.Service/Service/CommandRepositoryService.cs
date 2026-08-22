@@ -64,7 +64,12 @@ namespace TechHub.Service.Service
 			    var parameter = new DynamicParameters();
 				foreach (var key in obj.Keys)
 				{
-					parameter.Add($"@{key}", obj[key]);
+					var value = obj[key];
+
+					if (value is DBNull || value == null)
+						parameter.Add($"@{key}", null);
+					else
+						parameter.Add($"@{key}", value);
 				};
 				await conn.ExecuteAsync(query, parameter);
 			}

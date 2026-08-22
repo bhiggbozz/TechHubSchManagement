@@ -328,6 +328,24 @@ public class QuizController : ControllerBase
 		return MapResponse(response);
 	}
 
+	[HttpGet("student/{studentId}/subject/{subjectId}/performance")]
+	[Authorize]
+	public async Task<IActionResult> GetStudentQuizPerformanceBySubject(Guid studentId, Guid subjectId)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetStudentQuizPerformanceBySubject(studentId, subjectId, claims);
+		return MapResponse(response);
+	}
+
+	[HttpGet("student/{studentId}/subtopic/{subTopicId}/performance")]
+	[Authorize]
+	public async Task<IActionResult> GetStudentQuizPerformanceBySubTopic(Guid studentId, Guid subTopicId)
+	{
+		var claims = GetUserClaims();
+		var response = await _quizService.GetStudentQuizPerformanceBySubTopic(studentId, subTopicId, claims);
+		return MapResponse(response);
+	}
+
 	// ═══════════════════════════════════════════════════════════════════════
 	// HELPERS
 	// ═══════════════════════════════════════════════════════════════════════

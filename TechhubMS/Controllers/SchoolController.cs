@@ -12,6 +12,7 @@ using TechHub.QuestionBank.Core.Helpers;
 using TechHub.Service.Extension;
 using TechHub.Service.Interface;
 using TechHub.Service.Service;
+using TechhubMS.Pages;
 
 namespace TechhubMS.Controllers
 {
@@ -196,6 +197,45 @@ namespace TechhubMS.Controllers
 			var result = await _schoolService.UpdateSchoolLogoAsync(logo, userClaims);
 
 			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
+		/// <summary>
+		/// One-time logo upload page for newly approved schools
+		/// (e.g. https://green.bluetsch.com/api/School/logo-setup/{schoolId}).
+		/// </summary>
+		[HttpGet("logo-setup/{schoolId:guid}")]
+		[AllowAnonymous]
+		public async Task<IActionResult> GetSchoolLogoSetupPage(Guid schoolId)
+		{
+			var result = await _schoolService.GetSchoolLogoSetupStatusAsync(schoolId);
+
+			if (result.ResponseCode == ResponseCode.NotFound || result.Data is not SchoolLogoSetupStatus status)
+				return Content(SchoolLogoSetupPage.BuildNotFound(), "text/html");
+
+			return Content(
+				status.HasLogo && !string.IsNullOrEmpty(status.LogoUrl)
+					? SchoolLogoSetupPage.BuildAlreadyUploaded(status.SchoolName, status.LogoUrl)
+					: SchoolLogoSetupPage.BuildUploadForm(schoolId, status.SchoolName),
+				"text/html");
+		}
+
+		/// <summary>
+		/// One-time public logo upload. Rejects with 409 if a logo already exists.
+		/// </summary>
+		[HttpPost("logo-setup/{schoolId:guid}")]
+		[AllowAnonymous]
+		[Consumes("multipart/form-data")]
+		public async Task<IActionResult> UploadSchoolLogoSetup(Guid schoolId, [FromForm] IFormFile logo)
+		{
+			var result = await _schoolService.UploadSchoolLogoSetupAsync(schoolId, logo);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Conflict => StatusCode(StatusCodes.Status409Conflict, result),
+				_ => BadRequest(result)
+			};
 		}
 
 

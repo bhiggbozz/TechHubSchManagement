@@ -15,12 +15,14 @@ public class PlatformAdminService : IPlatformAdminService
     private readonly IConfiguration _configuration;
     private readonly ILogger<PlatformAdminService> _logger;
     private readonly string _connString;
+    private readonly IEmailService _emailService;
 
-    public PlatformAdminService(IConfiguration configuration, ILogger<PlatformAdminService> logger)
+    public PlatformAdminService(IConfiguration configuration, ILogger<PlatformAdminService> logger, IEmailService emailService)
     {
         _configuration = configuration;
         _logger = logger;
         _connString = configuration.GetConnectionString("DbConnectionString") ?? string.Empty;
+        _emailService = emailService;
     }
 
     private BaseResponse Ok(string message, object? data = null) => new()
@@ -103,6 +105,37 @@ public class PlatformAdminService : IPlatformAdminService
             _logger.LogInformation(
                 "Platform user created - Id: {Id}, Username: {Username}, Role: {Role}, By: {CreatedBy}",
                 userId, model.Username, targetRole, claims.UserId);
+
+            // Send credentials email (fire-and-forget)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var subject = "Your TechHub Platform Account";
+                    var body = $@"
+                        <html>
+                        <body style='font-family: Arial, sans-serif;'>
+                            <h2>Platform Account Created</h2>
+                            <p>Dear {model.FirstName},</p>
+                            <p>A {targetRole} account has been created for you on the TechHub platform.</p>
+                            <h3>Login Credentials</h3>
+                            <ul>
+                                <li><strong>Username:</strong> {model.Username}</li>
+                                <li><strong>Password:</strong> {model.Password}</li>
+                            </ul>
+                            <p>Please log in and change your password on first login.</p>
+                            <p>Best regards,<br/>TechHub Platform Team</p>
+                        </body>
+                        </html>";
+
+                    await _emailService.SendAsync(model.Email, $"{model.FirstName} {model.LastName}", subject, body);
+                    _logger.LogInformation("Credentials email sent to {Email} for platform user {Username}", model.Email, model.Username);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send credentials email for platform user {Username}", model.Username);
+                }
+            });
 
             return Ok("Platform user created successfully", new
             {
