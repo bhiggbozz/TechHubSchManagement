@@ -86,6 +86,16 @@ namespace TechhubMS.Controllers
 			return Ok(result);
 		}
 
+		[HttpDelete("[action]")]
+		[Authorize(Roles = "Administrator,SuperAdministrator")]
+		public async Task<ActionResult<BaseResponse>> RemoveClassroomSubject(RemoveClassroomSubjectViewModel removeClassroomSubject)
+		{
+			var schoolIdClaim = User.GetAuthenticatedUserClaims();
+
+			var result = await _schoolService.RemoveClassroomSubjects(removeClassroomSubject, schoolIdClaim);
+			return Ok(result);
+		}
+
 		[HttpPost("updatesubject")]
 		public async Task<ActionResult<BaseResponse>> UpdateSchoolSubjects(updateSchoolSubject updateSchoolSubject)
 		{
@@ -188,7 +198,7 @@ namespace TechhubMS.Controllers
 		}
 
 		[HttpPut("logo")]
-		[Authorize]
+		[Authorize(Roles = "SuperAdministrator")]
 		[Consumes("multipart/form-data")]
 		public async Task<IActionResult> UpdateSchoolLogo([FromForm] IFormFile logo)
 		{

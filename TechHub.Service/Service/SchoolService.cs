@@ -1278,6 +1278,127 @@ namespace TechHub.Service.Service
 				};
 			}
 		}
+
+		public async Task<BaseResponse> RemoveClassroomSubjects(RemoveClassroomSubjectViewModel removeClassroomSubjectViewModel, AuthenticatedUserClaims userInfo)
+		{
+			try
+			{
+				if (removeClassroomSubjectViewModel is null || !removeClassroomSubjectViewModel.SubjectIds.Any())
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "At least one subject is required",
+						Status = "failed"
+					};
+				}
+
+				if (!Guid.TryParse(userInfo.SchoolId, out var schoolId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid SchoolId format in token",
+						Status = "failed"
+					};
+				}
+
+				if (removeClassroomSubjectViewModel.SubjectIds.Any(id => id == Guid.Empty))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid subject IDs found in the list",
+						Status = "failed"
+					};
+				}
+
+				var classroom = await VerifyClassroomExists(removeClassroomSubjectViewModel.ClassroomId, schoolId);
+				if (!classroom.Exists)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Classroom not found",
+						Status = "failed"
+					};
+				}
+
+				if (!classroom.BelongsToSchool)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You can only manage classrooms in your own school",
+						Status = "failed"
+					};
+				}
+
+				var existingRows = await _classroomSubjectQueryRespository.QueryAsync<ClassroomSubject>(
+					"SELECT * FROM ClassroomSubject WHERE ClassroomId = @ClassroomId AND SchoolId = @SchoolId AND SubjectId IN @SubjectIds AND IsActive = 1",
+					new Dictionary<string, object>
+					{
+						{ "ClassroomId", removeClassroomSubjectViewModel.ClassroomId },
+						{ "SchoolId", schoolId },
+						{ "SubjectIds", removeClassroomSubjectViewModel.SubjectIds }
+					});
+
+				var existingList = existingRows.ToList();
+				if (!existingList.Any())
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "None of the specified subjects are currently assigned to this classroom",
+						Status = "failed"
+					};
+				}
+
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				await scope.Connection.ExecuteAsync(@"
+					UPDATE ClassroomSubject
+					SET IsActive = 0, ModifiedDate = @ModifiedDate
+					WHERE ClassroomId = @ClassroomId AND SchoolId = @SchoolId AND SubjectId IN @SubjectIds AND IsActive = 1",
+					new
+					{
+						ModifiedDate = now,
+						ClassroomId = removeClassroomSubjectViewModel.ClassroomId,
+						SchoolId = schoolId,
+						SubjectIds = removeClassroomSubjectViewModel.SubjectIds
+					},
+					scope.Transaction);
+				await scope.CommitAsync();
+
+				var removedSubjectIds = existingList.Select(r => r.SubjectId).ToList();
+				var notAssigned = removeClassroomSubjectViewModel.SubjectIds.Except(removedSubjectIds).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = $"{removedSubjectIds.Count} subject(s) removed from classroom successfully",
+					Status = "successful",
+					Data = new
+					{
+						ClassroomId = removeClassroomSubjectViewModel.ClassroomId,
+						SubjectsRemoved = removedSubjectIds,
+						SubjectsNotAssigned = notAssigned
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error occurred while removing subjects from classroom");
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred while removing subjects",
+					Status = "failed"
+				};
+			}
+		}
 		#endregion
 		/// <summary>
 		/// this service is the get classroom details , teachers, classroom info ect

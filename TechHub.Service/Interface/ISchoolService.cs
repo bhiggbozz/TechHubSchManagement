@@ -25,6 +25,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> CreateSchoolSubjects(CreateSubjectViewModel createSubjectModel, AuthenticatedUserClaims userClaims);
 		Task<BaseResponse> GetAllSubjects(Guid schoolid);
 		Task<BaseResponse> RegisterClassroomSubjects(CreateClassroomViewModel createClassroomViewModel, AuthenticatedUserClaims userInfo);
+		Task<BaseResponse> RemoveClassroomSubjects(RemoveClassroomSubjectViewModel removeClassroomSubjectViewModel, AuthenticatedUserClaims userInfo);
 		Task<BaseResponse> UpdateSchoolId(updateSchoolSubject updateSchoolSubject);
 		Task<BaseResponse> UpdateSchoolClassroom(UpdateClassroomView updateClassroomView, AuthenticatedUserClaims userInfo);
 		Task<BaseResponse> GetSubjectById(Guid subjectId, AuthenticatedUserClaims userClaims);
