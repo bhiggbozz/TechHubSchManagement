@@ -119,8 +119,8 @@ public class SchoolService : ISchoolService
                         model.Address,
                         model.HasBranch,
                         model.ISActive,
-                        LogoUrl = (object?)model.LogoUrl ?? DBNull.Value,
-                        LogoPublicId = (object?)model.LogoPublicId ?? DBNull.Value,
+                        LogoUrl = string.Empty,
+                        LogoPublicId = string.Empty,
                         CreatedBy = platformUserId,
                         ModifiedBy = platformUserId
                     },
@@ -236,8 +236,8 @@ public class SchoolService : ISchoolService
                         State = (object?)model.State ?? DBNull.Value,
                         model.Address,
                         model.HasBranch,
-                        LogoUrl = (object?)model.LogoUrl ?? DBNull.Value,
-                        LogoPublicId = (object?)model.LogoPublicId ?? DBNull.Value,
+                        LogoUrl = string.Empty,
+                        LogoPublicId = string.Empty,
                         CreatedBy = platformUserId,
                         ModifiedBy = platformUserId
                     },
@@ -522,8 +522,8 @@ public class SchoolService : ISchoolService
                     State = (object?)request.State ?? DBNull.Value,
                     request.Address,
                     request.HasBranch,
-                    LogoUrl = (object?)request.LogoUrl ?? DBNull.Value,
-                    LogoPublicId = (object?)request.LogoPublicId ?? DBNull.Value,
+                    LogoUrl = string.Empty,
+                    LogoPublicId = string.Empty,
                     CreatedBy = platformUserId,
                     ModifiedBy = platformUserId
                 },

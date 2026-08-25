@@ -596,6 +596,13 @@ var schoolId = ParseSchoolId(claims);
 					if (!isSelf && IsStudentRole(claims?.Role))
 						return Fail(ResponseCode.Forbidden, "You can only view your own attendance");
 
+					if (string.Equals(claims?.Role, nameof(UserRole.Parent), StringComparison.OrdinalIgnoreCase))
+					{
+						if (!Guid.TryParse(claims?.UserId, out var parentId) ||
+							!await IsParentOfStudentAsync(parentId, studentId, schoolId))
+							return Fail(ResponseCode.Forbidden, "You can only view attendance for your own children");
+					}
+
 					var rows = (await _recordQueryRepo.QueryAsync<StudentAttendanceHistoryDto>(
 						@"SELECT r.SessionId, r.IsPresent, r.AttendedAt, s.AttendanceType, s.StartedAt, s.[Status] AS SessionStatus,
 						         sub.Name AS SubTopicName, sj.Subject AS SubjectName, c.Name AS ClassroomName
@@ -859,9 +866,18 @@ var schoolId = ParseSchoolId(claims);
 						entityName = subject.Subject;
 					}
 
-					// ClassTeacher/SubjectTeacher are scoped to the class/subject they
-					// teach; HeadTeacher/Administrator/SuperAdministrator bypass the check.
-					if (!IsAdminRole(claims?.Role))
+					// Parents are scoped to their own children; ClassTeacher/SubjectTeacher
+					// are scoped to the class/subject they teach; HeadTeacher/
+					// Administrator/SuperAdministrator bypass the check.
+					if (string.Equals(claims?.Role, nameof(UserRole.Parent), StringComparison.OrdinalIgnoreCase))
+					{
+						if (!Guid.TryParse(claims?.UserId, out var parentId))
+							return Fail(ResponseCode.Unauthorized, "Invalid user context");
+
+						if (!await IsParentOfStudentAsync(parentId, studentId, schoolId))
+							return Fail(ResponseCode.Forbidden, "You can only view attendance for your own children");
+					}
+					else if (!IsAdminRole(claims?.Role))
 					{
 						if (!Guid.TryParse(claims?.UserId, out var callerId))
 							return Fail(ResponseCode.Unauthorized, "Invalid user context");
@@ -937,6 +953,14 @@ var schoolId = ParseSchoolId(claims);
 
 		private static bool IsStaffRole(string role)
 			=> !IsStudentRole(role);
+
+		private async Task<bool> IsParentOfStudentAsync(Guid parentId, Guid studentId, Guid schoolId)
+		{
+			var count = await _userQueryRepo.CountAsync(
+				"SELECT COUNT(*) FROM StudentParent WHERE ParentId = @ParentId AND StudentId = @StudentId AND SchoolId = @SchoolId AND IsActive = 1",
+				new Dictionary<string, object> { { "ParentId", parentId }, { "StudentId", studentId }, { "SchoolId", schoolId } });
+			return count > 0;
+		}
 
 		private static BaseResponse Fail(string code, string message)
 			=> new BaseResponse { ResponseCode = code, ResponseMessage = message, Status = "failed" };

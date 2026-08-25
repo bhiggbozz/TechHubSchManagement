@@ -76,7 +76,8 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<Subjects> _subjectQueryRespository;
 		private readonly IQueryRepository<StudentMinorSubject> _studentMinorSubjectQueryRespository;
 		private readonly IQueryRepository<ClassroomSubject> _classroomSubjectQueryRespository;
-
+		private readonly IQueryRepository<PasswordResetToken> _passwordResetTokenQueryRespository;
+		private readonly ICommandRespository<PasswordResetToken> _passwordResetTokenCommandRespository;
 
 
 
@@ -103,9 +104,13 @@ namespace TechHub.Service.Service
 			IQueryRepository<TeacherClassroom> teacherClassroomQueryRespository, IQueryRepository<TeacherSubject> teacherSubjectQueryRespository,
 			IQueryRepository<AdminPermissions> adminPermissionsQueryRespository, IQueryRepository<Subjects> subjectQueryRespository, IQueryRepository<ClassroomSubject> classroomSubjectQueryRespository,
 			IQueryRepository<StudentMinorSubject> studentMinorSubjectQueryRespository,
+			IQueryRepository<PasswordResetToken> passwordResetTokenQueryRespository,
+			ICommandRespository<PasswordResetToken> passwordResetTokenCommandRespository,
 			IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator,
 			IBackgroundJobService backgroundJobService)
 		{
+			_passwordResetTokenQueryRespository = passwordResetTokenQueryRespository;
+			_passwordResetTokenCommandRespository = passwordResetTokenCommandRespository;
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
 			_commandRepositoryLoginHistory = commandRepositoryLoginHistory;
@@ -259,6 +264,9 @@ namespace TechHub.Service.Service
 						IsActive = user.IsActive,
 						SchoolInfo = mappedSchInfoFirst,
 						FirstTimeLogin = true,
+						Children = user.RoleId == (int)UserRole.Parent
+							? await GetChildrenAsync(user.Id, user.SchoolId)
+							: null,
 						ResponseCode = ResponseCode.successful,
 						ResponseMessage = "First time login",
 						Status = "successful"
@@ -330,6 +338,30 @@ namespace TechHub.Service.Service
 					};
 				}
 
+				// ===== SINGLE-SESSION ENFORCEMENT (except mid-assessment/quiz) =====
+				// A new login revokes every other active session for this user, so
+				// only one login stays valid at a time. The one exception: never do
+				// this while the account has a quiz/assessment attempt in progress —
+				// a second login attempt (malicious or accidental) must not be able
+				// to invalidate a student's in-flight exam session.
+				var hasActiveAttempt = (await _queryrepositoryLoginHistory.QueryAsync<Guid>(
+					@"SELECT TOP 1 Id FROM QuizAttempt WHERE StudentId = @UserId AND Status = 'InProgress'
+					  UNION ALL
+					  SELECT TOP 1 Id FROM AssessmentAttempt WHERE StudentId = @UserId AND Status = 'InProgress'",
+					new Dictionary<string, object> { { "UserId", user.Id } })).Any();
+
+				if (hasActiveAttempt)
+				{
+					_logger.Warning(
+						"Login blocked - active quiz/assessment in progress - UserId: {UserId}", user.Id);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "This account has an assessment or quiz in progress and cannot be used to log in elsewhere until it's submitted.",
+						Status = "failed"
+					};
+				}
+
 				// ===== SUCCESSFUL LOGIN — issue tokens atomically =====
 
 				var schInfo = await _queryrepositorySchool.Get(tenant.SchoolId);
@@ -345,6 +377,15 @@ namespace TechHub.Service.Service
 					// Write login history
 					await _commandRepositoryLoginHistory.Create(
 						scope.Transaction, scope.Connection, loginHistory);
+
+					// Revoke every other active session before issuing this one —
+					// enforces a single active login per account. The old session's
+					// already-issued access token keeps working until it naturally
+					// expires (max 1 hour); this stops it from refreshing further.
+					await scope.Connection.ExecuteAsync(
+						"UPDATE RefreshTokens SET IsRevoked = 1, RevokedAt = @Now WHERE UserId = @UserId AND IsRevoked = 0",
+						new { Now = DateTime.UtcNow, UserId = user.Id },
+						scope.Transaction);
 
 					// Issue and store refresh token
 					refreshTokenValue = await GenerateAndStoreRefreshToken(scope.Transaction, scope.Connection,user.Id, user.SchoolId);
@@ -378,8 +419,11 @@ namespace TechHub.Service.Service
 					IsActive = user.IsActive,
 					SchoolInfo = mappedSchInfo,
 					Token = accessToken,
-					RefreshToken = refreshTokenValue,          
+					RefreshToken = refreshTokenValue,
 					TokenExpiresIn = 3600,
+					Children = user.RoleId == (int)UserRole.Parent
+						? await GetChildrenAsync(user.Id, user.SchoolId)
+						: null,
 					ResponseCode = ResponseCode.successful,
 					ResponseMessage = "Login successful",
 					Status = "successful"
@@ -591,7 +635,11 @@ namespace TechHub.Service.Service
 					}
 
 					// Validation 6: Check Admin permission
-					if (userRole == UserRole.Administrator)
+					if (userRole == UserRole.SuperAdministrator)
+					{
+						_logger.Information("SuperAdmin creating user - CreatedBy: {CreatedBy}", createdBy);
+					}
+					else if (userRole == UserRole.Administrator)
 					{
 						var hasPermission = await this.HasPermission(createdBy, schoolId, AdminPermission.CreateUsers);
 						if (!hasPermission)
@@ -609,6 +657,18 @@ namespace TechHub.Service.Service
 						}
 
 						_logger.Information("Admin has Create Users permission - AdminId: {AdminId}", createdBy);
+					}
+					else
+					{
+						_logger.Warning(
+							"Unauthorized create-user attempt - CreatedBy: {CreatedBy}, Role: {Role}",
+							createdBy, userRole);
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You are not authorized to create users",
+							Status = "failed"
+						};
 					}
 
 					_logger.Information(
@@ -1360,6 +1420,9 @@ namespace TechHub.Service.Service
 					Token = accessToken,
 					RefreshToken = refreshTokenValue,
 					TokenExpiresIn = 3600,
+					Children = user.RoleId == (int)UserRole.Parent
+						? await GetChildrenAsync(user.Id, user.SchoolId)
+						: null,
 					ResponseCode = ResponseCode.successful,
 					ResponseMessage = "Password updated successfully. You are now logged in.",
 					Status = "successful"
@@ -1378,6 +1441,786 @@ namespace TechHub.Service.Service
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "Unexpected error during first time password update");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+		private const int PasswordResetTokenExpiryMinutes = 60;
+
+		public async Task<BaseResponse> ForgotPassword(ForgotPasswordViewModel forgotPasswordViewModel, TenantInfo? tenantInfo)
+		{
+			try
+			{
+				if (tenantInfo is null)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Invalid tenant. Use subdomain (e.g., pearl.myapp.com)",
+						Status = "failed"
+					};
+				}
+
+				if (string.IsNullOrWhiteSpace(forgotPasswordViewModel?.Username))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Username is required",
+						Status = "failed"
+					};
+				}
+
+				var genericResponse = new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "If an account with that username exists, a password reset link has been sent to the registered email.",
+					Status = "successful"
+				};
+
+				var user = await _queryrepositoryUser.GetBy(new Dictionary<string, object>
+				{
+					{ "UserName", forgotPasswordViewModel.Username },
+					{ "SchoolId", tenantInfo.SchoolId }
+				});
+
+				// Don't reveal whether the username exists.
+				if (user is null || !user.IsActive)
+					return genericResponse;
+
+				// Students don't get self-service reset — an admin/teacher must reset for them.
+				if (user.RoleId == (int)UserRole.Student)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "Students cannot reset their password directly. Please contact your school administrator or teacher.",
+						Status = "failed"
+					};
+				}
+
+				if (string.IsNullOrWhiteSpace(user.EmailAddress))
+				{
+					_logger.Warning(
+						"Forgot password requested but no email on file - UserId: {UserId}", user.Id);
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "No email address is on file for this account. Please contact your school administrator.",
+						Status = "failed"
+					};
+				}
+
+				var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+
+				var resetToken = new PasswordResetToken
+				{
+					Id = Guid.NewGuid(),
+					UserId = user.Id,
+					SchoolId = tenantInfo.SchoolId,
+					Token = token,
+					ExpiresAt = DateTime.UtcNow.AddMinutes(PasswordResetTokenExpiryMinutes),
+					CreatedAt = DateTime.UtcNow,
+					IsUsed = false
+				};
+
+				await _passwordResetTokenCommandRespository.Create(resetToken);
+
+				_logger.Information(
+					"Password reset requested - UserId: {UserId}, SchoolId: {SchoolId}", user.Id, tenantInfo.SchoolId);
+
+				// Send the email (fire-and-forget) — never let an email failure block the response.
+				_ = Task.Run(async () =>
+				{
+					try
+					{
+						var resetLink = $"https://{tenantInfo.Identifier}.bluetsch.com/reset-password?token={token}";
+						var subject = "Reset your TechHub password";
+						var body = $@"
+							<html>
+							<body style='font-family: Arial, sans-serif;'>
+								<h2>Password Reset Request</h2>
+								<p>Dear {user.FirstName},</p>
+								<p>We received a request to reset your TechHub password. Click the button below to choose a new one.</p>
+								<p style='margin-top: 24px;'>
+									<a href='{resetLink}'
+									   style='background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; display: inline-block;'>
+										Reset Password
+									</a>
+								</p>
+								<p style='color: #64748b; font-size: 12px;'>Or paste this link into your browser:<br/>{resetLink}</p>
+								<p>This link expires in {PasswordResetTokenExpiryMinutes} minutes. If you didn't request this, you can safely ignore this email.</p>
+								<p>Best regards,<br/>TechHub Team</p>
+							</body>
+							</html>";
+
+						await _emailService.SendAsync(user.EmailAddress, $"{user.FirstName} {user.LastName}", subject, body);
+						_logger.Information("Password reset email sent - UserId: {UserId}", user.Id);
+					}
+					catch (Exception ex)
+					{
+						_logger.Error(ex, "Failed to send password reset email - UserId: {UserId}", user.Id);
+					}
+				});
+
+				return genericResponse;
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error during forgot password");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+		public async Task<BaseResponse> ResetPassword(ResetPasswordViewModel resetPasswordViewModel)
+		{
+			try
+			{
+				if (string.IsNullOrWhiteSpace(resetPasswordViewModel?.Token) ||
+					string.IsNullOrWhiteSpace(resetPasswordViewModel.NewHashPassword) ||
+					string.IsNullOrWhiteSpace(resetPasswordViewModel.ConfirmHashPassword))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Token, new password and confirm password are required",
+						Status = "failed"
+					};
+				}
+
+				if (resetPasswordViewModel.NewHashPassword != resetPasswordViewModel.ConfirmHashPassword)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Passwords do not match",
+						Status = "failed"
+					};
+				}
+
+				var resetToken = await _passwordResetTokenQueryRespository.GetBy(new Dictionary<string, object>
+				{
+					{ "Token", resetPasswordViewModel.Token }
+				});
+
+				if (resetToken is null || resetToken.IsUsed || resetToken.ExpiresAt < DateTime.UtcNow)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid or expired reset link. Please request a new one.",
+						Status = "failed"
+					};
+				}
+
+				var user = await _queryrepositoryUser.Get(resetToken.UserId);
+				if (user is null || !user.IsActive || user.SchoolId != resetToken.SchoolId)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid or expired reset link. Please request a new one.",
+						Status = "failed"
+					};
+				}
+
+				if (resetPasswordViewModel.NewHashPassword == user.HashPassword)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "New password cannot be the same as your current password",
+						Status = "failed"
+					};
+				}
+
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					await scope.Connection.ExecuteAsync(@"
+						UPDATE Users SET HashPassword = @HashPassword, ModifiedDate = @ModifiedDate WHERE Id = @Id",
+						new { HashPassword = resetPasswordViewModel.NewHashPassword, ModifiedDate = now, Id = user.Id },
+						scope.Transaction);
+
+					// Close out every other outstanding reset token for this user too.
+					await scope.Connection.ExecuteAsync(@"
+						UPDATE PasswordResetToken SET IsUsed = 1 WHERE UserId = @UserId AND IsUsed = 0",
+						new { UserId = user.Id },
+						scope.Transaction);
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Failed to commit password reset transaction - UserId: {UserId}", user.Id);
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx, "Rollback failed during password reset - UserId: {UserId}", user.Id);
+					}
+					throw;
+				}
+
+				_logger.Information("Password reset successfully - UserId: {UserId}", user.Id);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Password reset successfully. You can now log in with your new password.",
+					Status = "successful"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error during password reset");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+		private const int MaxStudentsPerParent = 10;
+
+		/// <summary>Shared by login (for Parent accounts) and GetMyChildren — one query, one shape.</summary>
+		private async Task<List<ChildInfo>> GetChildrenAsync(Guid parentId, Guid schoolId)
+		{
+			var rows = await _queryrepositoryUser.QueryAsync<ChildInfo>(@"
+				SELECT s.Id AS StudentId, s.FirstName, s.LastName, c.Id AS ClassroomId, c.Name AS ClassroomName
+				FROM StudentParent sp
+				JOIN Users s ON s.Id = sp.StudentId
+				LEFT JOIN StudentClassroom sc ON sc.StudentId = s.Id AND sc.IsActive = 1
+				LEFT JOIN Classroom c ON c.Id = sc.ClassroomId
+				WHERE sp.ParentId = @ParentId AND sp.SchoolId = @SchoolId AND sp.IsActive = 1 AND s.IsActive = 1
+				ORDER BY s.FirstName, s.LastName",
+				new Dictionary<string, object> { { "ParentId", parentId }, { "SchoolId", schoolId } });
+
+			return rows.ToList();
+		}
+
+		/// <summary>
+		/// Builds a human-readable username from the parent's name
+		/// (FirstName.LastName), appending a number on collision within the
+		/// same school. Names aren't unique, so this can't assume the first
+		/// attempt succeeds.
+		/// </summary>
+		private async Task<string> GenerateUniqueParentUsernameAsync(string firstName, string lastName, Guid schoolId)
+		{
+			var baseUsername = $"{firstName}.{lastName}"
+				.Trim()
+				.Replace(" ", "");
+
+			var candidate = baseUsername;
+			var attempt = 1;
+
+			while (attempt <= 50)
+			{
+				var existing = await _queryrepositoryUser.GetBy(new Dictionary<string, object>
+				{
+					{ "UserName", candidate },
+					{ "SchoolId", schoolId }
+				});
+
+				if (existing is null)
+					return candidate;
+
+				attempt++;
+				candidate = $"{baseUsername}{attempt}";
+			}
+
+			// Astronomically unlikely fallback — guarantees uniqueness regardless.
+			return $"{baseUsername}{Guid.NewGuid():N}"[..30];
+		}
+
+		public async Task<BaseResponse> ProfileParent(ProfileParentViewModel profileParentViewModel, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var createdBy))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid authentication",
+						Status = "failed"
+					};
+				}
+
+				if (!Enum.TryParse<UserRole>(claims.Role, out var callerRole) ||
+					(callerRole != UserRole.SuperAdministrator && callerRole != UserRole.Administrator))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You are not authorized to profile parents",
+						Status = "failed"
+					};
+				}
+
+				if (callerRole == UserRole.Administrator && !await HasPermission(createdBy, schoolId, AdminPermission.CreateUsers))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You don't have permission to profile parents. Contact your SuperAdministrator.",
+						Status = "failed"
+					};
+				}
+
+				if (profileParentViewModel is null ||
+					string.IsNullOrWhiteSpace(profileParentViewModel.ParentFirstName) ||
+					string.IsNullOrWhiteSpace(profileParentViewModel.ParentLastName) ||
+					string.IsNullOrWhiteSpace(profileParentViewModel.ParentEmail))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Parent first name, last name and email are required",
+						Status = "failed"
+					};
+				}
+
+				if (profileParentViewModel.StudentIds is null || !profileParentViewModel.StudentIds.Any())
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "At least one student is required",
+						Status = "failed"
+					};
+				}
+
+				var requestedStudentIds = profileParentViewModel.StudentIds.Distinct().ToList();
+				if (requestedStudentIds.Count > MaxStudentsPerParent)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = $"A parent can be linked to a maximum of {MaxStudentsPerParent} students per request",
+						Status = "failed"
+					};
+				}
+
+				var parentEmail = profileParentViewModel.ParentEmail.Trim().ToLowerInvariant();
+
+				// ── Validate every requested student ────────────────────────────────
+				var invalidStudentIds = new List<Guid>();
+				foreach (var studentId in requestedStudentIds)
+				{
+					var student = await _queryrepositoryUser.Get(studentId);
+					if (student is null || student.SchoolId != schoolId || !student.IsActive ||
+						student.RoleId != (int)UserRole.Student)
+					{
+						invalidStudentIds.Add(studentId);
+					}
+				}
+
+				if (invalidStudentIds.Any())
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "One or more students were not found in your school",
+						Status = "failed",
+						Data = new { InvalidStudentIds = invalidStudentIds }
+					};
+				}
+
+				// ── Find or create the parent account ───────────────────────────────
+				var existingParent = await _queryrepositoryUser.GetBy(new Dictionary<string, object>
+				{
+					{ "EmailAddress", parentEmail },
+					{ "SchoolId", schoolId },
+					{ "RoleId", (int)UserRole.Parent }
+				});
+
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+				Guid parentId;
+				bool parentCreated;
+				string? generatedUsername = null;
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					List<Guid> alreadyLinkedStudentIds;
+
+					if (existingParent is not null)
+					{
+						parentId = existingParent.Id;
+						parentCreated = false;
+
+						var activeLinks = (await scope.Connection.QueryAsync<Guid>(
+							"SELECT StudentId FROM StudentParent WHERE ParentId = @ParentId AND IsActive = 1",
+							new { ParentId = parentId },
+							scope.Transaction)).ToList();
+
+						alreadyLinkedStudentIds = requestedStudentIds.Intersect(activeLinks).ToList();
+						var newStudentIds = requestedStudentIds.Except(alreadyLinkedStudentIds).ToList();
+
+						if (activeLinks.Count + newStudentIds.Count > MaxStudentsPerParent)
+						{
+							await scope.RollbackAsync();
+							return new BaseResponse
+							{
+								ResponseCode = ResponseCode.Conflict,
+								ResponseMessage = $"This parent already has {activeLinks.Count} student(s) linked; adding {newStudentIds.Count} more would exceed the maximum of {MaxStudentsPerParent}",
+								Status = "failed"
+							};
+						}
+
+						foreach (var studentId in newStudentIds)
+						{
+							await scope.Connection.ExecuteAsync(@"
+								INSERT INTO StudentParent (Id, StudentId, ParentId, SchoolId, CreatedBy, CreatedAt, IsActive)
+								VALUES (@Id, @StudentId, @ParentId, @SchoolId, @CreatedBy, @CreatedAt, 1)",
+								new
+								{
+									Id = Guid.NewGuid(),
+									StudentId = studentId,
+									ParentId = parentId,
+									SchoolId = schoolId,
+									CreatedBy = createdBy,
+									CreatedAt = now
+								},
+								scope.Transaction);
+						}
+					}
+					else
+					{
+						parentCreated = true;
+						alreadyLinkedStudentIds = new List<Guid>();
+						parentId = Guid.NewGuid();
+						generatedUsername = await GenerateUniqueParentUsernameAsync(
+							profileParentViewModel.ParentFirstName, profileParentViewModel.ParentLastName, schoolId);
+
+						var tempPassword = GenerateTempPassword();
+						var passwordHash = HashPassword(tempPassword);
+
+						await scope.Connection.ExecuteAsync(@"
+							INSERT INTO Users (Id, CreationDate, ModifiedDate, FirstName, LastName, EmailAddress, HashPassword,
+								IsActive, HasAccess, UserName, SchoolId, RoleId, CreatedBy)
+							VALUES (@Id, @Now, @Now, @FirstName, @LastName, @Email, @PasswordHash,
+								1, 1, @Username, @SchoolId, @RoleId, @CreatedBy)",
+							new
+							{
+								Id = parentId,
+								Now = now,
+								FirstName = profileParentViewModel.ParentFirstName.Trim(),
+								LastName = profileParentViewModel.ParentLastName.Trim(),
+								Email = parentEmail,
+								PasswordHash = passwordHash,
+								Username = generatedUsername,
+								SchoolId = schoolId,
+								RoleId = (int)UserRole.Parent,
+								CreatedBy = createdBy
+							},
+							scope.Transaction);
+
+						foreach (var studentId in requestedStudentIds)
+						{
+							await scope.Connection.ExecuteAsync(@"
+								INSERT INTO StudentParent (Id, StudentId, ParentId, SchoolId, CreatedBy, CreatedAt, IsActive)
+								VALUES (@Id, @StudentId, @ParentId, @SchoolId, @CreatedBy, @CreatedAt, 1)",
+								new
+								{
+									Id = Guid.NewGuid(),
+									StudentId = studentId,
+									ParentId = parentId,
+									SchoolId = schoolId,
+									CreatedBy = createdBy,
+									CreatedAt = now
+								},
+								scope.Transaction);
+						}
+
+						// Send credentials by email now that everything else committed.
+						_ = Task.Run(async () =>
+						{
+							try
+							{
+								var subject = "Your TechHub Parent Account";
+								var body = $@"
+									<html>
+									<body style='font-family: Arial, sans-serif;'>
+										<h2>Parent Account Created</h2>
+										<p>Dear {profileParentViewModel.ParentFirstName},</p>
+										<p>A parent account has been created for you on TechHub so you can follow your child's progress.</p>
+										<h3>Login Credentials</h3>
+										<ul>
+											<li><strong>Username:</strong> {generatedUsername}</li>
+											<li><strong>Password:</strong> {tempPassword}</li>
+										</ul>
+										<p>Please log in and change your password on first login.</p>
+										<p>Best regards,<br/>TechHub Team</p>
+									</body>
+									</html>";
+
+								await _emailService.SendAsync(parentEmail, $"{profileParentViewModel.ParentFirstName} {profileParentViewModel.ParentLastName}", subject, body);
+								_logger.Information("Parent credentials email sent - ParentId: {ParentId}", parentId);
+							}
+							catch (Exception ex)
+							{
+								_logger.Error(ex, "Failed to send parent credentials email - ParentId: {ParentId}", parentId);
+							}
+						});
+					}
+
+					await scope.CommitAsync();
+
+					_logger.Information(
+						"Parent profiled - ParentId: {ParentId}, Created: {Created}, SchoolId: {SchoolId}, By: {CreatedBy}",
+						parentId, parentCreated, schoolId, createdBy);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = parentCreated
+							? "Parent profiled successfully. Login credentials have been emailed."
+							: "Student(s) linked to existing parent account successfully.",
+						Status = "successful",
+						Data = new
+						{
+							ParentId = parentId,
+							ParentCreated = parentCreated,
+							Username = generatedUsername,
+							LinkedStudentIds = requestedStudentIds.Except(alreadyLinkedStudentIds).ToList(),
+							AlreadyLinkedStudentIds = alreadyLinkedStudentIds
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Failed to commit parent profiling transaction");
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx, "Rollback failed during parent profiling");
+					}
+					throw;
+				}
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error while profiling parent");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred while profiling the parent",
+					Status = "failed"
+				};
+			}
+		}
+
+		public async Task<BaseResponse> RemoveStudentParent(RemoveStudentParentViewModel removeStudentParentViewModel, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var callerId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid authentication",
+						Status = "failed"
+					};
+				}
+
+				if (!Enum.TryParse<UserRole>(claims.Role, out var callerRole) ||
+					(callerRole != UserRole.SuperAdministrator && callerRole != UserRole.Administrator))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You are not authorized to manage parent-student links",
+						Status = "failed"
+					};
+				}
+
+				if (callerRole == UserRole.Administrator && !await HasPermission(callerId, schoolId, AdminPermission.CreateUsers))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You don't have permission to manage parent-student links. Contact your SuperAdministrator.",
+						Status = "failed"
+					};
+				}
+
+				var parent = await _queryrepositoryUser.Get(removeStudentParentViewModel.ParentId);
+				if (parent is null || parent.SchoolId != schoolId || parent.RoleId != (int)UserRole.Parent)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Parent not found in your school",
+						Status = "failed"
+					};
+				}
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				var rowsAffected = await scope.Connection.ExecuteAsync(@"
+					UPDATE StudentParent SET IsActive = 0
+					WHERE StudentId = @StudentId AND ParentId = @ParentId AND SchoolId = @SchoolId AND IsActive = 1",
+					new
+					{
+						StudentId = removeStudentParentViewModel.StudentId,
+						ParentId = removeStudentParentViewModel.ParentId,
+						SchoolId = schoolId
+					},
+					scope.Transaction);
+				await scope.CommitAsync();
+
+				if (rowsAffected == 0)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "This student is not linked to this parent",
+						Status = "failed"
+					};
+				}
+
+				_logger.Information(
+					"Student removed from parent - StudentId: {StudentId}, ParentId: {ParentId}, By: {CallerId}",
+					removeStudentParentViewModel.StudentId, removeStudentParentViewModel.ParentId, callerId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Student removed from parent successfully",
+					Status = "successful"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error while removing student-parent link");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+		public async Task<BaseResponse> DeactivateParent(Guid parentId, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var callerId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid authentication",
+						Status = "failed"
+					};
+				}
+
+				if (!Enum.TryParse<UserRole>(claims.Role, out var callerRole) ||
+					(callerRole != UserRole.SuperAdministrator && callerRole != UserRole.Administrator))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You are not authorized to deactivate parents",
+						Status = "failed"
+					};
+				}
+
+				if (callerRole == UserRole.Administrator && !await HasPermission(callerId, schoolId, AdminPermission.CreateUsers))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You don't have permission to deactivate parents. Contact your SuperAdministrator.",
+						Status = "failed"
+					};
+				}
+
+				var parent = await _queryrepositoryUser.Get(parentId);
+				if (parent is null || parent.SchoolId != schoolId || parent.RoleId != (int)UserRole.Parent)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Parent not found in your school",
+						Status = "failed"
+					};
+				}
+
+				await _commandRepositoryUser.UpdateTableColumnById(
+					nameof(parent.IsActive), nameof(parent.Id), false, parent.Id);
+
+				_logger.Information(
+					"Parent deactivated - ParentId: {ParentId}, By: {CallerId}", parentId, callerId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Parent account deactivated successfully",
+					Status = "successful"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error while deactivating parent");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+		/// <summary>
+		/// Lists the caller's own children (StudentId/name/classroom), so the
+		/// frontend has a way to discover which studentIds to pass into the
+		/// attendance/performance endpoints — a parent has no other way to
+		/// know their children's IDs.
+		/// </summary>
+		public async Task<BaseResponse> GetMyChildren(AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var parentId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid authentication",
+						Status = "failed"
+					};
+				}
+
+				var children = await GetChildrenAsync(parentId, schoolId);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = children.Any() ? $"{children.Count} child(ren) found" : "No children linked to this account",
+					Status = "successful",
+					Data = children
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error while retrieving parent's children");
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,

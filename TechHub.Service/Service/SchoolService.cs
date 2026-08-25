@@ -5439,7 +5439,7 @@ namespace TechHub.Service.Service
 					{ "CountryId", model.CountryId }, { "StateId", model.StateId },
 					{ "State", (object?)model.State ?? DBNull.Value },
 					{ "Address", model.Address }, { "HasBranch", model.HasBranch },
-					{ "LogoUrl", (object?)model.LogoUrl ?? DBNull.Value }, { "IsActive", true },
+					{ "LogoUrl", string.Empty }, { "IsActive", true },
 					{ "CreatedBy", platformUserId }, { "ModifiedBy", platformUserId }
 				};
 
@@ -5800,8 +5800,8 @@ _logger.Information(
 					{ "CountryId", request.CountryId }, { "StateId", request.StateId },
 					{ "State", (object?)request.State ?? DBNull.Value },
 					{ "Address", request.Address }, { "HasBranch", request.HasBranch },
-					{ "LogoUrl", (object?)request.LogoUrl ?? DBNull.Value },
-					{ "LogoPublicId", (object?)request.LogoPublicId ?? DBNull.Value },
+					{ "LogoUrl", string.Empty },
+					{ "LogoPublicId", string.Empty },
 					{ "IsActive", true },
 					{ "CreatedBy", platformUserId }, { "ModifiedBy", platformUserId }
 				};

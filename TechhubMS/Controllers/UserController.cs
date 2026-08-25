@@ -102,6 +102,77 @@ namespace TechhubMS.Controllers
 			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
 
+		/// <summary>
+		/// Requests a password reset link. Tenant-aware, same as login — the
+		/// frontend must send X-Tenant-ID (or use the school's subdomain).
+		/// Students are not sent a reset link; they're told to contact staff.
+		/// </summary>
+		[HttpPost("forgot-password")]
+		[AllowAnonymous]
+		public async Task<ActionResult<BaseResponse>> ForgotPassword(ForgotPasswordViewModel model)
+		{
+			var tenant = _tenantService.GetCurrentTenant();
+			var result = await _userService.ForgotPassword(model, tenant);
+			return Ok(result);
+		}
+
+		/// <summary>
+		/// Completes a password reset from the emailed link. Anonymous and not
+		/// tenant-scoped by the middleware — the token itself resolves the user
+		/// and school server-side.
+		/// </summary>
+		[HttpPost("reset-password")]
+		[AllowAnonymous]
+		public async Task<ActionResult<BaseResponse>> ResetPassword(ResetPasswordViewModel model)
+		{
+			var result = await _userService.ResetPassword(model);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
+		/// <summary>
+		/// Profiles a parent to up to 10 students. If a parent with the given
+		/// email already exists in this school, the students are linked to
+		/// that existing account instead of creating a duplicate.
+		/// </summary>
+		[HttpPost("profileParent")]
+		[Authorize]
+		public async Task<ActionResult<BaseResponse>> ProfileParent(ProfileParentViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.ProfileParent(model, claims);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
+		/// <summary>Unlinks one student from one parent (the parent account itself is untouched).</summary>
+		[HttpPost("removeStudentParent")]
+		[Authorize]
+		public async Task<ActionResult<BaseResponse>> RemoveStudentParent(RemoveStudentParentViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.RemoveStudentParent(model, claims);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
+		/// <summary>Deactivates a parent account (blocks login). Their student links are left as-is.</summary>
+		[HttpPost("deactivateParent/{parentId:guid}")]
+		[Authorize]
+		public async Task<ActionResult<BaseResponse>> DeactivateParent(Guid parentId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.DeactivateParent(parentId, claims);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
+		/// <summary>Lists the logged-in parent's own children (Id, name, classroom).</summary>
+		[HttpGet("my-children")]
+		[Authorize(Roles = "Parent")]
+		public async Task<ActionResult<BaseResponse>> GetMyChildren()
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.GetMyChildren(claims);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
 		// Controllers/UsersController.cs
 
 		/// <summary>

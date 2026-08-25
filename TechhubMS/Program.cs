@@ -172,7 +172,10 @@ var app = builder.Build();
 	app.UseMiddleware<GlobalExceptionMiddleware>();
 
 	// Configure the HTTP request pipeline
-	if (app.Environment.IsDevelopment())
+	// Swagger is available in any non-Production environment (Development,
+	// Staging, etc.) — e.g. the Render staging deployment — but stays hidden
+	// on the real production API (api.bluetsch.com forces Production).
+	if (!app.Environment.IsProduction())
 	{
 		app.UseSwagger();
 		app.UseSwaggerUI();
