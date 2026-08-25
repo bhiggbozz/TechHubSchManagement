@@ -34,7 +34,8 @@ public class MultiTenantMiddleware
 	    || context.Request.Path.StartsWithSegments("/api/School/logo-setup")
 	    || context.Request.Path.Value != null && context.Request.Path.Value.Contains("/approval-status", StringComparison.OrdinalIgnoreCase)
 	    || context.Request.Path.StartsWithSegments("/api/PlatformAuth")
-	    || context.Request.Path.StartsWithSegments("/api/PlatformAdmin"))
+	    || context.Request.Path.StartsWithSegments("/api/PlatformAdmin")
+	    || string.Equals(context.Request.Path, "/api/User/reset-password", StringComparison.OrdinalIgnoreCase))
 		{
 			await _next(context);
 			return;

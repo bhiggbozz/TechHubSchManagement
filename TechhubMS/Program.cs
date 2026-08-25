@@ -172,11 +172,10 @@ var app = builder.Build();
 	app.UseMiddleware<GlobalExceptionMiddleware>();
 
 	// Configure the HTTP request pipeline
-	if (app.Environment.IsDevelopment())
-	{
-		app.UseSwagger();
-		app.UseSwaggerUI();
-	}
+	// Swagger is available in every environment, including production —
+	// matches how TechSchPlatform's Program.cs already does it.
+	app.UseSwagger();
+	app.UseSwaggerUI();
 
 	if (builder.Configuration.GetValue<bool>("Hangfire:EnableDashboard", false))
 	{

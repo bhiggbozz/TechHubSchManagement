@@ -44,11 +44,14 @@ TechhubMS.sln
 
 ### 1. School Users (Users table)
 
-- Roles: `Student`, `HeadTeacher`, `Administrator`, `SuperAdministrator`, `SubjectTeacher`, `ClassTeacher`
+- Roles: `Student`(0), `HeadTeacher`(1), `Administrator`(2), `SuperAdministrator`(3), `SubjectTeacher`(4), `ClassTeacher`(5), `Parent`(6)
 - Login: `POST /api/User/login`
 - JWT claims: `ClaimTypes.NameIdentifier`, `ClaimTypes.Role`, `"SchoolId"`, `"TenantId"`, `"SchoolName"`
 - Token expiry: 1 hour
 - Belongs to a school (has SchoolId)
+- **`Role` is NOT a real table** — `Users.RoleId` is a bare `INT` with no FK, matching the `UserRole` C# enum's ordinal position exactly (confirmed against the live DB: only 0–5 in use before `Parent` was added as 6, no `Role` table exists). New roles must always be appended at the end of the enum — inserting elsewhere shifts every existing user's role.
+- **Single active session per account**: on every login, all of that user's other `RefreshTokens` rows are revoked (`IsRevoked=1`). The old session's *already-issued* access token still works until its own natural expiry (≤1 hour) since access tokens are stateless — this is a deliberate cost tradeoff to avoid a per-request DB check. **Exception**: a login attempt is rejected outright (403) if the account has any `QuizAttempt`/`AssessmentAttempt` with `Status='InProgress'` — protects an in-progress exam session from being invalidated by a second login.
+- **Parent role**: profiled by an Admin (`CreateUsers` permission) or SuperAdmin via `POST /api/User/profileParent` — links up to 10 students to one parent account (reuses an existing parent by email within the school rather than duplicating). Temp password generated server-side + emailed, same as any other non-Student role. Parents can use `forgot-password`/`reset-password` normally; only `Student` role is blocked from self-service reset. See `StudentParent` table below.
 
 ### 2. Platform Users (PlatformUser table — separate system)
 
@@ -142,15 +145,16 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | `School` | Id, SchoolName, Location, CountryId, StateId, Address, IsActive, LogoUrl, LogoPublicId, Identifier, State, CreatedBy, ModifiedBy |
 | `SchoolCode` | SchoolId, Code (used for student registration codes) |
 | `TenantInfo` | Id, SchoolId, Identifier (subdomain), IsActive |
-| `Users` | Id, FirstName, MiddleName, LastName, EmailAddress, UserName, HashPassword (SHA256), SchoolId, RoleId, IsActive |
-| `Role` | Id, Name (Student/HeadTeacher/Administrator/SuperAdministrator/SubjectTeacher/ClassTeacher) |
+| `Users` | Id, FirstName, MiddleName, LastName, EmailAddress, UserName, HashPassword (SHA256), SchoolId, RoleId (int, no FK — see UserRole enum), IsActive |
 | `Classroom` | Id, Name, SchoolId, NoOfStudents |
 | `Subjects` | Id, Subject, Category (Major/Minor), ClassCategory (Primary/Secondary/Colleges), SchoolId |
 | `StudentClassroom` | StudentId, ClassroomId |
 | `TeacherSubject` | TeacherId, SubjectId |
 | `ClassroomTeacher` | TeacherId, ClassroomId |
-| `LoginHistory` | Id, UserId, RoleId, PasswordFailed, DeviceType, DeviceIp |
-| `RefreshTokens` | Id, UserId, Token, ExpiresAt |
+| `StudentParent` | Id, StudentId, ParentId, SchoolId, CreatedBy, CreatedAt, IsActive. Filtered unique index on (StudentId, ParentId) WHERE IsActive=1. Max 10 active rows per ParentId, enforced in `UserService.ProfileParent` |
+| `PasswordResetToken` | Id, UserId, SchoolId, Token (unique), ExpiresAt (60 min), CreatedAt, IsUsed. Single-use; token alone resolves the user/school server-side — the reset-password page needs no tenant header |
+| `LoginHistory` | Id, UserId, RoleId, PasswordFailed, DeviceType, DeviceIp. Also doubles as the "first-time login" signal: a user with zero rows here is treated as first-time. **The first row is only ever written on a successful password change** (`UpdatePasswordFirstTime`), never on a mere login attempt — otherwise a failed password-change would let a retry with the temp password silently look like a normal login |
+| `RefreshTokens` | Id, UserId, SchoolId, Token, ExpiresAt, CreatedAt, IsRevoked, RevokedAt, ReplacedByToken |
 | `AdminPermissions` | Id, UserId, SchoolId, Permissions (int bitmask), CreatedBy, IsActive |
 
 ### Platform Users
@@ -223,8 +227,9 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 
 | Table | Key Columns |
 |-------|-------------|
-| `AttendanceSession` | Id, SchoolId, TeacherId, AttendanceType (0=Class\|1=Subject\|2=SubTopic), ClassroomId, SubjectId, SubTopicId, ClassPreparationId, Status (0=Open\|1=Closed\|2=Cancelled), StartedAt, EndedAt, CreatedBy |
+| `AttendanceSession` | Id, SchoolId, TeacherId, AttendanceType (0=Class\|1=Subject\|2=SubTopic), ClassroomId, SubjectId, SubTopicId, ClassPreparationId, Status (0=Open\|1=Closed\|2=Cancelled), StartedAt, EndedAt, CreatedBy. **Stats only count `Status=1` (Closed) sessions** — an open session that's never been ended contributes zero to `/stats`, even if it has scan records |
 | `AttendanceRecord` | Id, SessionId, StudentId, SchoolId, IsPresent, IsManual, AttendedAt, CreatedBy |
+| `ClassroomSubject` | ClassroomId, SubjectId, SchoolId, CreatedBy, IsActive. **Known bug**: `SchoolService.GetExistingClassroomSubjects` (the duplicate-assignment check used by `RegisterClassroomSubject`) queries a table called `ClassroomSubjects` (plural) — doesn't exist, throws every time, silently swallowed by a bare `catch`, so the duplicate check has never actually worked. Not yet fixed. |
 
 ### AI Image Generation (per-school feature flag)
 
@@ -246,7 +251,13 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | POST | `/api/User/EditUser` | JWT | Edit user |
 | GET | `/api/User/GetStudents` | JWT | Paginated students |
 | POST | `/api/User/updatePassword` | JWT | Update password |
-| POST | `/api/User/update-password/newUser` | Anonymous | First-time password setup |
+| POST | `/api/User/update-password/newUser` | Anonymous | First-time password setup. Guard: rejects unless the account has **zero** `LoginHistory` rows (changed from "exactly one" when the premature history-write on login was removed) |
+| POST | `/api/User/forgot-password` | Anonymous (tenant-aware) | Request a reset link. Always returns the same generic success message regardless of whether the username exists (no enumeration). `Student` role gets a distinct 403 ("contact your administrator") instead of an email. Generates a `PasswordResetToken`, emails `https://{tenant}.bluetsch.com/reset-password?token=...` |
+| POST | `/api/User/reset-password` | Anonymous, **no tenant header** | Completes a reset: `{ token, newHashPassword, confirmHashPassword }`. Excluded from `MultiTenantMiddleware` — the token alone resolves the user/school |
+| POST | `/api/User/profileParent` | JWT (Admin w/ CreateUsers, or SuperAdmin) | `{ parentFirstName, parentLastName, parentEmail, studentIds[≤10] }` — creates or reuses a Parent account, links students, emails temp password only when newly created |
+| POST | `/api/User/removeStudentParent` | JWT (Admin w/ CreateUsers, or SuperAdmin) | `{ studentId, parentId }` — soft-deletes one link; parent account untouched |
+| POST | `/api/User/deactivateParent/{parentId}` | JWT (Admin w/ CreateUsers, or SuperAdmin) | Sets the parent's `IsActive=0`; student links left as-is |
+| GET | `/api/User/my-children` | Parent JWT | Lists the caller's own linked students (Id, name, classroom) — the only way a parent frontend can discover its children's IDs |
 | POST | `/api/User/AssignPermissions` | SuperAdmin | Assign admin bitmask permissions |
 | GET | `/api/User/GetAdminPermissions` | JWT | Get user's permissions |
 | POST | `/api/User/RevokePermissions` | SuperAdmin | Revoke permissions |
@@ -274,7 +285,8 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | GET | `/api/School/GetAllClassrooms` | JWT | Paginated classrooms |
 | GET | `/api/School/GetAllSubjects` | JWT | Filtered subjects |
 | POST | `/api/School/AssignTeachers` | JWT | Assign teachers to classroom |
-| PUT | `/api/School/logo` | JWT | Update school logo |
+| DELETE | `/api/School/RemoveClassroomSubject` | Admin/SuperAdmin | `{ classroomId, subjectIds[] }` — soft-deletes (IsActive=0) one or more classroom↔subject links |
+| PUT | `/api/School/logo` | **SuperAdmin only** (was any JWT) | Update school logo — **the only endpoint allowed to ever write `School.LogoUrl`/`LogoPublicId`**. Every school-creation path (`createschool`, `provision`, `approve`) always inserts empty strings for these regardless of any value submitted at registration time |
 | POST | `/api/School/topics` | JWT | Create topic |
 | GET | `/api/School/topics/{subjectId}` | JWT | Topics by subject |
 | POST | `/api/School/subtopics` | JWT | Create subtopic |
@@ -365,7 +377,8 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | GET | `/api/Attendance/student/{studentId}/qrcode` | JWT (staff or self) | Student QR PNG |
 | GET | `/api/Attendance/student/{studentId}/qr-token` | JWT (staff or self) | Student QR token JSON |
 | GET | `/api/Attendance/student/me/qrcode` / `student/me/qr-token` | Student | Own QR |
-| GET | `/api/Attendance/student/{studentId}/attendance` | JWT (staff or self) | Student attendance history |
+| GET | `/api/Attendance/student/{studentId}/stats` | Teacher roles + **Parent** | Filterable (Daily/Weekly/Monthly/MonthlyRange × Class/Subject) attendance stats. Parent must own the student via an active `StudentParent` link, checked via `IsParentOfStudentAsync` — else 403 |
+| GET | `/api/Attendance/student/{studentId}/attendance` | JWT (staff, self, or **Parent** for own children) | Student attendance history — same Parent-ownership check as `/stats` |
 
 ### Question Bank
 
@@ -585,6 +598,9 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 ### AI Image Generation Pipeline
 - Flow: `ImageGenerationService.GenerateImageAsync` → feature-gate check (`SchoolFeature` must have `ai_image_generation` IsEnabled + IsActive) → build prompt (`TeachingPromptBuilder`) or use teacher `prompt` override → resolve agent via `IImageGenerationAgentFactory` keyed by agent `Name` (active provider = `ImageGeneration:Provider` in appsettings, default `Stability`) → call agent → upload PNG to Cloudinary → insert `LessonMedia` (MediaType image) → write `LessonGenerationPrompt` row (`Completed` with MediaId/ImageUrl, or `Failed` with ErrorMessage).
 - **Agent swap:** add a new `IImageGenerationAgent` impl + register it in DI; the factory selects by the configured provider name. No service code changes needed.
+- **Claude refinement only runs when the teacher submits no `prompt` override** — a caller-supplied `prompt` bypasses `ClaudeInstructionalPromptRefiner` entirely and goes straight to the image agent verbatim. There's no DB flag distinguishing a Claude-refined `PromptText` from a raw draft/override — only the server log line ("Lesson image prompt(s) refined by Claude..." vs "...using draft prompt") tells you which happened for a given row.
+- **Claude's system prompt is analogy-first** (`ClaudeInstructionalPromptRefiner`): it must anchor the image in something the student has personally lived through (a campfire, an ice lolly, sweat evaporating) rather than defaulting to generic textbook/lab-diagram compositions (beakers, thermometers, arrows-and-boxes) — those are explicitly banned unless the concept truly has no everyday equivalent. May also include 1–3 short, correctly-spelled key-term labels (quoted verbatim in the prompt so the image model renders them exactly) — full running text is still banned.
+- **Retry policy** (`ImageGenerationRetryPolicy`, shared by both `OpenAiImageGenerationAgent` and `StabilityImageGenerationAgent`): max 2 retries (3 attempts total), backoff `[2s, 5s]`, only for transient conditions (timeout, 429, 5xx). Permanent failures (400/401/403 — including an OpenAI billing-hard-limit block, which is a 400) fail immediately, by design — no retry can fix an account-level block.
 - **Auto-generation on approval:** `EnqueueLessonImageGeneration(lessonId, schoolId, userId)` is fired via `IBackgroundJobClient` when a lesson becomes `Approved`. The job runs `LessonImageGenerationJob`, which uses `Role="Administrator"` claims and skips if a `Completed` prompt row already exists.
 - **Trigger points (all 3 paths that set `Status = Approved`):**
   1. `LessonService.RespondToLesson` (manual approve via `POST /api/lessons/{id}/respond`)
@@ -618,6 +634,11 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 - **Assessment expiry**: `AssessmentConfig.ExpiresAt` is checked in `StartAttempt`. If expired, returns "Assessment has expired" error.
 - **Student board sessionId format**: `{assessmentId}_{studentId}_{questionId}` for assessment answer board strokes.
 - **Student subject scores** are pre-computed by `PerformanceAggregationWorker` (24h cycle) and stored as `student_subject` DocType in MongoDB — not queried live. Ranking uses `RANK() OVER (PARTITION BY SubjectId ORDER BY AvgScore DESC)`.
+- **`createUser` permission gap (fixed)**: `UserService.CreateUser` used to only check `AdminPermission.CreateUsers` when the caller's own role was `Administrator` — any *other* role (Teacher, Student, etc.) fell through with no check at all and could create users. Now explicitly rejects any caller who isn't `SuperAdministrator` or an `Administrator` holding `CreateUsers`.
+- **Attendance scan idempotency is now visible to the frontend**: `POST /api/Attendance/session/{sessionId}/scan` already no-ops (200, not an error) when the student is already marked present in that session, but previously gave the frontend no way to distinguish that from a fresh scan. The response DTO now carries `AlreadyMarked: true/false` for exactly this.
+- **School.LogoUrl is never set at creation, by design**: `createschool`/`provision`/`approve` (both the monolith and TechSchPlatform) always insert `LogoUrl = LogoPublicId = string.Empty` regardless of any value present on the registration request — `SchoolRegistrationRequest.LogoUrl` still captures whatever a registrant submits, but it's inert; nothing reads it back into `School`. The **only** path that may write `School.LogoUrl` is `PUT /api/School/logo` (SuperAdmin only).
+- **School approval emails link to the plain tenant subdomain** (`https://{tenantIdentifier}.bluetsch.com`), not an API path — this was previously `.../api/School/logo-setup/{schoolId}` in the monolith and had no link at all in TechSchPlatform.
+- **Two stray dead-code items found, not yet cleaned up**: a default, unused `WeatherForecastController` (route `/WeatherForecast`, no `api/` prefix) in `TechhubMS`; and a second, uncompiled `Controllers/` folder sitting at the **repo root** (outside `TechhubMS/`, not referenced by any `.csproj`) with stray copies of `User`/`School`/`Board`/`WeatherForecast` controllers.
 
 ---
 
@@ -625,7 +646,7 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 
 ### Production VPS
 - **Host**: `191.215.35.9` (root SSH)
-- **SSH key (local)**: `C:\Users\hp\Desktop\TechHub\github_actions` (`-i` flag; `.pub` alongside). Used for all scp/ssh deploys.
+- **SSH key (local)**: `C:\Users\hp\Desktop\TechHub\github_actions` (`-i` flag; `.pub` alongside). Used for all scp/ssh deploys. `.gitignore`d, so it never gets committed — if it ever goes missing from disk, check `git stash list` first (it was recovered once from a stash, not lost) before regenerating. A backup copy also lives outside the repo at `C:\Users\hp\.ssh\techhub_vps` (+ `.pub`), safe from any repo-relative accident.
 - **Monolith API**: container `techhub-api` → host `8080:80`, image `techhub-api:latest`, domain `api.bluetsch.com`. Deploy dir `/var/www/schooly` (docker-compose + `techhub-api.tar.gz` artifact; source staged at `/var/www/schooly/src` for manual `docker build`). Env overrides live in `/var/www/schooly/.env` (DB, Mongo, RabbitMQ, JWT, Cloudinary, Email, etc.). `ASPNETCORE_ENVIRONMENT=Production` is forced in compose.
 - **Platform microservice (TechSchPlatform)**: container `techschplatform-api` → host `8082:80`, image `techschplatform-api:latest`, served at `https://platform.bluetsch.com/api/*` (nginx `location /api/` → `127.0.0.1:8082`). Source at `/docker/techschplatform(-src)`.
 - **Frontend containers** (`/docker/bluethub-or/docker-compose.yml`): `bluethub-web` (3010→80, image `bluethub-or-web:latest`, domain bluetsch.com/www), `bluethub-landing` (3001→80), `scholarlyhub` (3011→80, domain platform.bluetsch.com `/`).
@@ -635,8 +656,14 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 ### Email (Mailtrap)
 - **Production**: `EmailSettings:Provider=MailtrapApi` → `POST https://send.api.mailtrap.io/api/send` with `Authorization: Bearer <EmailSettings:MailtrapApiToken>` (token in appsettings / `.env`), JSON `{from, to[], subject, html, category}`, and a non-empty `User-Agent` (edge protection may block bare requests). Response `200 {success:true, message_ids:[...]}`.
 - **Dev**: `Provider=Smtp` (sandbox `sandbox.smtp.mailtrap.io:2525`) via `appsettings.Development.json` override (`EmailSettings:Provider=Smtp`). The monolith has this override too (`TechhubMS/appsettings.Development.json`).
-- **Verified sending domain (currently the only one)**: `www.bluetsch.com`. From addresses must end in `@www.bluetsch.com` or the API rejects (401/403). Monolith `EMAIL_FROM=noreply@www.bluetsch.com` (in `/var/www/schooly/.env`); TechSchPlatform `FromEmail=support@www.bluetsch.com` (appsettings). To send from `@bluetsch.com`/`@bluethub.com`, verify that domain in Mailtrap first.
-- **Mailtrap account**: id `2493070` ("gbenga omoyele"). Verified domains: `www.bluetsch.com` (DNS pass), `demomailtrap.co` (demo_exhausted). Verify domains via `GET https://mailtrap.io/api/accounts/{id}/sending_domains` (Bearer token).
+- **Verified sending domain: `bluetsch.com` (apex — not `www.`)**. Confirmed live via `GET /api/accounts/{id}/sending_domains` on 2026-08-22 (`dns_verified: true`, `compliance_status: compliant`); `www.bluetsch.com` is no longer even listed on the account — the domain changed since this doc was first written, always re-verify via the API rather than trusting this note if email starts failing. From addresses must end in `@bluetsch.com`. Monolith `EMAIL_FROM=noreply@bluetsch.com` (`/var/www/schooly/.env`); TechSchPlatform `FromEmail=support@bluetsch.com` (appsettings, both the repo and the VPS's `techschplatform-src` build source — the latter had drifted out of sync from git and needed a manual re-sync + rebuild).
+- **Mailtrap account**: id `2493070` ("gbenga omoyele"). Verified domains: `bluetsch.com` (DNS pass), `demomailtrap.co` (demo_exhausted). Verify domains via `GET https://mailtrap.io/api/accounts/{id}/sending_domains` (Bearer token) — don't trust a stale doc note over this live check.
+
+### CORS (monolith)
+- `MultiTenantCors` policy (`ServiceCollectionExtension.cs`) branches on `env.IsProduction()`: **Production** only allows `*.bluetsch.com`, `localhost`, and the explicit `Cors:AllowedOrigins` array in `appsettings.json`. **Non-production** additionally allows `*.onrender.com`, `*.vercel.app`, `*.netlify.app` for preview/staging deploys.
+- The Render deployment `techhubschmanagement.onrender.com` runs as `Production`, so it does **not** get the friendly preview-origin allowances — any staging frontend calling it needs its exact origin added to `Cors:AllowedOrigins`.
+- **Env var override gotcha**: setting `Cors:AllowedOrigins` via an env var on Render requires the .NET double-underscore convention **with an array index**, e.g. `Cors__AllowedOrigins__5=https://your-site.netlify.app` — a name like `CORS_ORIGIN_0` (which only means something inside the *VPS's* `docker-compose.yml`, which explicitly remaps it to `Cors__AllowedOrigins__0`) does nothing on Render, since Render passes env vars straight through with no renaming layer. Pick an index that isn't already used by the 5 entries baked into `appsettings.json`.
+- Current `Cors:AllowedOrigins`: `https://www.bluetsch.com`, `https://bluetsch.com`, `https://new-bluethub-app.netlify.app` (added for staging), plus three `localhost` dev ports.
 - **EmailService design** (both monolith `TechHub.Service/Service/EmailService.cs` and `TechSchPlatform.Service/Services/EmailService.cs`): `Provider` switch — `MailtrapApi` → HTTP API; anything else → SMTP. Errors are logged, never thrown (email must not block user creation).
 
 ### TechSchPlatform microservice (`TechSchPlatform/`)
@@ -644,6 +671,10 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 - Separate platform-only JWT (same `Jwt:SecretKey/Issuer/Audience`). No MultiTenantMiddleware. Real SHA256-hex-lowercase password check. `PlatformSeedService` upserts `platformadmin` / `Platform@123` at startup. Parameterized Dapper. Response codes copied from monolith (`99000`/`99001`/`99101`/`99134`/`99107`/`AX1003`/`99161`).
 - Endpoints: `POST /api/PlatformAuth/login`, `POST /api/PlatformAdmin/create`, `GET /api/PlatformAdmin/users`, `GET /api/PlatformAdmin/login-history`, `GET /api/PlatformAdmin/audit-logs`, `POST /api/School/createschool`, `POST /api/School/provision`, `POST /api/School/register`, `POST /api/School/approve/{requestId}`, `POST /api/School/reject/{requestId}`, `POST /api/School/getState`.
 - Deployed: VPS `:8082` behind `platform.bluetsch.com/api/*`, plus **Render** (Root Directory = `TechSchPlatform`, Dockerfile = `TechSchPlatform/Dockerfile`; it lives inside the monolith repo, so Render must NOT use the repo-root Dockerfile, which builds `TechhubMS`).
+  - **Confirmed this misconfiguration actually happened**: `techhub-platform.onrender.com` was found (2026-08-22) serving the monolith — proven by hitting it and getting `MultiTenantMiddleware`'s `TENANT_NOT_FOUND` JSON (a monolith-only behavior; TechSchPlatform has no tenant middleware at all). Root Directory/Dockerfile Path on that Render service need correcting to `TechSchPlatform` / `TechSchPlatform/Dockerfile` — not yet fixed as of this note.
+  - There's also `techhubschmanagement.onrender.com` (a *separate*, undocumented Render service, auto-named from the GitHub repo, correctly building the monolith) — see the CORS section above for its gotchas.
+- **VPS Swagger**: `TechSchPlatform.Api/Program.cs` calls `UseSwagger()`/`UseSwaggerUI()` unconditionally (no `IsDevelopment()` gate), but nginx's `platform.bluetsch.com` config only proxied `/api/` to `:8082` — `/swagger` fell through to the ScholarlyHub frontend's catch-all. Fixed by adding a `location /swagger/ { proxy_pass http://127.0.0.1:8082; ... }` block to `/etc/nginx/sites-available/platform.bluetsch.com` (before the `/api/` block). Live at `https://platform.bluetsch.com/swagger/index.html`.
+- **`/docker/techschplatform-src` on the VPS is a plain file drop, not a git repo** — it can silently drift behind what's committed (found it missing both the Swagger fix and an email-domain fix that were already in git). No `git pull` available there; re-sync via `tar -czf` from a clean local checkout + `scp` + `docker build`, same as the original deploy method.
 - Build/run caveats: `dotnet build` to a temp `-o` dir (VS file locks on `bin/`); run the Api dll with `-WorkingDirectory` = build output (content-root for appsettings), `--urls http://127.0.0.1:5299`. Source deploys via `tar -czf` (exclude `bin/obj/logs/.git/github_actions`), then `docker build` on the VPS.
 
 ### Frontend CI/CD (BLUETHUB-OR)
@@ -659,3 +690,12 @@ Alternative route hitting `IPerformanceDashboardService.GetStudentQuizPerformanc
 - **Production email fixed (monolith + platform)**: monolith `EmailService.cs`, `TechhubMS/appsettings.json`, and `/var/www/schooly/.env` switched to Mailtrap API with a `MailtrapApi`/`Smtp` provider switch; verified live send (`HTTP 200`, message_id) to `plutonish007@yahoo.com`. Root cause of prior failure: production was using ElasticEmail SMTP (bad creds) → "Authentication required".
 - **Containers rebuilt & re-deployed on VPS**: `techhub-api` (email fix) and `techschplatform-api` (FromEmail → verified domain).
 - **Outstanding**: frontend deploy secrets still need adding to the upstream BLUETHUB-OR repo; local monolith + platform changes are not yet committed/pushed to GitHub.
+
+## Session Progress (2026-08-25)
+
+- **Parent role shipped end-to-end**: new `UserRole.Parent` (6), `StudentParent` link table, `ProfileParent`/`RemoveStudentParent`/`DeactivateParent`/`GetMyChildren` endpoints, Parent-aware `Login` (returns `Children` when applicable), and Parent access to the attendance stats/history endpoints scoped to their own children only. Full frontend integration spec written and handed off (endpoints, payloads, screen flow).
+- **Self-service password reset shipped**: `PasswordResetToken` table, `forgot-password`/`reset-password` endpoints. Students explicitly excluded (told to contact staff instead).
+- **Real bugs found and fixed** (all pre-existing, unrelated to any single feature ask): `createUser`'s missing role/permission gate for non-Administrator callers; `LoginHistory`'s first-time-login flag being consumed on a mere login *attempt* rather than a successful password change (silently let a failed password-reset attempt look like a normal subsequent login); no single-session enforcement at all (now fixed, with an explicit carve-out for in-progress quiz/assessment attempts); attendance scan's `AlreadyMarked` ambiguity; `School.LogoUrl` being writable from multiple creation flows instead of only the dedicated logo endpoint; stale Mailtrap domain (`www.bluetsch.com` → `bluetsch.com`) in both the monolith and a git-drifted TechSchPlatform VPS build source; `techhub-platform.onrender.com` confirmed actually misconfigured (serving the monolith instead of TechSchPlatform); TechSchPlatform's Swagger unreachable behind nginx (`/swagger` never proxied).
+- **Known, not-yet-fixed bugs documented**: `GetExistingClassroomSubjects`'s wrong table name (silently disables duplicate-subject prevention); two dead-code leftovers (unused `WeatherForecastController`, an orphaned uncompiled root-level `Controllers/` folder).
+- **Image generation prompt quality**: Claude's refiner system prompt rewritten to be analogy-first (anchor in something the student has lived through, ban generic textbook/lab compositions) instead of defaulting to clinical diagrams; added a shared, capped retry policy (2 retries, transient-only) to both image agents.
+- **New endpoint**: `DELETE /api/School/RemoveClassroomSubject` (soft-delete, Admin/SuperAdmin only); `PUT /api/School/logo` narrowed to SuperAdmin only.

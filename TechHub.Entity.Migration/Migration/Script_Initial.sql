@@ -1583,6 +1583,59 @@ BEGIN
 END;
 
 -- ========================================================================
+-- PasswordResetToken (self-service "forgot password" flow)
+-- One row per reset request. Single-use, expiring token — the token string
+-- itself resolves the user + school server-side, so the reset-password page
+-- doesn't need to know the tenant subdomain up front.
+-- ========================================================================
+
+IF OBJECT_ID('PasswordResetToken', 'U') IS NULL
+BEGIN
+    CREATE TABLE PasswordResetToken (
+        Id            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        UserId        UNIQUEIDENTIFIER NOT NULL,
+        SchoolId      UNIQUEIDENTIFIER NOT NULL,
+        Token         NVARCHAR(200)    NOT NULL,
+        ExpiresAt     DATETIME2        NOT NULL,
+        CreatedAt     DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        IsUsed        BIT              NOT NULL DEFAULT 0,
+        CONSTRAINT PK_PasswordResetToken PRIMARY KEY (Id)
+    );
+
+    CREATE UNIQUE INDEX UQ_PasswordResetToken_Token ON PasswordResetToken(Token);
+    CREATE INDEX IX_PasswordResetToken_UserId ON PasswordResetToken(UserId);
+END;
+
+-- ========================================================================
+-- StudentParent (parent profiling)
+-- Many-to-many link between a Student (Users, RoleId=0) and a Parent
+-- (Users, RoleId=6). A parent is scoped to one school per row, same as
+-- every other role — a parent with children at two schools gets two
+-- separate parent accounts, one per school.
+-- ========================================================================
+
+IF OBJECT_ID('StudentParent', 'U') IS NULL
+BEGIN
+    CREATE TABLE StudentParent (
+        Id            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        StudentId     UNIQUEIDENTIFIER NOT NULL,
+        ParentId      UNIQUEIDENTIFIER NOT NULL,
+        SchoolId      UNIQUEIDENTIFIER NOT NULL,
+        CreatedBy     UNIQUEIDENTIFIER NOT NULL,
+        CreatedAt     DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        IsActive      BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_StudentParent PRIMARY KEY (Id)
+    );
+
+    -- Filtered so a soft-deleted (removed) link doesn't block re-adding
+    -- the same student/parent pair later.
+    CREATE UNIQUE INDEX UQ_StudentParent_Student_Parent_Active
+        ON StudentParent(StudentId, ParentId) WHERE IsActive = 1;
+    CREATE INDEX IX_StudentParent_ParentId ON StudentParent(ParentId) WHERE IsActive = 1;
+    CREATE INDEX IX_StudentParent_StudentId ON StudentParent(StudentId) WHERE IsActive = 1;
+END;
+
+-- ========================================================================
 -- ApplicationLogs (database error logging)
 -- Fire-and-forget, channel-based error logging written by IDbLogger /
 -- GlobalExceptionMiddleware, flushed in batches by the LogWriterService

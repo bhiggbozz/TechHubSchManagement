@@ -13,7 +13,8 @@ namespace TechHub.Core.Enum
         Administrator,
         SuperAdministrator,
         SubjectTeacher,
-        ClassTeacher
-        
+        ClassTeacher,
+        Parent
+
     }
 }

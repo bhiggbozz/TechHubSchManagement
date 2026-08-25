@@ -170,7 +170,7 @@ namespace TechhubMS.Controllers
 
 		/// <summary>Get a student's attendance stats for a class or subject over the selected period.</summary>
 		[HttpGet("student/{studentId:guid}/stats")]
-		[Authorize(Roles = "SubjectTeacher,ClassTeacher,HeadTeacher,Administrator,SuperAdministrator")]
+		[Authorize(Roles = "SubjectTeacher,ClassTeacher,HeadTeacher,Administrator,SuperAdministrator,Parent")]
 		public async Task<IActionResult> GetStudentStats(
 			Guid studentId,
 			[FromQuery] int attendanceType,

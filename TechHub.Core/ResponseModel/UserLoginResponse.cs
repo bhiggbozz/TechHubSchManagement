@@ -21,7 +21,20 @@ namespace TechHub.Core.ResponseModel
 		public DateTime RefreshTokenExpiry { get; set; }
 
 		public SchoolResponseModel? SchoolInfo { get; set; }
+
+		/// <summary>Populated only when RoleId is Parent — null/omitted for every other role.</summary>
+		public List<ChildInfo>? Children { get; set; }
 	}
+
+	public class ChildInfo
+	{
+		public Guid StudentId { get; set; }
+		public string FirstName { get; set; }
+		public string LastName { get; set; }
+		public Guid? ClassroomId { get; set; }
+		public string? ClassroomName { get; set; }
+	}
+
 	public class SchoolResponseModel
 	{		
 		public Guid Id { get; set; }
