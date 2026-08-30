@@ -345,8 +345,8 @@ public class StudentDashboardService : IStudentDashboardService
                             WHERE StudentId = '{studentId}' AND IsActive = 1
                         )
                     )
-                    AND a.CreationDate >= '{weekStart}'
-                    AND a.CreationDate <= '{weekEnd}'");
+                    AND a.CreatedAt >= '{weekStart}'
+                    AND a.CreatedAt <= '{weekEnd}'");
 
                 var pendingTask = conn.QueryFirstAsync<int>($@"
                     SELECT COUNT(DISTINCT a.Id)

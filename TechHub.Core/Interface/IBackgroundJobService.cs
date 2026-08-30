@@ -72,5 +72,12 @@
 	/// Job id: "cleanup-application-logs".
 	/// </summary>
 	void ScheduleApplicationLogsCleanup();
+
+	/// <summary>
+	/// Schedule the daily sweep that marks stale InProgress QuizAttempt/
+	/// AssessmentAttempt rows (past their time limit + grace, per
+	/// AttemptExpiryPolicy) as Abandoned. Job id: "stale-attempt-cleanup".
+	/// </summary>
+	void ScheduleStaleAttemptCleanup();
 }
 
