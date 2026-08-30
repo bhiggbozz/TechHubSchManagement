@@ -1391,7 +1391,7 @@ var schoolId = ParseSchoolId(claims);
 				return false;
 
 			return await _classroomTeacherQueryRepo.CountAsync(
-				"SELECT TOP 1 1 FROM ClassroomTeacher WHERE TeacherId = @TeacherId AND ClassroomId = @ClassroomId AND SchoolId = @SchoolId AND IsActive = 1",
+				"SELECT TOP 1 1 FROM TeacherClassroom WHERE TeacherId = @TeacherId AND ClassroomId = @ClassroomId AND SchoolId = @SchoolId AND IsActive = 1",
 				new Dictionary<string, object>
 				{
 					{ "TeacherId", teacherId },

@@ -675,7 +675,7 @@ public class PerformanceDashboardService : IPerformanceDashboardService
 
         try
         {
-            if (!await CanAccessSubject(userId, subjectId, role))
+            if (!await CanAccessSubject(userId, subjectId, role, classroomId))
                 return Forbidden("You do not have access to this subject");
 
             List<PerformanceSnapshot> topicSnapshots;
@@ -767,7 +767,7 @@ public class PerformanceDashboardService : IPerformanceDashboardService
         return false;
     }
 
-    private async Task<bool> CanAccessSubject(Guid userId, Guid subjectId, UserRole role)
+    private async Task<bool> CanAccessSubject(Guid userId, Guid subjectId, UserRole role, Guid? classroomId = null)
     {
         if (role is UserRole.Administrator or UserRole.SuperAdministrator or UserRole.HeadTeacher)
             return true;
@@ -779,6 +779,33 @@ public class PerformanceDashboardService : IPerformanceDashboardService
                 WHERE TeacherId = '{userId}' AND SubjectId = '{subjectId}' AND IsActive = 1",
                 new Dictionary<string, object>());
             return rows.Any();
+        }
+
+        if (role == UserRole.ClassTeacher)
+        {
+            // A ClassTeacher may view any subject that's actually assigned to a
+            // classroom they own — scoped to that one classroom when the caller
+            // passed classroomId, otherwise any of their classrooms.
+            var myClassroomIds = (await _teacherClassroomQuery.QueryAsync<Guid>($@"
+                SELECT ClassroomId FROM TeacherClassroom
+                WHERE TeacherId = '{userId}' AND IsActive = 1",
+                new Dictionary<string, object>())).ToList();
+
+            if (!myClassroomIds.Any())
+                return false;
+
+            if (classroomId.HasValue && !myClassroomIds.Contains(classroomId.Value))
+                return false;
+
+            var classroomFilter = classroomId.HasValue
+                ? $"AND ClassroomId = '{classroomId.Value}'"
+                : $"AND ClassroomId IN ({string.Join(",", myClassroomIds.Select(id => $"'{id}'"))})";
+
+            var subjectRows = await _teacherSubjectQuery.QueryAsync<int>($@"
+                SELECT TOP 1 1 FROM ClassroomSubject
+                WHERE SubjectId = '{subjectId}' AND IsActive = 1 {classroomFilter}",
+                new Dictionary<string, object>());
+            return subjectRows.Any();
         }
 
         return false;

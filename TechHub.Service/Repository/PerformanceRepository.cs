@@ -73,16 +73,12 @@ public class PerformanceRepository : IPerformanceRepository
 
         var filter = Builders<PerformanceSnapshot>.Filter.And(filters);
 
-        var existing = await _collection.Find(filter).FirstOrDefaultAsync();
-        if (existing != null)
-        {
-            snapshot.Id = existing.Id;
-        }
-        else
-        {
-            snapshot.Id = ObjectId.GenerateNewId();
-        }
-
+        // Single atomic upsert — never read-then-assign Id ourselves. The driver
+        // generates a fresh ObjectId on insert and leaves it untouched on update;
+        // the previous find-then-replace pattern raced under concurrent upserts
+        // (e.g. the scheduled aggregation worker overlapping a manual refresh)
+        // and could copy a stale/default ObjectId.Empty onto a new document,
+        // colliding with the _id unique index.
         var options = new ReplaceOptions { IsUpsert = true };
         await _collection.ReplaceOneAsync(filter, snapshot, options);
     }

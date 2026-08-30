@@ -163,6 +163,7 @@ var app = builder.Build();
 		var backgroundJobService = scope.ServiceProvider.GetRequiredService<IBackgroundJobService>();
 		backgroundJobService.ScheduleMediaCleanup();
 		backgroundJobService.ScheduleApplicationLogsCleanup();
+		backgroundJobService.ScheduleStaleAttemptCleanup();
 	}
 
 	app.UseSerilogRequestLogging();

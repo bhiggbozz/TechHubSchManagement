@@ -143,6 +143,19 @@ namespace TechhubMS.Controllers
 			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
 
+		/// <summary>
+		/// Links one or more existing students to an existing parent account.
+		/// The parent must already exist (use profileParent to create a new one).
+		/// </summary>
+		[HttpPost("attachStudents")]
+		[Authorize]
+		public async Task<ActionResult<BaseResponse>> AttachStudentsToParent(AttachStudentsToParentViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.AttachStudentsToParent(model, claims);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
 		/// <summary>Unlinks one student from one parent (the parent account itself is untouched).</summary>
 		[HttpPost("removeStudentParent")]
 		[Authorize]
@@ -163,13 +176,43 @@ namespace TechhubMS.Controllers
 			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
 
-		/// <summary>Lists the logged-in parent's own children (Id, name, classroom).</summary>
+		/// <summary>
+		/// Lists a parent's children (Id, name, classroom). A Parent caller always
+		/// gets their own children. An Administrator (with CreateUsers) or
+		/// SuperAdministrator must pass <paramref name="parentId"/> to look up
+		/// any parent in their school.
+		/// </summary>
 		[HttpGet("my-children")]
-		[Authorize(Roles = "Parent")]
-		public async Task<ActionResult<BaseResponse>> GetMyChildren()
+		[Authorize(Roles = "Parent,Administrator,SuperAdministrator")]
+		public async Task<ActionResult<BaseResponse>> GetMyChildren([FromQuery] Guid? parentId)
 		{
 			var claims = User.GetAuthenticatedUserClaims();
-			var result = await _userService.GetMyChildren(claims);
+			var result = await _userService.GetMyChildren(claims, parentId);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
+		/// <summary>
+		/// Searches parents in the caller's school by name/email (<paramref name="q"/>),
+		/// by parent email or surname specifically (<paramref name="parentEmail"/>,
+		/// <paramref name="parentSurname"/>), by a linked student's name
+		/// (<paramref name="studentName"/>), or by a known studentId to jump straight
+		/// to their parent(s). All filters are optional and combine with AND — use one
+		/// alone or any combination; omitting everything returns the full paginated
+		/// parent list.
+		/// </summary>
+		[HttpGet("parents/search")]
+		[Authorize(Roles = "Administrator,SuperAdministrator")]
+		public async Task<ActionResult<BaseResponse>> SearchParents(
+			[FromQuery] string? q,
+			[FromQuery] string? studentName,
+			[FromQuery] Guid? studentId,
+			[FromQuery] string? parentEmail,
+			[FromQuery] string? parentSurname,
+			[FromQuery] int page = 1,
+			[FromQuery] int pageSize = 20)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.SearchParents(claims, q, studentName, studentId, parentEmail, parentSurname, page, pageSize);
 			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
 

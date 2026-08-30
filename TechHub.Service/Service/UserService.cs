@@ -341,26 +341,54 @@ namespace TechHub.Service.Service
 				// ===== SINGLE-SESSION ENFORCEMENT (except mid-assessment/quiz) =====
 				// A new login revokes every other active session for this user, so
 				// only one login stays valid at a time. The one exception: never do
-				// this while the account has a quiz/assessment attempt in progress —
-				// a second login attempt (malicious or accidental) must not be able
-				// to invalidate a student's in-flight exam session.
-				var hasActiveAttempt = (await _queryrepositoryLoginHistory.QueryAsync<Guid>(
-					@"SELECT TOP 1 Id FROM QuizAttempt WHERE StudentId = @UserId AND Status = 'InProgress'
+				// this while the account has a quiz/assessment attempt genuinely
+				// still within its time window — a second login attempt (malicious
+				// or accidental) must not be able to invalidate a student's in-flight
+				// exam session. An attempt whose time limit (+ grace) has already
+				// elapsed is treated as abandoned and no longer blocks login — this
+				// is what stops a stale attempt (browser crash, dead network, one the
+				// student simply never returned to) from locking the account out
+				// forever, since nothing currently auto-marks old attempts Abandoned.
+				var inProgressAttempts = (await _queryrepositoryLoginHistory.QueryAsync<InProgressAttemptCheckRow>(
+					@"SELECT 'Quiz' AS Kind, qa.Id,
+					    CASE WHEN DATEADD(MINUTE, @UntimedFallbackMinutes + @GraceMinutes, qa.StartedAt) >= GETUTCDATE() THEN 1 ELSE 0 END AS StillActive
+					  FROM QuizAttempt qa
+					  WHERE qa.StudentId = @UserId AND qa.Status = 'InProgress'
+					  -- Quiz time limits resolve through Quiz/AssessmentSet/teacher-default
+					  -- config, not a direct QuizAttempt->QuizConfig join, so we use the
+					  -- flat fallback window here rather than replicate that resolution.
 					  UNION ALL
-					  SELECT TOP 1 Id FROM AssessmentAttempt WHERE StudentId = @UserId AND Status = 'InProgress'",
-					new Dictionary<string, object> { { "UserId", user.Id } })).Any();
+					  SELECT 'Assessment' AS Kind, aa.Id,
+					    CASE WHEN DATEADD(MINUTE, ISNULL(ac.TimeLimitMinutes, @UntimedFallbackMinutes) + @GraceMinutes, aa.StartedAt) >= GETUTCDATE() THEN 1 ELSE 0 END AS StillActive
+					  FROM AssessmentAttempt aa
+					  LEFT JOIN AssessmentConfig ac ON ac.AssessmentId = aa.AssessmentId
+					  WHERE aa.StudentId = @UserId AND aa.Status = 'InProgress'",
+					new Dictionary<string, object>
+					{
+						{ "UserId", user.Id },
+						{ "GraceMinutes", AttemptExpiryPolicy.GraceMinutes },
+						{ "UntimedFallbackMinutes", AttemptExpiryPolicy.UntimedQuizFallbackMinutes }
+					})).ToList();
 
-				if (hasActiveAttempt)
+				if (inProgressAttempts.Any(a => a.StillActive))
 				{
 					_logger.Warning(
 						"Login blocked - active quiz/assessment in progress - UserId: {UserId}", user.Id);
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Forbidden,
-						ResponseMessage = "This account has an assessment or quiz in progress and cannot be used to log in elsewhere until it's submitted.",
+						ResponseMessage = "This account has an assessment or quiz in progress and cannot be used to log in elsewhere until it's submitted. Please do not log out or close the app during an assessment or quiz, and make sure you have a stable network connection before you begin.",
 						Status = "failed"
 					};
 				}
+
+				// Nothing is still blocking, but any InProgress row that fell through
+				// (past its time window) never got formally submitted — mark it
+				// Abandoned rather than leave it InProgress forever, so a teacher
+				// looking at grading/attempt lists can see it wasn't just skipped,
+				// and so it stops being re-evaluated on every future login.
+				var staleQuizAttemptIds = inProgressAttempts.Where(a => a.Kind == "Quiz" && !a.StillActive).Select(a => a.Id).ToList();
+				var staleAssessmentAttemptIds = inProgressAttempts.Where(a => a.Kind == "Assessment" && !a.StillActive).Select(a => a.Id).ToList();
 
 				// ===== SUCCESSFUL LOGIN — issue tokens atomically =====
 
@@ -386,6 +414,25 @@ namespace TechHub.Service.Service
 						"UPDATE RefreshTokens SET IsRevoked = 1, RevokedAt = @Now WHERE UserId = @UserId AND IsRevoked = 0",
 						new { Now = DateTime.UtcNow, UserId = user.Id },
 						scope.Transaction);
+
+					// Formally close out any quiz/assessment attempt that fell past its
+					// time window (see the inProgressAttempts check above) so it stops
+					// showing as InProgress on teacher grading/attempt views.
+					if (staleQuizAttemptIds.Any())
+					{
+						await scope.Connection.ExecuteAsync(
+							"UPDATE QuizAttempt SET Status = 'Abandoned' WHERE Id IN @Ids AND Status = 'InProgress'",
+							new { Ids = staleQuizAttemptIds },
+							scope.Transaction);
+					}
+
+					if (staleAssessmentAttemptIds.Any())
+					{
+						await scope.Connection.ExecuteAsync(
+							"UPDATE AssessmentAttempt SET Status = 'Abandoned' WHERE Id IN @Ids AND Status = 'InProgress'",
+							new { Ids = staleAssessmentAttemptIds },
+							scope.Transaction);
+					}
 
 					// Issue and store refresh token
 					refreshTokenValue = await GenerateAndStoreRefreshToken(scope.Transaction, scope.Connection,user.Id, user.SchoolId);
@@ -693,8 +740,7 @@ namespace TechHub.Service.Service
 					}
 
 					// Validation 8: Check if user already exists
-					var existingUser = userViewModel.Role == (int)UserRole.Student ? await CheckStudentExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId) :
-						await CheckUserExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId);
+					var existingUser = await CheckUserExists(userViewModel.UserName, userViewModel.EmailAddress, schoolId);
 					if (existingUser.Exists)
 					{
 						_logger.Warning(
@@ -1452,6 +1498,13 @@ namespace TechHub.Service.Service
 
 		private const int PasswordResetTokenExpiryMinutes = 60;
 
+		private class InProgressAttemptCheckRow
+		{
+			public string Kind { get; set; } = string.Empty;
+			public Guid Id { get; set; }
+			public bool StillActive { get; set; }
+		}
+
 		public async Task<BaseResponse> ForgotPassword(ForgotPasswordViewModel forgotPasswordViewModel, TenantInfo? tenantInfo)
 		{
 			try
@@ -2025,6 +2078,187 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		/// <summary>
+		/// Links one or more existing students to an existing parent account
+		/// (the "Attached Students" screen's add-student action). Unlike
+		/// <see cref="ProfileParent"/>, the parent must already exist —
+		/// this never creates a parent or sends credentials. Students already
+		/// linked are silently skipped rather than erroring.
+		/// </summary>
+		public async Task<BaseResponse> AttachStudentsToParent(AttachStudentsToParentViewModel model, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var callerId))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid authentication",
+						Status = "failed"
+					};
+				}
+
+				if (!Enum.TryParse<UserRole>(claims.Role, out var callerRole) ||
+					(callerRole != UserRole.SuperAdministrator && callerRole != UserRole.Administrator))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You are not authorized to attach students to parents",
+						Status = "failed"
+					};
+				}
+
+				if (callerRole == UserRole.Administrator && !await HasPermission(callerId, schoolId, AdminPermission.CreateUsers))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You don't have permission to attach students to parents. Contact your SuperAdministrator.",
+						Status = "failed"
+					};
+				}
+
+				if (model is null || model.StudentIds is null || !model.StudentIds.Any())
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "At least one student is required",
+						Status = "failed"
+					};
+				}
+
+				var requestedStudentIds = model.StudentIds.Distinct().ToList();
+				if (requestedStudentIds.Count > MaxStudentsPerParent)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = $"A parent can be linked to a maximum of {MaxStudentsPerParent} students per request",
+						Status = "failed"
+					};
+				}
+
+				var parent = await _queryrepositoryUser.Get(model.ParentId);
+				if (parent is null || parent.SchoolId != schoolId || parent.RoleId != (int)UserRole.Parent)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Parent not found",
+						Status = "failed"
+					};
+				}
+
+				var invalidStudentIds = new List<Guid>();
+				foreach (var studentId in requestedStudentIds)
+				{
+					var student = await _queryrepositoryUser.Get(studentId);
+					if (student is null || student.SchoolId != schoolId || !student.IsActive ||
+						student.RoleId != (int)UserRole.Student)
+					{
+						invalidStudentIds.Add(studentId);
+					}
+				}
+
+				if (invalidStudentIds.Any())
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "One or more students were not found in your school",
+						Status = "failed",
+						Data = new { InvalidStudentIds = invalidStudentIds }
+					};
+				}
+
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					var activeLinks = (await scope.Connection.QueryAsync<Guid>(
+						"SELECT StudentId FROM StudentParent WHERE ParentId = @ParentId AND IsActive = 1",
+						new { ParentId = model.ParentId },
+						scope.Transaction)).ToList();
+
+					var alreadyLinkedStudentIds = requestedStudentIds.Intersect(activeLinks).ToList();
+					var newStudentIds = requestedStudentIds.Except(alreadyLinkedStudentIds).ToList();
+
+					if (activeLinks.Count + newStudentIds.Count > MaxStudentsPerParent)
+					{
+						await scope.RollbackAsync();
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Conflict,
+							ResponseMessage = $"This parent already has {activeLinks.Count} student(s) linked; adding {newStudentIds.Count} more would exceed the maximum of {MaxStudentsPerParent}",
+							Status = "failed"
+						};
+					}
+
+					foreach (var studentId in newStudentIds)
+					{
+						await scope.Connection.ExecuteAsync(@"
+							INSERT INTO StudentParent (Id, StudentId, ParentId, SchoolId, CreatedBy, CreatedAt, IsActive)
+							VALUES (@Id, @StudentId, @ParentId, @SchoolId, @CreatedBy, @CreatedAt, 1)",
+							new
+							{
+								Id = Guid.NewGuid(),
+								StudentId = studentId,
+								ParentId = model.ParentId,
+								SchoolId = schoolId,
+								CreatedBy = callerId,
+								CreatedAt = now
+							},
+							scope.Transaction);
+					}
+
+					await scope.CommitAsync();
+
+					_logger.Information(
+						"Students attached to parent - ParentId: {ParentId}, SchoolId: {SchoolId}, By: {CallerId}, Count: {Count}",
+						model.ParentId, schoolId, callerId, newStudentIds.Count);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = newStudentIds.Any()
+							? $"{newStudentIds.Count} student(s) linked to parent successfully."
+							: "No new students to link — all requested students were already linked.",
+						Status = "successful",
+						Data = new
+						{
+							ParentId = model.ParentId,
+							LinkedStudentIds = newStudentIds,
+							AlreadyLinkedStudentIds = alreadyLinkedStudentIds
+						}
+					};
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Failed to commit attach-students transaction");
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx, "Rollback failed during attach-students");
+					}
+					throw;
+				}
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error while attaching students to parent");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred while attaching students to the parent",
+					Status = "failed"
+				};
+			}
+		}
+
 		public async Task<BaseResponse> RemoveStudentParent(RemoveStudentParentViewModel removeStudentParentViewModel, AuthenticatedUserClaims claims)
 		{
 			try
@@ -2189,16 +2423,20 @@ namespace TechHub.Service.Service
 		}
 
 		/// <summary>
-		/// Lists the caller's own children (StudentId/name/classroom), so the
+		/// Lists a parent's children (StudentId/name/classroom), so the
 		/// frontend has a way to discover which studentIds to pass into the
 		/// attendance/performance endpoints — a parent has no other way to
-		/// know their children's IDs.
+		/// know their children's IDs. A Parent caller always gets their own
+		/// children (any <paramref name="parentId"/> they pass is ignored).
+		/// An Administrator (with CreateUsers) or SuperAdministrator may pass
+		/// <paramref name="parentId"/> to look up any parent in their school.
 		/// </summary>
-		public async Task<BaseResponse> GetMyChildren(AuthenticatedUserClaims claims)
+		public async Task<BaseResponse> GetMyChildren(AuthenticatedUserClaims claims, Guid? parentId = null)
 		{
 			try
 			{
-				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var parentId))
+				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var callerId) ||
+					!Enum.TryParse<UserRole>(claims?.Role, out var callerRole))
 				{
 					return new BaseResponse
 					{
@@ -2208,7 +2446,58 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				var children = await GetChildrenAsync(parentId, schoolId);
+				Guid targetParentId;
+
+				if (callerRole == UserRole.Parent)
+				{
+					targetParentId = callerId;
+				}
+				else if (callerRole == UserRole.SuperAdministrator || callerRole == UserRole.Administrator)
+				{
+					if (parentId is null)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.BadRequest,
+							ResponseMessage = "parentId is required",
+							Status = "failed"
+						};
+					}
+
+					if (callerRole == UserRole.Administrator && !await HasPermission(callerId, schoolId, AdminPermission.CreateUsers))
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You don't have permission to view parent records. Contact your SuperAdministrator.",
+							Status = "failed"
+						};
+					}
+
+					var parent = await _queryrepositoryUser.Get(parentId.Value);
+					if (parent is null || parent.SchoolId != schoolId || parent.RoleId != (int)UserRole.Parent)
+					{
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.NotFound,
+							ResponseMessage = "Parent not found",
+							Status = "failed"
+						};
+					}
+
+					targetParentId = parentId.Value;
+				}
+				else
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You are not authorized to view parent records",
+						Status = "failed"
+					};
+				}
+
+				var children = await GetChildrenAsync(targetParentId, schoolId);
 
 				return new BaseResponse
 				{
@@ -2221,6 +2510,195 @@ namespace TechHub.Service.Service
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "Unexpected error while retrieving parent's children");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+		private class ParentSearchRow
+		{
+			public int TotalCount { get; set; }
+			public Guid ParentId { get; set; }
+			public string FirstName { get; set; } = string.Empty;
+			public string LastName { get; set; } = string.Empty;
+			public string Email { get; set; } = string.Empty;
+			public bool IsActive { get; set; }
+		}
+
+		private class ParentChildRow
+		{
+			public Guid ParentId { get; set; }
+			public Guid StudentId { get; set; }
+			public string FirstName { get; set; } = string.Empty;
+			public string LastName { get; set; } = string.Empty;
+			public Guid? ClassroomId { get; set; }
+			public string? ClassroomName { get; set; }
+		}
+
+		/// <summary>Batch version of <see cref="GetChildrenAsync"/> for a page of parents at once.</summary>
+		private async Task<Dictionary<Guid, List<ChildInfo>>> GetChildrenForParentsAsync(List<Guid> parentIds, Guid schoolId)
+		{
+			var rows = await _queryrepositoryUser.QueryAsync<ParentChildRow>(@"
+				SELECT sp.ParentId, s.Id AS StudentId, s.FirstName, s.LastName, c.Id AS ClassroomId, c.Name AS ClassroomName
+				FROM StudentParent sp
+				JOIN Users s ON s.Id = sp.StudentId
+				LEFT JOIN StudentClassroom sc ON sc.StudentId = s.Id AND sc.IsActive = 1
+				LEFT JOIN Classroom c ON c.Id = sc.ClassroomId
+				WHERE sp.ParentId IN @ParentIds AND sp.SchoolId = @SchoolId AND sp.IsActive = 1 AND s.IsActive = 1
+				ORDER BY s.FirstName, s.LastName",
+				new Dictionary<string, object> { { "ParentIds", parentIds }, { "SchoolId", schoolId } });
+
+			return rows
+				.GroupBy(r => r.ParentId)
+				.ToDictionary(g => g.Key, g => g.Select(r => new ChildInfo
+				{
+					StudentId = r.StudentId,
+					FirstName = r.FirstName,
+					LastName = r.LastName,
+					ClassroomId = r.ClassroomId,
+					ClassroomName = r.ClassroomName
+				}).ToList());
+		}
+
+		/// <summary>
+		/// Searches parents in the caller's school by name/email, by a linked
+		/// student's name, or by a known studentId (to jump straight from a
+		/// student to their parent(s)). All filters are optional and combine
+		/// with AND; omitting everything returns the full paginated parent
+		/// list. Each result embeds its linked students so the frontend can
+		/// power both a "Search Parents" list and an "Attached Students" view
+		/// without a second call.
+		/// </summary>
+		public async Task<BaseResponse> SearchParents(AuthenticatedUserClaims claims, string? q, string? studentName, Guid? studentId, string? parentEmail, string? parentSurname, int page, int pageSize)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var callerId) ||
+					!Enum.TryParse<UserRole>(claims?.Role, out var callerRole))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid authentication",
+						Status = "failed"
+					};
+				}
+
+				if (callerRole != UserRole.SuperAdministrator && callerRole != UserRole.Administrator)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You are not authorized to search parent records",
+						Status = "failed"
+					};
+				}
+
+				if (callerRole == UserRole.Administrator && !await HasPermission(callerId, schoolId, AdminPermission.CreateUsers))
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "You don't have permission to search parent records. Contact your SuperAdministrator.",
+						Status = "failed"
+					};
+				}
+
+				if (page < 1)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "page must be at least 1",
+						Status = "failed"
+					};
+				}
+
+				if (pageSize < 1 || pageSize > 100)
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "pageSize must be between 1 and 100",
+						Status = "failed"
+					};
+				}
+
+				var parameters = new Dictionary<string, object>
+				{
+					{ "SchoolId", schoolId },
+					{ "ParentRoleId", (int)UserRole.Parent },
+					{ "Q", string.IsNullOrWhiteSpace(q) ? (object)DBNull.Value : $"%{q.Trim()}%" },
+					{ "StudentName", string.IsNullOrWhiteSpace(studentName) ? (object)DBNull.Value : $"%{studentName.Trim()}%" },
+					{ "StudentId", studentId.HasValue ? (object)studentId.Value : DBNull.Value },
+					{ "ParentEmail", string.IsNullOrWhiteSpace(parentEmail) ? (object)DBNull.Value : $"%{parentEmail.Trim()}%" },
+					{ "ParentSurname", string.IsNullOrWhiteSpace(parentSurname) ? (object)DBNull.Value : $"%{parentSurname.Trim()}%" },
+					{ "Offset", (page - 1) * pageSize },
+					{ "PageSize", pageSize }
+				};
+
+				var rows = (await _queryrepositoryUser.QueryAsync<ParentSearchRow>(@"
+					;WITH FilteredParents AS (
+						SELECT DISTINCT u.Id, u.FirstName, u.LastName, u.EmailAddress, u.IsActive
+						FROM Users u
+						LEFT JOIN StudentParent sp ON sp.ParentId = u.Id AND sp.IsActive = 1
+						LEFT JOIN Users su ON su.Id = sp.StudentId
+						WHERE u.SchoolId = @SchoolId AND u.RoleId = @ParentRoleId
+						  AND (@Q IS NULL OR LOWER(u.FirstName) LIKE LOWER(@Q) OR LOWER(u.LastName) LIKE LOWER(@Q) OR LOWER(u.EmailAddress) LIKE LOWER(@Q))
+						  AND (@StudentName IS NULL OR LOWER(su.FirstName) LIKE LOWER(@StudentName) OR LOWER(su.LastName) LIKE LOWER(@StudentName))
+						  AND (@StudentId IS NULL OR sp.StudentId = @StudentId)
+						  AND (@ParentEmail IS NULL OR LOWER(u.EmailAddress) LIKE LOWER(@ParentEmail))
+						  AND (@ParentSurname IS NULL OR LOWER(u.LastName) LIKE LOWER(@ParentSurname))
+					)
+					SELECT COUNT(*) OVER() AS TotalCount, Id AS ParentId, FirstName, LastName, EmailAddress AS Email, IsActive
+					FROM FilteredParents
+					ORDER BY LastName, FirstName
+					OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;",
+					parameters)).ToList();
+
+				var totalCount = rows.FirstOrDefault()?.TotalCount ?? 0;
+				var parentIds = rows.Select(r => r.ParentId).ToList();
+
+				var childrenByParent = parentIds.Any()
+					? await GetChildrenForParentsAsync(parentIds, schoolId)
+					: new Dictionary<Guid, List<ChildInfo>>();
+
+				var parents = rows.Select(r =>
+				{
+					var kids = childrenByParent.TryGetValue(r.ParentId, out var list) ? list : new List<ChildInfo>();
+					return new ParentSearchItemDto
+					{
+						ParentId = r.ParentId,
+						FirstName = r.FirstName,
+						LastName = r.LastName,
+						Email = r.Email,
+						IsActive = r.IsActive,
+						StudentCount = kids.Count,
+						Students = kids
+					};
+				}).ToList();
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = parents.Any() ? $"{totalCount} parent(s) found" : "No parents found",
+					Status = "successful",
+					Data = new ParentSearchResponseDto
+					{
+						TotalCount = totalCount,
+						Page = page,
+						PageSize = pageSize,
+						Parents = parents
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error while searching parents");
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
@@ -5153,62 +5631,40 @@ namespace TechHub.Service.Service
 		/// <summary>
 		/// Check if user already exists by username or email
 		/// </summary>
+		/// <summary>
+		/// Checks email and username uniqueness separately (both scoped to the
+		/// school) so the caller gets told specifically which one conflicts,
+		/// rather than a vague "username or email" message. Email is checked
+		/// first since it's the more common real-world collision.
+		/// </summary>
 		private async Task<(bool Exists, string Message)> CheckUserExists(string userName, string email, Guid schoolId)
 		{
 			try
 			{
-				var emailCondition = string.IsNullOrWhiteSpace(email)
-					? "0=1"
-					: "LOWER(EmailAddress) = @Email";
-
-				var query = $"SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR {emailCondition}) AND SchoolId = @SchoolId";
-				var parameters = new Dictionary<string, object>
-				{
-					{ "UserName", userName.Trim().ToLower() },
-					{ "SchoolId", schoolId }
-				};
-
 				if (!string.IsNullOrWhiteSpace(email))
-					parameters.Add("Email", email.Trim().ToLower());
-
-				var count = await _queryrepositoryUser.CountAsync(query, parameters);
-
-				if (count > 0)
 				{
-					return (true, "User with this username or email already exists in your school");
+					var emailCount = await _queryrepositoryUser.CountAsync(
+						"SELECT COUNT(*) FROM Users WHERE LOWER(EmailAddress) = @Email AND SchoolId = @SchoolId",
+						new Dictionary<string, object>
+						{
+							{ "Email", email.Trim().ToLower() },
+							{ "SchoolId", schoolId }
+						});
+
+					if (emailCount > 0)
+						return (true, "A user with this email address already exists in your school");
 				}
 
-				return (false, string.Empty);
-			}
-			catch
-			{
-				return (false, string.Empty);
-			}
-		}
-		private async Task<(bool Exists, string Message)> CheckStudentExists(string userName, string email, Guid schoolId)
-		{
-			try
-			{
-				var emailCondition = string.IsNullOrWhiteSpace(email)
-					? "0=1"
-					: "LOWER(EmailAddress) = @Email";
+				var usernameCount = await _queryrepositoryUser.CountAsync(
+					"SELECT COUNT(*) FROM Users WHERE LOWER(UserName) = @UserName AND SchoolId = @SchoolId",
+					new Dictionary<string, object>
+					{
+						{ "UserName", userName.Trim().ToLower() },
+						{ "SchoolId", schoolId }
+					});
 
-				var query = $"SELECT COUNT(*) FROM Users WHERE (LOWER(UserName) = @UserName OR {emailCondition}) AND SchoolId = @SchoolId";
-				var parameters = new Dictionary<string, object>
-				{
-					{ "UserName", userName.Trim().ToLower() },
-					{ "SchoolId", schoolId }
-				};
-
-				if (!string.IsNullOrWhiteSpace(email))
-					parameters.Add("Email", email.Trim().ToLower());
-
-				var count = await _queryrepositoryUser.CountAsync(query, parameters);
-
-				if (count > 0)
-				{
-					return (true, "User with this username or email already exists in your school");
-				}
+				if (usernameCount > 0)
+					return (true, "A user with this username already exists in your school");
 
 				return (false, string.Empty);
 			}

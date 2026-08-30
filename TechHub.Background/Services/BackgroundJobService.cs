@@ -145,5 +145,17 @@ namespace TechHub.BackgroundJobs.Services;
 				Cron.Daily(3));  // 3 AM every day
 		}
 
+		/// <summary>
+		/// Schedule the daily sweep that marks stale InProgress quiz/assessment
+		/// attempts Abandoned. Runs at 4 AM every day, staggered after the other
+		/// two daily jobs (media-cleanup at 2 AM, log cleanup at 3 AM).
+		/// </summary>
+		public void ScheduleStaleAttemptCleanup()
+		{
+			_recurringJobManager.AddOrUpdate<StaleAttemptCleanupJob>("stale-attempt-cleanup",
+				job => job.ExecuteAsync(),
+				Cron.Daily(4));  // 4 AM every day
+		}
+
 	}
 
