@@ -29,6 +29,7 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> UpdatePasswordFirstTime(UpdatePasswordViewModelV2 updatePasswordViewModel);
 		Task<BaseResponse> ForgotPassword(ForgotPasswordViewModel forgotPasswordViewModel, TenantInfo? tenantInfo);
 		Task<BaseResponse> ResetPassword(ResetPasswordViewModel resetPasswordViewModel);
+		Task<BaseResponse> ConfirmPasswordChange(ConfirmPasswordChangeViewModel model);
 		Task<BaseResponse> ProfileParent(ProfileParentViewModel profileParentViewModel, AuthenticatedUserClaims claims);
 		Task<BaseResponse> AttachStudentsToParent(AttachStudentsToParentViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> RemoveStudentParent(RemoveStudentParentViewModel removeStudentParentViewModel, AuthenticatedUserClaims claims);

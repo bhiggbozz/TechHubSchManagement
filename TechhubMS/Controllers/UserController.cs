@@ -130,6 +130,19 @@ namespace TechhubMS.Controllers
 		}
 
 		/// <summary>
+		/// Confirms a non-Student password change requested via updatePassword.
+		/// Not tenant-scoped by the middleware — the token itself resolves the
+		/// user and school server-side, same as reset-password.
+		/// </summary>
+		[HttpPost("confirm-password-change")]
+		[AllowAnonymous]
+		public async Task<ActionResult<BaseResponse>> ConfirmPasswordChange(ConfirmPasswordChangeViewModel model)
+		{
+			var result = await _userService.ConfirmPasswordChange(model);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
+
+		/// <summary>
 		/// Profiles a parent to up to 10 students. If a parent with the given
 		/// email already exists in this school, the students are linked to
 		/// that existing account instead of creating a duplicate.

@@ -90,7 +90,196 @@ public class DatabaseInitializer : IHostedService
                 "IF OBJECT_ID('StudentParent', 'U') IS NULL CREATE TABLE StudentParent (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), StudentId UNIQUEIDENTIFIER NOT NULL, ParentId UNIQUEIDENTIFIER NOT NULL, SchoolId UNIQUEIDENTIFIER NOT NULL, CreatedBy UNIQUEIDENTIFIER NOT NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), IsActive BIT NOT NULL DEFAULT 1, CONSTRAINT PK_StudentParent PRIMARY KEY (Id))",
                 "IF OBJECT_ID('StudentParent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_StudentParent_Student_Parent_Active' AND object_id = OBJECT_ID('StudentParent')) CREATE UNIQUE INDEX UQ_StudentParent_Student_Parent_Active ON StudentParent(StudentId, ParentId) WHERE IsActive = 1",
                 "IF OBJECT_ID('StudentParent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StudentParent_ParentId' AND object_id = OBJECT_ID('StudentParent')) CREATE INDEX IX_StudentParent_ParentId ON StudentParent(ParentId) WHERE IsActive = 1",
-                "IF OBJECT_ID('StudentParent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StudentParent_StudentId' AND object_id = OBJECT_ID('StudentParent')) CREATE INDEX IX_StudentParent_StudentId ON StudentParent(StudentId) WHERE IsActive = 1"
+                "IF OBJECT_ID('StudentParent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StudentParent_StudentId' AND object_id = OBJECT_ID('StudentParent')) CREATE INDEX IX_StudentParent_StudentId ON StudentParent(StudentId) WHERE IsActive = 1",
+
+                // Supporting indexes for the "My Courses" quiz/assessment ranking stored procedures below.
+                "IF OBJECT_ID('AssessmentAssignment', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AssessmentAssignment_AssessmentId_Active' AND object_id = OBJECT_ID('AssessmentAssignment')) CREATE INDEX IX_AssessmentAssignment_AssessmentId_Active ON AssessmentAssignment(AssessmentId, IsActive) INCLUDE (TargetType, TargetId)",
+                "IF OBJECT_ID('AssessmentAttempt', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AssessmentAttempt_AssessmentId_Status' AND object_id = OBJECT_ID('AssessmentAttempt')) CREATE INDEX IX_AssessmentAttempt_AssessmentId_Status ON AssessmentAttempt(AssessmentId, Status) INCLUDE (StudentId, FinalScorePercent, SchoolId)",
+                "IF OBJECT_ID('ClassroomSubject', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ClassroomSubject_SubjectId_Active' AND object_id = OBJECT_ID('ClassroomSubject')) CREATE INDEX IX_ClassroomSubject_SubjectId_Active ON ClassroomSubject(SubjectId, IsActive) INCLUDE (ClassroomId, SchoolId)",
+                "IF OBJECT_ID('StudentMinorSubject', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StudentMinorSubject_SubjectId_Active' AND object_id = OBJECT_ID('StudentMinorSubject')) CREATE INDEX IX_StudentMinorSubject_SubjectId_Active ON StudentMinorSubject(SubjectId, IsActive) INCLUDE (StudentId, SchoolId)",
+
+                // "My Courses" stored procedures (student self-service: subject list + per-subject quiz/assessment
+                // rank, scoped to classmates for classroom-linked subjects, or other electors for minor subjects,
+                // since Subjects is a flat per-school catalog shared across every classroom that teaches it).
+                @"CREATE OR ALTER PROCEDURE usp_GetStudentMyCourses
+                    @StudentId UNIQUEIDENTIFIER,
+                    @SchoolId UNIQUEIDENTIFIER
+                AS
+                BEGIN
+                    SET NOCOUNT ON;
+                    SELECT
+                        s.Id AS SubjectId,
+                        s.Subject AS SubjectName,
+                        CAST(CASE WHEN EXISTS (
+                            SELECT 1 FROM StudentMinorSubject sms
+                            WHERE sms.StudentId = @StudentId AND sms.SubjectId = s.Id
+                            AND sms.IsActive = 1 AND sms.SchoolId = @SchoolId
+                        ) THEN 1 ELSE 0 END AS BIT) AS IsMinorSubject
+                    FROM Subjects s
+                    WHERE s.SchoolId = @SchoolId AND s.IsActive = 1
+                    AND s.Id IN (
+                        SELECT cs.SubjectId
+                        FROM StudentClassroom sc
+                        JOIN ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId AND cs.IsActive = 1 AND cs.SchoolId = @SchoolId
+                        WHERE sc.StudentId = @StudentId AND sc.IsActive = 1
+                        UNION
+                        SELECT sms.SubjectId FROM StudentMinorSubject sms
+                        WHERE sms.StudentId = @StudentId AND sms.IsActive = 1 AND sms.SchoolId = @SchoolId
+                    )
+                    ORDER BY s.Subject;
+                END",
+
+                @"CREATE OR ALTER PROCEDURE usp_GetStudentSubjectPerformance
+                    @StudentId UNIQUEIDENTIFIER,
+                    @SubjectId UNIQUEIDENTIFIER,
+                    @SchoolId UNIQUEIDENTIFIER
+                AS
+                BEGIN
+                    SET NOCOUNT ON;
+
+                    -- Result set 1: subject name (empty = not found/wrong school) + enrollment flag
+                    SELECT
+                        s.Subject AS SubjectName,
+                        CAST(CASE WHEN EXISTS (
+                            SELECT 1 FROM ClassroomSubject cs
+                            JOIN StudentClassroom sc ON sc.ClassroomId = cs.ClassroomId AND sc.IsActive = 1
+                            WHERE cs.SubjectId = @SubjectId AND cs.IsActive = 1 AND cs.SchoolId = @SchoolId
+                            AND sc.StudentId = @StudentId
+                            UNION ALL
+                            SELECT 1 FROM StudentMinorSubject sms
+                            WHERE sms.SubjectId = @SubjectId AND sms.StudentId = @StudentId
+                            AND sms.IsActive = 1 AND sms.SchoolId = @SchoolId
+                        ) THEN 1 ELSE 0 END AS BIT) AS IsEnrolled
+                    FROM Subjects s
+                    WHERE s.Id = @SubjectId AND s.SchoolId = @SchoolId AND s.IsActive = 1;
+
+                    DECLARE @ClassroomId UNIQUEIDENTIFIER;
+                    SELECT TOP 1 @ClassroomId = ClassroomId FROM StudentClassroom
+                    WHERE StudentId = @StudentId AND IsActive = 1;
+
+                    DECLARE @IsCore BIT = 0;
+                    IF @ClassroomId IS NOT NULL AND EXISTS (
+                        SELECT 1 FROM ClassroomSubject
+                        WHERE ClassroomId = @ClassroomId AND SubjectId = @SubjectId AND IsActive = 1 AND SchoolId = @SchoolId
+                    )
+                        SET @IsCore = 1;
+
+                    -- Result set 2: quiz rank — classmates in the same classroom if this is a
+                    -- classroom-linked (core) subject, otherwise other electors of it school-wide
+                    IF @IsCore = 1
+                        SELECT
+                            qa.StudentId,
+                            AVG(qa.FinalScorePercent) AS AvgScore,
+                            COUNT(*) AS AttemptCount,
+                            RANK() OVER (ORDER BY AVG(qa.FinalScorePercent) DESC) AS Position,
+                            COUNT(*) OVER () AS TotalStudents
+                        FROM QuizAttempt qa WITH (NOLOCK)
+                        JOIN LessonContent lc WITH (NOLOCK) ON lc.Id = qa.LessonId
+                        WHERE lc.SubjectId = @SubjectId
+                          AND lc.ClassroomId = @ClassroomId
+                          AND qa.SchoolId = @SchoolId
+                          AND qa.Status IN ('Submitted','PartiallyGraded','FullyGraded')
+                          AND qa.FinalScorePercent IS NOT NULL
+                        GROUP BY qa.StudentId
+                        ORDER BY Position;
+                    ELSE
+                        SELECT
+                            qa.StudentId,
+                            AVG(qa.FinalScorePercent) AS AvgScore,
+                            COUNT(*) AS AttemptCount,
+                            RANK() OVER (ORDER BY AVG(qa.FinalScorePercent) DESC) AS Position,
+                            COUNT(*) OVER () AS TotalStudents
+                        FROM QuizAttempt qa WITH (NOLOCK)
+                        JOIN LessonContent lc WITH (NOLOCK) ON lc.Id = qa.LessonId
+                        WHERE lc.SubjectId = @SubjectId
+                          AND qa.SchoolId = @SchoolId
+                          AND qa.Status IN ('Submitted','PartiallyGraded','FullyGraded')
+                          AND qa.FinalScorePercent IS NOT NULL
+                          AND qa.StudentId IN (
+                              SELECT StudentId FROM StudentMinorSubject
+                              WHERE SubjectId = @SubjectId AND IsActive = 1 AND SchoolId = @SchoolId
+                          )
+                        GROUP BY qa.StudentId
+                        ORDER BY Position;
+
+                    -- Resolve which assessments belong to this subject: direct Subject assignment,
+                    -- a Classroom assignment where that classroom teaches the subject, or (for
+                    -- individually-targeted assessments, ~34% of real assignments) via the subject
+                    -- of the questions actually attached to the assessment.
+                    DECLARE @RelevantAssessments TABLE (AssessmentId UNIQUEIDENTIFIER PRIMARY KEY);
+                    INSERT INTO @RelevantAssessments
+                    SELECT DISTINCT a.Id
+                    FROM Assessments a WITH (NOLOCK)
+                    JOIN AssessmentAssignment asg WITH (NOLOCK) ON asg.AssessmentId = a.Id AND asg.IsActive = 1
+                    WHERE a.SchoolId = @SchoolId AND a.IsActive = 1
+                    AND (
+                        (asg.TargetType = 'Subject' AND asg.TargetId = @SubjectId)
+                        OR (asg.TargetType = 'Classroom' AND asg.TargetId IN (
+                            SELECT ClassroomId FROM ClassroomSubject
+                            WHERE SubjectId = @SubjectId AND IsActive = 1 AND SchoolId = @SchoolId
+                        ))
+                        OR (asg.TargetType = 'Student' AND EXISTS (
+                            SELECT 1 FROM AssessmentQuestion aq WITH (NOLOCK)
+                            JOIN Questions q WITH (NOLOCK) ON q.Id = aq.QuestionId
+                            WHERE aq.AssessmentId = a.Id AND aq.IsActive = 1 AND q.SubjectId = @SubjectId
+                        ))
+                    );
+
+                    -- Result set 3: assessment rank — same classmates-vs-school-wide split as quiz
+                    IF @IsCore = 1
+                        SELECT
+                            aa.StudentId,
+                            AVG(aa.FinalScorePercent) AS AvgScore,
+                            COUNT(*) AS AttemptCount,
+                            RANK() OVER (ORDER BY AVG(aa.FinalScorePercent) DESC) AS Position,
+                            COUNT(*) OVER () AS TotalStudents
+                        FROM AssessmentAttempt aa WITH (NOLOCK)
+                        JOIN StudentClassroom sc WITH (NOLOCK) ON sc.StudentId = aa.StudentId AND sc.ClassroomId = @ClassroomId AND sc.IsActive = 1
+                        WHERE aa.SchoolId = @SchoolId
+                          AND aa.Status IN ('Submitted','PartiallyGraded','FullyGraded')
+                          AND aa.FinalScorePercent IS NOT NULL
+                          AND aa.AssessmentId IN (SELECT AssessmentId FROM @RelevantAssessments)
+                        GROUP BY aa.StudentId
+                        ORDER BY Position;
+                    ELSE
+                        SELECT
+                            aa.StudentId,
+                            AVG(aa.FinalScorePercent) AS AvgScore,
+                            COUNT(*) AS AttemptCount,
+                            RANK() OVER (ORDER BY AVG(aa.FinalScorePercent) DESC) AS Position,
+                            COUNT(*) OVER () AS TotalStudents
+                        FROM AssessmentAttempt aa WITH (NOLOCK)
+                        WHERE aa.SchoolId = @SchoolId
+                          AND aa.Status IN ('Submitted','PartiallyGraded','FullyGraded')
+                          AND aa.FinalScorePercent IS NOT NULL
+                          AND aa.AssessmentId IN (SELECT AssessmentId FROM @RelevantAssessments)
+                          AND aa.StudentId IN (
+                              SELECT StudentId FROM StudentMinorSubject
+                              WHERE SubjectId = @SubjectId AND IsActive = 1 AND SchoolId = @SchoolId
+                          )
+                        GROUP BY aa.StudentId
+                        ORDER BY Position;
+                END",
+
+                // Student study groups — core tables only (group + membership). Content
+                // submission and approval routing are a separate, not-yet-built phase of
+                // this feature; Status/approval columns exist now so no later migration
+                // is needed once that phase lands.
+                "IF OBJECT_ID('StudentGroup', 'U') IS NULL CREATE TABLE StudentGroup (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), SchoolId UNIQUEIDENTIFIER NOT NULL, ClassroomId UNIQUEIDENTIFIER NOT NULL, Name NVARCHAR(200) NOT NULL, Status NVARCHAR(50) NOT NULL DEFAULT 'PendingApproval', CreatedBy UNIQUEIDENTIFIER NOT NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), ApprovedBy UNIQUEIDENTIFIER NULL, ApprovedAt DATETIME2 NULL, RejectedBy UNIQUEIDENTIFIER NULL, RejectionReason NVARCHAR(500) NULL, ModifiedAt DATETIME2 NULL, IsActive BIT NOT NULL DEFAULT 1, CONSTRAINT PK_StudentGroup PRIMARY KEY (Id))",
+                "IF OBJECT_ID('StudentGroup', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StudentGroup_ClassroomId' AND object_id = OBJECT_ID('StudentGroup')) CREATE INDEX IX_StudentGroup_ClassroomId ON StudentGroup(ClassroomId) WHERE IsActive = 1",
+                "IF OBJECT_ID('StudentGroup', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StudentGroup_CreatedBy' AND object_id = OBJECT_ID('StudentGroup')) CREATE INDEX IX_StudentGroup_CreatedBy ON StudentGroup(CreatedBy) WHERE IsActive = 1",
+                "IF OBJECT_ID('StudentGroupMember', 'U') IS NULL CREATE TABLE StudentGroupMember (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), GroupId UNIQUEIDENTIFIER NOT NULL, StudentId UNIQUEIDENTIFIER NOT NULL, SchoolId UNIQUEIDENTIFIER NOT NULL, InvitedBy UNIQUEIDENTIFIER NOT NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), IsActive BIT NOT NULL DEFAULT 1, CONSTRAINT PK_StudentGroupMember PRIMARY KEY (Id))",
+                "IF OBJECT_ID('StudentGroupMember', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_StudentGroupMember_Group_Student_Active' AND object_id = OBJECT_ID('StudentGroupMember')) CREATE UNIQUE INDEX UQ_StudentGroupMember_Group_Student_Active ON StudentGroupMember(GroupId, StudentId) WHERE IsActive = 1",
+                "IF OBJECT_ID('StudentGroupMember', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StudentGroupMember_GroupId' AND object_id = OBJECT_ID('StudentGroupMember')) CREATE INDEX IX_StudentGroupMember_GroupId ON StudentGroupMember(GroupId) WHERE IsActive = 1",
+                "IF OBJECT_ID('StudentGroupMember', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StudentGroupMember_StudentId' AND object_id = OBJECT_ID('StudentGroupMember')) CREATE INDEX IX_StudentGroupMember_StudentId ON StudentGroupMember(StudentId) WHERE IsActive = 1",
+
+                // Email-confirmed password change for non-Student roles — updatePassword stores
+                // the intended new hash here instead of applying it immediately; the account's
+                // registered email must confirm via token before it takes effect. Students are
+                // exempt (same self-service email flow they're already excluded from elsewhere).
+                "IF OBJECT_ID('PasswordChangeConfirmation', 'U') IS NULL CREATE TABLE PasswordChangeConfirmation (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), UserId UNIQUEIDENTIFIER NOT NULL, SchoolId UNIQUEIDENTIFIER NOT NULL, Token NVARCHAR(200) NOT NULL, PendingHashPassword NVARCHAR(200) NOT NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), ExpiresAt DATETIME2 NOT NULL, IsUsed BIT NOT NULL DEFAULT 0, CONSTRAINT PK_PasswordChangeConfirmation PRIMARY KEY (Id))",
+                "IF OBJECT_ID('PasswordChangeConfirmation', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_PasswordChangeConfirmation_Token' AND object_id = OBJECT_ID('PasswordChangeConfirmation')) CREATE UNIQUE INDEX UQ_PasswordChangeConfirmation_Token ON PasswordChangeConfirmation(Token)",
+                "IF OBJECT_ID('PasswordChangeConfirmation', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PasswordChangeConfirmation_UserId' AND object_id = OBJECT_ID('PasswordChangeConfirmation')) CREATE INDEX IX_PasswordChangeConfirmation_UserId ON PasswordChangeConfirmation(UserId)"
             };
 
             await using var connection = new SqlConnection(connStr);

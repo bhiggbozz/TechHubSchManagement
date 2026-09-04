@@ -456,6 +456,61 @@ public class LessonService : ILessonService
 		}
 	}
 
+	/// <summary>
+	/// Lesson counts grouped by subject for one classroom — every subject
+	/// assigned to the classroom is included, with 0 for subjects that have no
+	/// lessons yet. Mirrors GetLessonsByClassroom's visibility rule: teachers/
+	/// admins count every status, students only count Approved lessons.
+	/// </summary>
+	public async Task<BaseResponse> GetSubjectLessonCounts(Guid classroomId, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			if (!Enum.TryParse<UserRole>(claims.Role, ignoreCase: true, out var role))
+				return BadRequest("Invalid role");
+
+			var isTeacher = role == UserRole.SubjectTeacher ||
+							role == UserRole.HeadTeacher ||
+							role == UserRole.Administrator ||
+							role == UserRole.SuperAdministrator;
+
+			var statusFilter = isTeacher ? "" : $"AND lc.Status = '{LessonStatus.Approved}'";
+
+			var query = $@"
+                SELECT s.Id AS SubjectId, s.Subject AS SubjectName, COUNT(lc.Id) AS LessonCount
+                FROM   ClassroomSubject cs
+                JOIN   Subjects s ON s.Id = cs.SubjectId
+                LEFT JOIN LessonContent lc ON lc.SubjectId = cs.SubjectId
+                       AND lc.ClassroomId = cs.ClassroomId
+                       AND lc.SchoolId = '{schoolId}'
+                       {statusFilter}
+                WHERE  cs.ClassroomId = '{classroomId}'
+                AND    cs.SchoolId    = '{schoolId}'
+                AND    cs.IsActive    = 1
+                GROUP  BY s.Id, s.Subject
+                ORDER  BY s.Subject";
+
+			var counts = await _lessonQuery.QueryAsync<SubjectLessonCountDto>(query, new Dictionary<string, object>());
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = "Subject lesson counts retrieved successfully",
+				Status = "successful",
+				Data = counts
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex,
+				"Error fetching subject lesson counts - ClassroomId: {ClassroomId}", classroomId);
+			return ServerError();
+		}
+	}
+
 	// ── Get single lesson with all its media ──────────────────────────────────
 	public async Task<BaseResponse> GetLessonById(Guid lessonId, AuthenticatedUserClaims claims)
 	{

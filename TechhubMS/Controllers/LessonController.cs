@@ -136,6 +136,15 @@ public class LessonController : ControllerBase
 		return Ok(result);
 	}
 
+	/// <summary>Lesson counts per subject for one classroom (every assigned subject included, 0 if none yet).</summary>
+	[HttpGet("classroom/{classroomId}/subject-counts")]
+	public async Task<IActionResult> GetSubjectLessonCounts(Guid classroomId)
+	{
+		var claims = GetClaims();
+		var result = await _lessonService.GetSubjectLessonCounts(classroomId, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
 	[HttpGet("{lessonId}")]
 	public async Task<IActionResult> GetLesson(Guid lessonId)
 	{

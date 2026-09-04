@@ -6,6 +6,7 @@ using Serilog;
 using Serilog.Context;
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
 using TechHub.Core;
@@ -275,6 +276,116 @@ public class StudentDashboardService : IStudentDashboardService
                 return Bad("An error occurred while fetching subtopic scores", ResponseCode.ErrorOccured);
             }
         }
+    }
+
+    private class SubjectAttemptRankRow
+    {
+        public Guid StudentId { get; set; }
+        public decimal AvgScore { get; set; }
+        public int AttemptCount { get; set; }
+        public int Position { get; set; }
+        public int TotalStudents { get; set; }
+    }
+
+    private class SubjectHeaderRow
+    {
+        public string SubjectName { get; set; } = string.Empty;
+        public bool IsEnrolled { get; set; }
+    }
+
+    /// <summary>Subjects the logged-in student takes: their classroom's core
+    /// subjects (ClassroomSubject) plus any elective subjects (StudentMinorSubject).</summary>
+    public async Task<BaseResponse> GetMyCoursesAsync(AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.UserId, out var studentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                using var conn = new SqlConnection(_connString);
+                conn.Open();
+
+                var courses = (await conn.QueryAsync<MyCourseDto>(
+                    "usp_GetStudentMyCourses",
+                    new { StudentId = studentId, SchoolId = schoolId },
+                    commandType: CommandType.StoredProcedure)).ToList();
+
+                return Ok("My courses retrieved", courses);
+            }
+            catch (Exception ex)
+            {
+                _dbLogger.LogError(ex, "StudentDashboardService.GetMyCoursesAsync", _httpContextAccessor?.HttpContext);
+                _logger.Error(ex, "Error fetching my courses: {ErrorMessage}", ex.Message);
+                return Bad("An error occurred while fetching your courses", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The logged-in student's own quiz and assessment performance in one
+    /// subject, reported separately (average score + rank/position among
+    /// school-wide peers with at least one completed attempt of that kind).
+    /// </summary>
+    public async Task<BaseResponse> GetMyCourseSubjectDetailAsync(Guid subjectId, AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.UserId, out var studentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                using var conn = new SqlConnection(_connString);
+                conn.Open();
+
+                using var multi = await conn.QueryMultipleAsync(
+                    "usp_GetStudentSubjectPerformance",
+                    new { StudentId = studentId, SubjectId = subjectId, SchoolId = schoolId },
+                    commandType: CommandType.StoredProcedure);
+
+                var header = await multi.ReadSingleOrDefaultAsync<SubjectHeaderRow>();
+                if (header is null)
+                    return Bad("Subject not found", ResponseCode.NotFound);
+
+                var quizRows = (await multi.ReadAsync<SubjectAttemptRankRow>()).ToList();
+                var assessmentRows = (await multi.ReadAsync<SubjectAttemptRankRow>()).ToList();
+
+                var dto = new StudentSubjectPerformanceDetailDto
+                {
+                    SubjectId = subjectId,
+                    SubjectName = header.SubjectName,
+                    IsEnrolled = header.IsEnrolled,
+                    Quiz = BuildBreakdown(quizRows, studentId),
+                    Assessment = BuildBreakdown(assessmentRows, studentId)
+                };
+
+                return Ok("Subject performance retrieved", dto);
+            }
+            catch (Exception ex)
+            {
+                _dbLogger.LogError(ex, "StudentDashboardService.GetMyCourseSubjectDetailAsync", _httpContextAccessor?.HttpContext);
+                _logger.Error(ex, "Error fetching subject performance: {ErrorMessage}", ex.Message);
+                return Bad("An error occurred while fetching subject performance", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
+    private static SubjectPerformanceBreakdownDto BuildBreakdown(List<SubjectAttemptRankRow> rows, Guid studentId)
+    {
+        var mine = rows.FirstOrDefault(r => r.StudentId == studentId);
+        return new SubjectPerformanceBreakdownDto
+        {
+            AverageScore = mine is not null ? Math.Round(mine.AvgScore, 1) : (decimal?)null,
+            AttemptCount = mine?.AttemptCount ?? 0,
+            Position = mine?.Position,
+            TotalStudents = mine?.TotalStudents ?? (rows.Count > 0 ? rows[0].TotalStudents : 0)
+        };
     }
 
     public async Task<BaseResponse> GetStudentDashboardStatsAsync(AuthenticatedUserClaims claims)

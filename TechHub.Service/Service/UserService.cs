@@ -78,6 +78,8 @@ namespace TechHub.Service.Service
 		private readonly IQueryRepository<ClassroomSubject> _classroomSubjectQueryRespository;
 		private readonly IQueryRepository<PasswordResetToken> _passwordResetTokenQueryRespository;
 		private readonly ICommandRespository<PasswordResetToken> _passwordResetTokenCommandRespository;
+		private readonly IQueryRepository<PasswordChangeConfirmation> _passwordChangeConfirmationQueryRespository;
+		private readonly ICommandRespository<PasswordChangeConfirmation> _passwordChangeConfirmationCommandRespository;
 
 
 
@@ -106,11 +108,15 @@ namespace TechHub.Service.Service
 			IQueryRepository<StudentMinorSubject> studentMinorSubjectQueryRespository,
 			IQueryRepository<PasswordResetToken> passwordResetTokenQueryRespository,
 			ICommandRespository<PasswordResetToken> passwordResetTokenCommandRespository,
+			IQueryRepository<PasswordChangeConfirmation> passwordChangeConfirmationQueryRespository,
+			ICommandRespository<PasswordChangeConfirmation> passwordChangeConfirmationCommandRespository,
 			IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator,
 			IBackgroundJobService backgroundJobService)
 		{
 			_passwordResetTokenQueryRespository = passwordResetTokenQueryRespository;
 			_passwordResetTokenCommandRespository = passwordResetTokenCommandRespository;
+			_passwordChangeConfirmationQueryRespository = passwordChangeConfirmationQueryRespository;
+			_passwordChangeConfirmationCommandRespository = passwordChangeConfirmationCommandRespository;
 			_queryrepositoryLoginHistory = queryRepositoryLoginHistory;
 			_queryrepositoryUser = queryrepositoryUser;
 			_commandRepositoryLoginHistory = commandRepositoryLoginHistory;
@@ -1169,7 +1175,7 @@ namespace TechHub.Service.Service
 					};
 
 				var loginHistory = await LastLoginHistorys(user.Id);
-				if (loginHistory.Count() <= 1)
+				if (!loginHistory.Any())
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Forbidden,
@@ -1198,6 +1204,12 @@ namespace TechHub.Service.Service
 						ResponseMessage = "New password cannot be the same as your current password",
 						Status = "failed"
 					};
+
+				// ── Non-Student roles must confirm the change via email before it takes
+				// effect. Students are exempt — same self-service-email exemption they
+				// already have for forgot-password, and they change it directly here.
+				if (user.RoleId != (int)UserRole.Student)
+					return await RequestPasswordChangeConfirmation(user, schoolId, model.HashPassword);
 
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
@@ -1276,6 +1288,186 @@ namespace TechHub.Service.Service
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "Unexpected error during password update");
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+		/// <summary>
+		/// Non-Student password changes don't apply immediately — the intended new
+		/// hash is stored pending confirmation, and a link is emailed to the account's
+		/// registered address. Nothing in Users.HashPassword changes until that link
+		/// is used via ConfirmPasswordChange.
+		/// </summary>
+		private async Task<BaseResponse> RequestPasswordChangeConfirmation(Users user, Guid schoolId, string newHashPassword)
+		{
+			if (string.IsNullOrWhiteSpace(user.EmailAddress))
+			{
+				_logger.Warning("Password change confirmation requested but no email on file - UserId: {UserId}", user.Id);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = "No email address is on file for this account. Please contact your school administrator.",
+					Status = "failed"
+				};
+			}
+
+			var identifier = (await _tenantQueryRespository.QueryAsync<string>(
+				"SELECT Identifier FROM TenantInfo WHERE SchoolId = @SchoolId AND IsActive = 1",
+				new Dictionary<string, object> { { "SchoolId", schoolId } })).FirstOrDefault();
+
+			var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+			var now = DateTime.UtcNow;
+
+			await _passwordChangeConfirmationCommandRespository.Create(new PasswordChangeConfirmation
+			{
+				Id = Guid.NewGuid(),
+				UserId = user.Id,
+				SchoolId = schoolId,
+				Token = token,
+				PendingHashPassword = newHashPassword,
+				CreatedAt = now,
+				ExpiresAt = now.AddMinutes(PasswordChangeConfirmationExpiryMinutes),
+				IsUsed = false
+			});
+
+			_logger.Information("Password change confirmation requested - UserId: {UserId}", user.Id);
+
+			// Send the email (fire-and-forget) — never let an email failure block the response.
+			_ = Task.Run(async () =>
+			{
+				try
+				{
+					var confirmLink = $"https://{identifier}.bluetsch.com/confirm-password-change?token={token}";
+					var subject = "Confirm your TechHub password change";
+					var body = $@"
+						<html>
+						<body style='font-family: Arial, sans-serif;'>
+							<h2>Confirm Password Change</h2>
+							<p>Dear {user.FirstName},</p>
+							<p>We received a request to change your TechHub password. Click the button below to confirm this change.</p>
+							<p style='margin-top: 24px;'>
+								<a href='{confirmLink}'
+								   style='background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; display: inline-block;'>
+									Confirm Password Change
+								</a>
+							</p>
+							<p style='color: #64748b; font-size: 12px;'>Or paste this link into your browser:<br/>{confirmLink}</p>
+							<p>This link expires in {PasswordChangeConfirmationExpiryMinutes} minutes. If you didn't request this, you can safely ignore this email — your password will not be changed.</p>
+							<p>Best regards,<br/>TechHub Team</p>
+						</body>
+						</html>";
+
+					await _emailService.SendAsync(user.EmailAddress, $"{user.FirstName} {user.LastName}", subject, body);
+					_logger.Information("Password change confirmation email sent - UserId: {UserId}", user.Id);
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Failed to send password change confirmation email - UserId: {UserId}", user.Id);
+				}
+			});
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = "A confirmation link has been sent to your registered email. Your password will not change until you confirm.",
+				Status = "successful"
+			};
+		}
+
+		public async Task<BaseResponse> ConfirmPasswordChange(ConfirmPasswordChangeViewModel model)
+		{
+			try
+			{
+				if (string.IsNullOrWhiteSpace(model?.Token))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "Token is required",
+						Status = "failed"
+					};
+
+				var confirmation = await _passwordChangeConfirmationQueryRespository.GetBy(new Dictionary<string, object>
+				{
+					{ "Token", model.Token }
+				});
+
+				if (confirmation is null || confirmation.IsUsed || confirmation.ExpiresAt < DateTime.UtcNow)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid or expired confirmation link. Please request the password change again.",
+						Status = "failed"
+					};
+
+				var user = await _queryrepositoryUser.Get(confirmation.UserId);
+				if (user is null || !user.IsActive || user.SchoolId != confirmation.SchoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid or expired confirmation link. Please request the password change again.",
+						Status = "failed"
+					};
+
+				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					await scope.Connection.ExecuteAsync(@"
+						UPDATE Users SET HashPassword = @HashPassword, ModifiedDate = @ModifiedDate WHERE Id = @Id",
+						new { HashPassword = confirmation.PendingHashPassword, ModifiedDate = now, Id = user.Id },
+						scope.Transaction);
+
+					// Close out every other outstanding confirmation for this user too.
+					await scope.Connection.ExecuteAsync(@"
+						UPDATE PasswordChangeConfirmation SET IsUsed = 1 WHERE UserId = @UserId AND IsUsed = 0",
+						new { UserId = user.Id },
+						scope.Transaction);
+
+					var loginHistoryDict = new Dictionary<string, object>
+					{
+						{ "Id",            Guid.NewGuid() },
+						{ "CreationDate",  now },
+						{ "ModifiedDate",  now },
+						{ "UserId",        user.Id },
+						{ "RoleId",        user.RoleId },
+						{ "PasswordFailed", false },
+						{ "DeviceType",    string.Empty },
+						{ "DeviceIp",      string.Empty }
+					};
+
+					await _commandRepositoryLoginHistory.Create(scope.Transaction, scope.Connection, loginHistoryDict);
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Failed to commit password change confirmation transaction - UserId: {UserId}", user.Id);
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx, "Rollback failed during password change confirmation - UserId: {UserId}", user.Id);
+					}
+					throw;
+				}
+
+				_logger.Information("Password change confirmed - UserId: {UserId}", user.Id);
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Password changed successfully.",
+					Status = "successful"
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error during password change confirmation");
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
@@ -1497,6 +1689,9 @@ namespace TechHub.Service.Service
 		}
 
 		private const int PasswordResetTokenExpiryMinutes = 60;
+		// Shorter than the forgot-password reset link — this one confirms a change the
+		// user just initiated mid-session, not a "come back whenever" recovery flow.
+		private const int PasswordChangeConfirmationExpiryMinutes = 20;
 
 		private class InProgressAttemptCheckRow
 		{
@@ -2005,20 +2200,64 @@ namespace TechHub.Service.Service
 						{
 							try
 							{
-								var subject = "Your TechHub Parent Account";
+								var children = (await _queryrepositoryUser.QueryAsync<ParentEmailChildRow>(
+									"SELECT FirstName, LastName FROM Users WHERE Id IN @Ids",
+									new Dictionary<string, object> { { "Ids", requestedStudentIds } })).ToList();
+
+								var childrenListHtml = children.Any()
+									? string.Join("", children.Select(c => $"<li style='padding:6px 0;font-size:15px;color:#1f2937;'>&#127891; {c.FirstName} {c.LastName}</li>"))
+									: "<li style='padding:6px 0;font-size:15px;color:#1f2937;'>Your child(ren)</li>";
+
+								var subject = "Welcome to TechHub — You Now Have Access to Your Child's Progress";
 								var body = $@"
 									<html>
-									<body style='font-family: Arial, sans-serif;'>
-										<h2>Parent Account Created</h2>
-										<p>Dear {profileParentViewModel.ParentFirstName},</p>
-										<p>A parent account has been created for you on TechHub so you can follow your child's progress.</p>
-										<h3>Login Credentials</h3>
-										<ul>
-											<li><strong>Username:</strong> {generatedUsername}</li>
-											<li><strong>Password:</strong> {tempPassword}</li>
-										</ul>
-										<p>Please log in and change your password on first login.</p>
-										<p>Best regards,<br/>TechHub Team</p>
+									<body style='margin:0;padding:0;background-color:#f3f4f6;font-family:Segoe UI, Arial, sans-serif;'>
+										<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background-color:#f3f4f6;padding:32px 0;'>
+											<tr>
+												<td align='center'>
+													<table role='presentation' width='100%' style='max-width:520px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);'>
+														<tr>
+															<td style='background:linear-gradient(135deg,#4f46e5,#7c3aed);padding:32px 32px 24px 32px;text-align:center;'>
+																<div style='font-size:28px;line-height:1;margin-bottom:8px;'>&#127881;</div>
+																<h1 style='margin:0;color:#ffffff;font-size:22px;font-weight:600;'>Welcome to TechHub!</h1>
+															</td>
+														</tr>
+														<tr>
+															<td style='padding:32px;'>
+																<p style='margin:0 0 16px 0;font-size:15px;color:#374151;'>Dear {profileParentViewModel.ParentFirstName},</p>
+																<p style='margin:0 0 20px 0;font-size:15px;color:#374151;line-height:1.6;'>
+																	You have been profiled on <strong>TechHub</strong> and now have access to follow the progress of:
+																</p>
+																<ul style='margin:0 0 24px 0;padding:16px 20px;list-style:none;background-color:#f5f3ff;border-radius:8px;border:1px solid #ede9fe;'>
+																	{childrenListHtml}
+																</ul>
+																<p style='margin:0 0 12px 0;font-size:15px;color:#374151;line-height:1.6;'>
+																	Use the temporary password below to log in — you'll be asked to set your own password the first time you sign in.
+																</p>
+																<table role='presentation' width='100%' style='background-color:#111827;border-radius:8px;margin:0 0 24px 0;'>
+																	<tr>
+																		<td style='padding:18px 20px;'>
+																			<p style='margin:0 0 6px 0;font-size:12px;letter-spacing:0.05em;text-transform:uppercase;color:#9ca3af;'>Username</p>
+																			<p style='margin:0 0 14px 0;font-size:16px;color:#ffffff;font-weight:600;font-family:Consolas,monospace;'>{generatedUsername}</p>
+																			<p style='margin:0 0 6px 0;font-size:12px;letter-spacing:0.05em;text-transform:uppercase;color:#9ca3af;'>Temporary Password</p>
+																			<p style='margin:0;font-size:16px;color:#ffffff;font-weight:600;font-family:Consolas,monospace;'>{tempPassword}</p>
+																		</td>
+																	</tr>
+																</table>
+																<p style='margin:0 0 4px 0;font-size:13px;color:#6b7280;line-height:1.6;'>
+																	For your security, please log in and change this password as soon as possible.
+																</p>
+															</td>
+														</tr>
+														<tr>
+															<td style='padding:20px 32px;background-color:#f9fafb;text-align:center;border-top:1px solid #f0f0f0;'>
+																<p style='margin:0;font-size:13px;color:#9ca3af;'>Best regards,<br/><strong style='color:#6b7280;'>The TechHub Team</strong></p>
+															</td>
+														</tr>
+													</table>
+												</td>
+											</tr>
+										</table>
 									</body>
 									</html>";
 
@@ -2527,6 +2766,12 @@ namespace TechHub.Service.Service
 			public string LastName { get; set; } = string.Empty;
 			public string Email { get; set; } = string.Empty;
 			public bool IsActive { get; set; }
+		}
+
+		private class ParentEmailChildRow
+		{
+			public string FirstName { get; set; } = string.Empty;
+			public string LastName { get; set; } = string.Empty;
 		}
 
 		private class ParentChildRow
@@ -5009,6 +5254,19 @@ namespace TechHub.Service.Service
 					}
 					break;
 
+				case OperationType.CreateGroup:
+					if (!approval.EntityId.HasValue) break;
+					var approveGroup = $@"
+						UPDATE StudentGroup
+						SET    Status     = 'Approved',
+							   ApprovedBy = '{approverId}',
+							   ApprovedAt = '{respondedAt:yyyy-MM-dd HH:mm:ss}'
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+					await scope.Connection.ExecuteAsync(approveGroup, transaction: scope.Transaction);
+					break;
+
 				default:
 					_logger.Warning(
 						"No apply handler for OperationType: {OperationType}, ApprovalId: {ApprovalId}",
@@ -5095,6 +5353,19 @@ namespace TechHub.Service.Service
 						approval.EntityId, approval.Id);
 					break;
 
+				case OperationType.CreateGroup:
+					if (!approval.EntityId.HasValue) break;
+					var rejectGroup = $@"
+						UPDATE StudentGroup
+						SET    Status          = 'Rejected',
+							   RejectedBy      = '{approverId}',
+							   RejectionReason = '{reason}'
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+					await scope.Connection.ExecuteAsync(rejectGroup, transaction: scope.Transaction);
+					break;
+
 				default:
 					_logger.Warning(
 						"No reject handler for OperationType: {OperationType}, ApprovalId: {ApprovalId}",
@@ -5123,6 +5394,12 @@ namespace TechHub.Service.Service
 		{
 			try
 			{
+				// This notification is lesson-shaped (subject/body hardcoded to "lesson").
+				// Other OperationTypes (e.g. CreateGroup) don't have their own template yet —
+				// skip rather than send a misleading "your lesson has been approved" email.
+				if (approval.OperationType != OperationType.SubmitLesson)
+					return;
+
 				// Fetch the teacher who submitted
 				var requester = await _queryrepositoryUser.Get(approval.RequestedBy);
 				if (requester is null)
