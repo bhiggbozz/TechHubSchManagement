@@ -35,7 +35,8 @@ public class MultiTenantMiddleware
 	    || context.Request.Path.Value != null && context.Request.Path.Value.Contains("/approval-status", StringComparison.OrdinalIgnoreCase)
 	    || context.Request.Path.StartsWithSegments("/api/PlatformAuth")
 	    || context.Request.Path.StartsWithSegments("/api/PlatformAdmin")
-	    || string.Equals(context.Request.Path, "/api/User/reset-password", StringComparison.OrdinalIgnoreCase))
+	    || string.Equals(context.Request.Path, "/api/User/reset-password", StringComparison.OrdinalIgnoreCase)
+	    || string.Equals(context.Request.Path, "/api/User/confirm-password-change", StringComparison.OrdinalIgnoreCase))
 		{
 			await _next(context);
 			return;

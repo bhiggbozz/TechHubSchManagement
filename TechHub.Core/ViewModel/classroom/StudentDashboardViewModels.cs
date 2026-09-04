@@ -70,3 +70,27 @@ public class StudentSubTopicScoreDto
     public int Position { get; set; }
     public int TotalStudents { get; set; }
 }
+
+public class MyCourseDto
+{
+    public Guid SubjectId { get; set; }
+    public string SubjectName { get; set; }
+    public bool IsMinorSubject { get; set; }
+}
+
+public class StudentSubjectPerformanceDetailDto
+{
+    public Guid SubjectId { get; set; }
+    public string SubjectName { get; set; }
+    public bool IsEnrolled { get; set; }
+    public SubjectPerformanceBreakdownDto Quiz { get; set; } = new();
+    public SubjectPerformanceBreakdownDto Assessment { get; set; } = new();
+}
+
+public class SubjectPerformanceBreakdownDto
+{
+    public decimal? AverageScore { get; set; }
+    public int AttemptCount { get; set; }
+    public int? Position { get; set; }
+    public int TotalStudents { get; set; }
+}

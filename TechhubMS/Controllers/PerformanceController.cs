@@ -102,6 +102,22 @@ public class PerformanceController : ControllerBase
         return MapResponse(response);
     }
 
+    [HttpGet("my-courses")]
+    public async Task<IActionResult> GetMyCourses()
+    {
+        var claims = GetUserClaims();
+        var response = await _studentDashboardService.GetMyCoursesAsync(claims);
+        return MapResponse(response);
+    }
+
+    [HttpGet("my-courses/{subjectId}")]
+    public async Task<IActionResult> GetMyCourseSubjectDetail(Guid subjectId)
+    {
+        var claims = GetUserClaims();
+        var response = await _studentDashboardService.GetMyCourseSubjectDetailAsync(subjectId, claims);
+        return MapResponse(response);
+    }
+
     [HttpGet("student/{studentId}/quiz-performance")]
     public async Task<IActionResult> GetStudentQuizPerformance(Guid studentId)
     {
