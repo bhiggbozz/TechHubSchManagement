@@ -9,15 +9,20 @@ namespace TechhubMS.Middleware
 	public class ResponseCodeMiddleware
 	{
 		private readonly RequestDelegate _next;
+		// Keys must match the literal string values of TechHub.Core.Model.ResponseCode's
+		// constants — this table previously used "AX1002"/"AX1004", which no code in the
+		// app actually returns (the real constants are ResponseCode.Unauthorized="99107"
+		// and ResponseCode.NotFound="99134"), so Unauthorized/NotFound/Conflict responses
+		// silently stayed at whatever the controller's Ok/BadRequest ternary already set
+		// (400) instead of being rewritten to their documented HTTP status.
 		private static readonly Dictionary<string, int> ResponseCodeMappings = new()
 	{
-		{ ResponseCode.BadRequest, StatusCodes.Status400BadRequest },   // Bad Request
-        { "AX1002", StatusCodes.Status401Unauthorized }, // Unauthorized
-        { "AX1003", StatusCodes.Status403Forbidden },    // Forbidden
-        { "AX1004", StatusCodes.Status404NotFound },     // Not Found
-        { ResponseCode.ErrorOccured, StatusCodes.Status500InternalServerError }, // Internal Server Error
-		//{ "99000", StatusCodes.Status200OK } // Internal Server Error
-
+		{ ResponseCode.BadRequest, StatusCodes.Status400BadRequest },     // 99001
+        { ResponseCode.Unauthorized, StatusCodes.Status401Unauthorized }, // 99107
+        { ResponseCode.Forbidden, StatusCodes.Status403Forbidden },      // AX1003
+        { ResponseCode.NotFound, StatusCodes.Status404NotFound },        // 99134
+        { ResponseCode.Conflict, StatusCodes.Status409Conflict },        // 99161
+        { ResponseCode.ErrorOccured, StatusCodes.Status500InternalServerError }, // 99101
     };
 		public ResponseCodeMiddleware(RequestDelegate next)
 		{

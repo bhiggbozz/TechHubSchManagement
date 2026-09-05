@@ -173,7 +173,7 @@ public class MediaController : ControllerBase
 	/// - No server bandwidth used
 	/// </summary>
 	[HttpPost("request-upload-token")]
-	[Authorize(Roles = "HeadTeacher,SubjectTeacher,Administrator,SuperAdministrator")]
+	[Authorize(Roles = "HeadTeacher,SubjectTeacher,ClassTeacher,Administrator,SuperAdministrator,Student")]
 	public async Task<IActionResult> RequestUploadToken([FromBody] RequestUploadTokenViewModel model)
 	{
 		var userClaims = User.GetAuthenticatedUserClaims();
@@ -195,7 +195,7 @@ public class MediaController : ControllerBase
 	/// Triggers background jobs (thumbnails, AI analysis)
 	/// </summary>
 	[HttpPost("confirm-upload")]
-	[Authorize(Roles = "HeadTeacher,SubjectTeacher,Administrator,SuperAdministrator, ClassTeacher")]
+	[Authorize(Roles = "HeadTeacher,SubjectTeacher,Administrator,SuperAdministrator,ClassTeacher,Student")]
 	public async Task<IActionResult> ConfirmUpload([FromBody] ConfirmUploadViewModel model)
 	{
 		var userClaims = User.GetAuthenticatedUserClaims();

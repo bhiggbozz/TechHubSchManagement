@@ -20,10 +20,13 @@ public static class BoardServiceExtensions
 
         // Repository
         services.AddSingleton<IBoardSessionRepository, BoardSessionRepository>();
+        services.AddSingleton<IGroupContentBoardRepository, GroupContentBoardRepository>();
 
         // Services
         services.AddSingleton<IBoardPublisherService, BoardPublisherService>();
         services.AddScoped<IBoardSessionService, BoardSessionService>();
+        services.AddSingleton<IGroupContentBoardPublisherService, GroupContentBoardPublisherService>();
+        services.AddScoped<IGroupContentBoardSessionService, GroupContentBoardSessionService>();
 
         return services;
     }

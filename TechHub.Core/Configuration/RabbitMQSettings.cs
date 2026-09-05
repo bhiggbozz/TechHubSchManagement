@@ -10,4 +10,8 @@ public class RabbitMQSettings
     public string Password       { get; set; }
     public string VirtualHost    { get; set; }
     public string BoardBatchQueue { get; set; }
+
+    // Isolated from BoardBatchQueue by design: student group-content submissions
+    // must never compete with or slow down a teacher's live classroom queue.
+    public string GroupContentBatchQueue { get; set; }
 }

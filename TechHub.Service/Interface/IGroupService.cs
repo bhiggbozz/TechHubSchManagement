@@ -13,5 +13,6 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> RemoveMember(Guid groupId, Guid studentId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> GetMyGroups(AuthenticatedUserClaims claims);
 		Task<BaseResponse> GetGroupDetail(Guid groupId, AuthenticatedUserClaims claims);
+		Task<BaseResponse> SubmitContent(Guid groupId, SubmitGroupContentViewModel model, AuthenticatedUserClaims claims);
 	}
 }
