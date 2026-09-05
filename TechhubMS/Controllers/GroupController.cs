@@ -60,5 +60,13 @@ namespace TechhubMS.Controllers
 			var result = await _groupService.GetGroupDetail(groupId, claims);
 			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
+
+		[HttpPost("{groupId:guid}/content")]
+		public async Task<ActionResult<BaseResponse>> SubmitContent(Guid groupId, SubmitGroupContentViewModel model)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _groupService.SubmitContent(groupId, model, claims);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
 	}
 }

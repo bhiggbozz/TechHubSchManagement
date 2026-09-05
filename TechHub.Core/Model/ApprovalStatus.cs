@@ -27,5 +27,6 @@ public static class OperationType
 	public const string CreateTopic = "CreateTopic";
 	public const string AddSubTopics = "AddSubTopics";
 	public const string CreateGroup = "CreateGroup";
+	public const string SubmitGroupContent = "SubmitGroupContent";
 }
 

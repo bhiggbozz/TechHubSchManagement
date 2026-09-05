@@ -1205,75 +1205,19 @@ namespace TechHub.Service.Service
 						Status = "failed"
 					};
 
-				// ── Non-Student roles must confirm the change via email before it takes
-				// effect. Students are exempt — same self-service-email exemption they
-				// already have for forgot-password, and they change it directly here.
-				if (user.RoleId != (int)UserRole.Student)
-					return await RequestPasswordChangeConfirmation(user, schoolId, model.HashPassword);
-
-				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-
-				var updateQuery = @"
-					UPDATE Users 
-					SET HashPassword = @HashPassword,
-						ModifiedDate = @ModifiedDate
-					WHERE Id       = @Id
-					AND   SchoolId = @SchoolId";
-
-				var updateParams = new Dictionary<string, object>
-				{
-					{ "HashPassword", model.HashPassword },
-					{ "ModifiedDate", now },
-					{ "SchoolId",     schoolId }
-				};
-
-				var updateKeyValue = new KeyValuePair<string, object>("Id", user.Id);
-
-				var loginHistoryDict = new Dictionary<string, object>
-				{
-					{ "Id",            Guid.NewGuid() },
-					{ "CreationDate",  now },
-					{ "ModifiedDate",  now },
-					{ "UserId",        user.Id },
-					{ "RoleId",        user.RoleId },
-					{ "PasswordFailed", false },
-					{ "DeviceType",    model.DeviceType ?? string.Empty },
-					{ "DeviceIp",      model.DeviceIp   ?? string.Empty }
-				};
-
-				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
-				try
-				{
-					await _commandRepositoryUser.UpdateAsync(
-						scope.Transaction, scope.Connection,
-						updateQuery, updateParams, updateKeyValue);
-
-					await _commandRepositoryLoginHistory.Create(
-						scope.Transaction, scope.Connection, loginHistoryDict);
-
-					await scope.CommitAsync();
-				}
-				catch (Exception ex)
-				{
-					_logger.Error(ex,
-						"Rollback during password update - UserId: {UserId}", user.Id);
-					try { await scope.RollbackAsync(); }
-					catch (Exception rbEx)
+				// Students don't have a reliable email address to confirm through, so
+				// they can't self-service a password change at all here — same
+				// "contact your admin" exclusion ForgotPassword already applies to them.
+				// Every other role goes through the email-confirmation flow.
+				if (user.RoleId == (int)UserRole.Student)
+					return new BaseResponse
 					{
-						_logger.Error(rbEx,
-							"Rollback failed - UserId: {UserId}", user.Id);
-					}
-					throw;
-				}
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "Students cannot change their password directly. Please contact your school administrator or head teacher.",
+						Status = "failed"
+					};
 
-				_logger.Information("Password updated successfully - UserId: {UserId}", user.Id);
-
-				return new BaseResponse
-				{
-					ResponseCode = ResponseCode.successful,
-					ResponseMessage = "Password updated successfully",
-					Status = "successful"
-				};
+				return await RequestPasswordChangeConfirmation(user, schoolId, model.HashPassword);
 			}
 			catch (SqlException ex)
 			{
@@ -4699,7 +4643,7 @@ namespace TechHub.Service.Service
 									s.Category AS SubjectCategory
 								FROM   TeacherClassroom tc
 								JOIN   Classroom        c  ON c.Id = tc.ClassroomId
-								JOIN   TeacherSubject   ts ON ts.TeacherId = tc.TeacherId
+								JOIN   TeacherSubject   ts ON ts.TeacherId = tc.TeacherId AND ts.ClassroomId = tc.ClassroomId
 								JOIN   Subjects         s  ON s.Id = ts.SubjectId
 								WHERE  tc.TeacherId = '{userId}'
 								AND    tc.SchoolId  = '{userClaims.SchoolId}'
@@ -5267,6 +5211,19 @@ namespace TechHub.Service.Service
 					await scope.Connection.ExecuteAsync(approveGroup, transaction: scope.Transaction);
 					break;
 
+				case OperationType.SubmitGroupContent:
+					if (!approval.EntityId.HasValue) break;
+					var approveGroupContent = $@"
+						UPDATE GroupLessonContent
+						SET    Status     = 'Approved',
+							   ApprovedBy = '{approverId}',
+							   ApprovedAt = '{respondedAt:yyyy-MM-dd HH:mm:ss}'
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+					await scope.Connection.ExecuteAsync(approveGroupContent, transaction: scope.Transaction);
+					break;
+
 				default:
 					_logger.Warning(
 						"No apply handler for OperationType: {OperationType}, ApprovalId: {ApprovalId}",
@@ -5364,6 +5321,19 @@ namespace TechHub.Service.Service
 						AND    SchoolId = '{approval.SchoolId}'";
 
 					await scope.Connection.ExecuteAsync(rejectGroup, transaction: scope.Transaction);
+					break;
+
+				case OperationType.SubmitGroupContent:
+					if (!approval.EntityId.HasValue) break;
+					var rejectGroupContent = $@"
+						UPDATE GroupLessonContent
+						SET    Status          = 'Rejected',
+							   RejectedBy      = '{approverId}',
+							   RejectionReason = '{reason}'
+						WHERE  Id       = '{approval.EntityId}'
+						AND    SchoolId = '{approval.SchoolId}'";
+
+					await scope.Connection.ExecuteAsync(rejectGroupContent, transaction: scope.Transaction);
 					break;
 
 				default:
@@ -6813,6 +6783,7 @@ namespace TechHub.Service.Service
 				var currentQuery = $@"
 					SELECT SubjectId FROM TeacherSubject
 					WHERE  TeacherId   = '{teacherId}'
+					AND    ClassroomId = '{model.ClassroomId}'
 					AND    SchoolId    = '{schoolId}'
 					AND    IsActive    = 1";
 
@@ -6848,6 +6819,7 @@ namespace TechHub.Service.Service
 								   ModifiedDate = '{nowStr}'
 							WHERE  TeacherId   = '{teacherId}'
 							AND    SubjectId   = '{subjectId}'
+							AND    ClassroomId = '{model.ClassroomId}'
 							AND    SchoolId    = '{schoolId}'
 							AND    IsActive    = 1";
 
@@ -6862,7 +6834,7 @@ namespace TechHub.Service.Service
 							{ "Id",           Guid.NewGuid()    },
 							{ "TeacherId",    teacherId          },
 							{ "SubjectId",    subjectId          },
-							//{ "ClassroomId",  model.ClassroomId },
+							{ "ClassroomId",  model.ClassroomId },
 							{ "SchoolId",     schoolId           },
 							{ "CreatedBy",    requesterId        },
 							{ "CreationDate", nowStr             },
@@ -6890,27 +6862,17 @@ namespace TechHub.Service.Service
 					teacherId, model.ClassroomId, toAdd.Count, toRemove.Count, requesterId);
 
 				// ── Fetch updated assignments to return ───────────────────────
-				//var updatedQuery = $@"
-				//	SELECT
-				//		ts.SubjectId,
-				//		s.Subject  AS SubjectName,
-				//		ts.ClassroomId,
-				//		c.Name     AS ClassName
-				//	FROM   TeacherSubject ts
-				//	JOIN   Subjects        s ON s.Id = ts.SubjectId
-				//	JOIN   Classroom       c ON c.Id = ts.ClassroomId
-				//	WHERE  ts.TeacherId   = '{teacherId}'
-				//	AND    ts.ClassroomId = '{model.ClassroomId}'
-				//	AND    ts.SchoolId    = '{schoolId}'
-				//	AND    ts.IsActive    = 1";
-
 				var updatedQuery = $@"
 					SELECT
 						ts.SubjectId,
 						s.Subject  AS SubjectName,
+						ts.ClassroomId,
+						c.Name     AS ClassName
 					FROM   TeacherSubject ts
 					JOIN   Subjects        s ON s.Id = ts.SubjectId
+					JOIN   Classroom       c ON c.Id = ts.ClassroomId
 					WHERE  ts.TeacherId   = '{teacherId}'
+					AND    ts.ClassroomId = '{model.ClassroomId}'
 					AND    ts.SchoolId    = '{schoolId}'
 					AND    ts.IsActive    = 1";
 
