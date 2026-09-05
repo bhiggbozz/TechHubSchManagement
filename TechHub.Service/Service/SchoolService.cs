@@ -3144,7 +3144,49 @@ namespace TechHub.Service.Service
 					};
 				}
 
-				var subjectIds = classroomSubjectsList.Select(cs => $"'{cs!.SubjectId}'");
+				var subjectIdSet = classroomSubjectsList.Select(cs => cs!.SubjectId).ToHashSet();
+
+				// A SubjectTeacher only sees the subjects they're actually assigned to
+				// teach in this classroom — not the classroom's full curriculum, which
+				// is what everyone else (Admin/HeadTeacher/ClassTeacher/etc.) still gets.
+				if (string.Equals(userClaims.Role, nameof(UserRole.SubjectTeacher), StringComparison.OrdinalIgnoreCase)
+					&& Guid.TryParse(userClaims.UserId, out var requestingTeacherId))
+				{
+					var teacherSubjectQuery = $@"
+						SELECT SubjectId FROM TeacherSubject
+						WHERE  TeacherId   = '{requestingTeacherId}'
+						AND    ClassroomId = '{classroomId}'
+						AND    SchoolId    = '{schoolId}'
+						AND    IsActive    = 1";
+
+					var teacherSubjectIds = (await _classroomSubjectQueryRespository
+						.QueryAsync<Guid>(teacherSubjectQuery, new Dictionary<string, object>()))
+						.ToHashSet();
+
+					subjectIdSet.IntersectWith(teacherSubjectIds);
+				}
+
+				if (!subjectIdSet.Any())
+				{
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "No subjects found for this classroom",
+						Status = "successful",
+						Data = new
+						{
+							ClassroomId = classroomId,
+							ClassroomName = classroom.Name,
+							TotalCount = 0,
+							MajorSubjectsCount = 0,
+							MinorSubjectsCount = 0,
+							MajorSubjects = Array.Empty<object>(),
+							MinorSubjects = Array.Empty<object>()
+						}
+					};
+				}
+
+				var subjectIds = subjectIdSet.Select(id => $"'{id}'");
 
 				var subjectsQuery = $@"
 					SELECT * FROM Subjects 
