@@ -31,6 +31,7 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<GroupLessonMedia> _contentMediaCommand;
 		private readonly ICommandRespository<ApprovalRequests> _approvalCommand;
 		private readonly IDbTransactionScopeFactory _scopeFactory;
+		private readonly IGroupContentBoardRepository _boardRepository;
 		private readonly ILogger _logger;
 
 		public GroupService(
@@ -47,6 +48,7 @@ namespace TechHub.Service.Service
 			ICommandRespository<GroupLessonMedia> contentMediaCommand,
 			ICommandRespository<ApprovalRequests> approvalCommand,
 			IDbTransactionScopeFactory scopeFactory,
+			IGroupContentBoardRepository boardRepository,
 			ILogger logger)
 		{
 			_groupQuery = groupQuery;
@@ -62,6 +64,7 @@ namespace TechHub.Service.Service
 			_contentMediaCommand = contentMediaCommand;
 			_approvalCommand = approvalCommand;
 			_scopeFactory = scopeFactory;
+			_boardRepository = boardRepository;
 			_logger = logger;
 		}
 
@@ -371,6 +374,13 @@ namespace TechHub.Service.Service
 					"SELECT TOP 1 Subject FROM Subjects WHERE Id = @SubjectId",
 					new Dictionary<string, object> { { "SubjectId", model.SubjectId } })).FirstOrDefault() ?? "Unknown";
 
+				// Snapshot whether a board recording exists at submission time — it's
+				// finalized (manifest saved) before SubmitContent is ever called, so
+				// this won't change afterward. Stored in the approval payload so the
+				// approver's pending-approvals list can show "has recording" without
+				// a separate round trip per item.
+				var hasRecording = await _boardRepository.GetManifestAsync(groupId.ToString(), studentId.ToString()) is not null;
+
 				using var scope = _scopeFactory.Create("DbConnectionString");
 				try
 				{
@@ -395,7 +405,8 @@ namespace TechHub.Service.Service
 								Aim = model.Aim.Trim(),
 								Description = model.Description.Trim(),
 								SubjectName = subjectName,
-								MediaCount = mediaDicts.Count
+								MediaCount = mediaDicts.Count,
+								HasRecording = hasRecording
 							}) },
 						{ "Status", ApprovalStatus.Pending },
 						{ "RejectionReason", DBNull.Value },
@@ -547,10 +558,9 @@ namespace TechHub.Service.Service
 				});
 
 				var isCreator = group.CreatedBy == studentId;
-				var contentList = await _contentQuery.QueryAsync<GroupContentSummaryDto>(@"
+				var contentList = (await _contentQuery.QueryAsync<GroupContentSummaryDto>(@"
 					SELECT c.Id AS ContentId, c.Aim, s.Subject AS SubjectName, c.Status, c.CreatedBy, c.CreatedAt,
-						(SELECT COUNT(*) FROM GroupLessonMedia m WHERE m.GroupContentId = c.Id AND m.IsActive = 1) AS MediaCount,
-						CAST(0 AS BIT) AS HasRecording
+						(SELECT COUNT(*) FROM GroupLessonMedia m WHERE m.GroupContentId = c.Id AND m.IsActive = 1) AS MediaCount
 					FROM GroupLessonContent c
 					JOIN Subjects s ON s.Id = c.SubjectId
 					WHERE c.GroupId = @GroupId
@@ -561,7 +571,14 @@ namespace TechHub.Service.Service
 						{ "GroupId", groupId },
 						{ "IsCreator", isCreator },
 						{ "StudentId", studentId }
-					});
+					})).ToList();
+
+				// Mongo can't be joined into the SQL query above, so enrich HasRecording
+				// per row — fine at this scale (a group's content list is always small).
+				foreach (var item in contentList)
+				{
+					item.HasRecording = await _boardRepository.GetManifestAsync(groupId.ToString(), item.CreatedBy.ToString()) is not null;
+				}
 
 				return Success("Group detail retrieved", new GroupDetailDto
 				{
@@ -571,7 +588,7 @@ namespace TechHub.Service.Service
 					ClassroomId = group.ClassroomId,
 					CreatedBy = group.CreatedBy,
 					Members = memberList,
-					Content = contentList.ToList()
+					Content = contentList
 				});
 			}
 			catch (Exception ex)
@@ -640,6 +657,7 @@ namespace TechHub.Service.Service
 					CreatedAt = content.CreatedAt,
 					ApprovedAt = content.ApprovedAt,
 					RejectionReason = content.RejectionReason,
+					HasRecording = await _boardRepository.GetManifestAsync(content.GroupId.ToString(), content.CreatedBy.ToString()) is not null,
 					Media = media.ToList()
 				});
 			}

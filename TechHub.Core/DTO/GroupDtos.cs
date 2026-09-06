@@ -71,6 +71,7 @@ namespace TechHub.Core.DTO
 		public DateTime CreatedAt { get; set; }
 		public DateTime? ApprovedAt { get; set; }
 		public string? RejectionReason { get; set; }
+		public bool HasRecording { get; set; }
 		public List<GroupContentMediaDto> Media { get; set; } = new();
 	}
 
