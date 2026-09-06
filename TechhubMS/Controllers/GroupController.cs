@@ -68,5 +68,18 @@ namespace TechhubMS.Controllers
 			var result = await _groupService.SubmitContent(groupId, model, claims);
 			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 		}
+
+		/// <summary>
+		/// Full content detail (media URLs included) for review or playback. The
+		/// creator and the classroom's resolved approver can view any status; other
+		/// group members only once it's Approved.
+		/// </summary>
+		[HttpGet("{groupId:guid}/content/{contentId:guid}")]
+		public async Task<ActionResult<BaseResponse>> GetContentDetail(Guid groupId, Guid contentId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _groupService.GetContentDetail(groupId, contentId, claims);
+			return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+		}
 	}
 }

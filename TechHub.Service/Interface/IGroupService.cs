@@ -14,5 +14,6 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> GetMyGroups(AuthenticatedUserClaims claims);
 		Task<BaseResponse> GetGroupDetail(Guid groupId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> SubmitContent(Guid groupId, SubmitGroupContentViewModel model, AuthenticatedUserClaims claims);
+		Task<BaseResponse> GetContentDetail(Guid groupId, Guid contentId, AuthenticatedUserClaims claims);
 	}
 }

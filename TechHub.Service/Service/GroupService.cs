@@ -581,6 +581,75 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public async Task<BaseResponse> GetContentDetail(Guid groupId, Guid contentId, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var callerId))
+					return Fail(ResponseCode.Unauthorized, "Invalid authentication");
+
+				var group = await _groupQuery.Get(groupId);
+				if (group is null || group.SchoolId != schoolId || !group.IsActive)
+					return Fail(ResponseCode.NotFound, "Group not found");
+
+				var isMember = group.CreatedBy == callerId || (await _memberQuery.CountAsync(
+					"SELECT COUNT(*) FROM StudentGroupMember WHERE GroupId = @GroupId AND StudentId = @StudentId AND IsActive = 1",
+					new Dictionary<string, object> { { "GroupId", groupId }, { "StudentId", callerId } })) > 0;
+
+				var approverId = await ResolveGroupApproverAsync(group.ClassroomId, schoolId);
+				var isApprover = approverId != Guid.Empty && approverId == callerId;
+
+				if (!isMember && !isApprover)
+					return Fail(ResponseCode.Forbidden, "You do not have access to this content");
+
+				var content = await _contentQuery.Get(contentId);
+				if (content is null || content.SchoolId != schoolId || content.GroupId != groupId)
+					return Fail(ResponseCode.NotFound, "Content not found");
+
+				var isCreator = content.CreatedBy == callerId;
+				var isApproved = string.Equals(content.Status, "Approved", StringComparison.OrdinalIgnoreCase);
+
+				if (!isCreator && !isApprover && !isApproved)
+					return Fail(ResponseCode.Forbidden, "This content is awaiting approval");
+
+				var creator = await _userQuery.Get(content.CreatedBy);
+				var subjectName = (await _userQuery.QueryAsync<string>(
+					"SELECT TOP 1 Subject FROM Subjects WHERE Id = @SubjectId",
+					new Dictionary<string, object> { { "SubjectId", content.SubjectId } })).FirstOrDefault() ?? "Unknown";
+
+				var media = await _contentMediaQuery.QueryAsync<GroupContentMediaDto>(@"
+					SELECT Id, FileName, OriginalFileName, MediaType, CloudinaryUrl, FileSizeBytes, Duration, DisplayOrder
+					FROM GroupLessonMedia
+					WHERE GroupContentId = @ContentId AND IsActive = 1
+					ORDER BY DisplayOrder",
+					new Dictionary<string, object> { { "ContentId", contentId } });
+
+				return Success("Content detail retrieved", new GroupContentDetailDto
+				{
+					ContentId = content.Id,
+					GroupId = content.GroupId,
+					SubjectId = content.SubjectId,
+					SubjectName = subjectName,
+					TopicId = content.TopicId,
+					SubTopic = content.SubTopic,
+					Aim = content.Aim,
+					Description = content.Description,
+					Status = content.Status,
+					CreatedBy = content.CreatedBy,
+					CreatedByName = creator is null ? "Unknown" : $"{creator.FirstName} {creator.LastName}",
+					CreatedAt = content.CreatedAt,
+					ApprovedAt = content.ApprovedAt,
+					RejectionReason = content.RejectionReason,
+					Media = media.ToList()
+				});
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error while fetching content detail - GroupId: {GroupId}, ContentId: {ContentId}", groupId, contentId);
+				return Fail(ResponseCode.ErrorOccured, "An unexpected error occurred");
+			}
+		}
+
 		private static BaseResponse Success(string message, object data) => new()
 		{
 			ResponseCode = ResponseCode.successful,

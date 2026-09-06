@@ -43,6 +43,37 @@ namespace TechHub.Core.DTO
 		public string? RejectionReason { get; set; }
 	}
 
+	public class GroupContentMediaDto
+	{
+		public Guid Id { get; set; }
+		public string FileName { get; set; } = string.Empty;
+		public string OriginalFileName { get; set; } = string.Empty;
+		public string MediaType { get; set; } = string.Empty;
+		public string CloudinaryUrl { get; set; } = string.Empty;
+		public long FileSizeBytes { get; set; }
+		public int? Duration { get; set; }
+		public int DisplayOrder { get; set; }
+	}
+
+	public class GroupContentDetailDto
+	{
+		public Guid ContentId { get; set; }
+		public Guid GroupId { get; set; }
+		public Guid SubjectId { get; set; }
+		public string SubjectName { get; set; } = string.Empty;
+		public Guid? TopicId { get; set; }
+		public string? SubTopic { get; set; }
+		public string Aim { get; set; } = string.Empty;
+		public string Description { get; set; } = string.Empty;
+		public string Status { get; set; } = string.Empty;
+		public Guid CreatedBy { get; set; }
+		public string CreatedByName { get; set; } = string.Empty;
+		public DateTime CreatedAt { get; set; }
+		public DateTime? ApprovedAt { get; set; }
+		public string? RejectionReason { get; set; }
+		public List<GroupContentMediaDto> Media { get; set; } = new();
+	}
+
 	public class GroupDetailDto
 	{
 		public Guid GroupId { get; set; }
