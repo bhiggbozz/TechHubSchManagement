@@ -31,6 +31,7 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<GroupLessonMedia> _contentMediaCommand;
 		private readonly ICommandRespository<ApprovalRequests> _approvalCommand;
 		private readonly IDbTransactionScopeFactory _scopeFactory;
+		private readonly IGroupContentBoardRepository _boardRepository;
 		private readonly ILogger _logger;
 
 		public GroupService(
@@ -47,6 +48,7 @@ namespace TechHub.Service.Service
 			ICommandRespository<GroupLessonMedia> contentMediaCommand,
 			ICommandRespository<ApprovalRequests> approvalCommand,
 			IDbTransactionScopeFactory scopeFactory,
+			IGroupContentBoardRepository boardRepository,
 			ILogger logger)
 		{
 			_groupQuery = groupQuery;
@@ -62,6 +64,7 @@ namespace TechHub.Service.Service
 			_contentMediaCommand = contentMediaCommand;
 			_approvalCommand = approvalCommand;
 			_scopeFactory = scopeFactory;
+			_boardRepository = boardRepository;
 			_logger = logger;
 		}
 
@@ -371,6 +374,13 @@ namespace TechHub.Service.Service
 					"SELECT TOP 1 Subject FROM Subjects WHERE Id = @SubjectId",
 					new Dictionary<string, object> { { "SubjectId", model.SubjectId } })).FirstOrDefault() ?? "Unknown";
 
+				// Snapshot whether a board recording exists at submission time — it's
+				// finalized (manifest saved) before SubmitContent is ever called, so
+				// this won't change afterward. Stored in the approval payload so the
+				// approver's pending-approvals list can show "has recording" without
+				// a separate round trip per item.
+				var hasRecording = await _boardRepository.GetManifestAsync(groupId.ToString(), studentId.ToString()) is not null;
+
 				using var scope = _scopeFactory.Create("DbConnectionString");
 				try
 				{
@@ -395,7 +405,8 @@ namespace TechHub.Service.Service
 								Aim = model.Aim.Trim(),
 								Description = model.Description.Trim(),
 								SubjectName = subjectName,
-								MediaCount = mediaDicts.Count
+								MediaCount = mediaDicts.Count,
+								HasRecording = hasRecording
 							}) },
 						{ "Status", ApprovalStatus.Pending },
 						{ "RejectionReason", DBNull.Value },
@@ -547,10 +558,9 @@ namespace TechHub.Service.Service
 				});
 
 				var isCreator = group.CreatedBy == studentId;
-				var contentList = await _contentQuery.QueryAsync<GroupContentSummaryDto>(@"
+				var contentList = (await _contentQuery.QueryAsync<GroupContentSummaryDto>(@"
 					SELECT c.Id AS ContentId, c.Aim, s.Subject AS SubjectName, c.Status, c.CreatedBy, c.CreatedAt,
-						(SELECT COUNT(*) FROM GroupLessonMedia m WHERE m.GroupContentId = c.Id AND m.IsActive = 1) AS MediaCount,
-						CAST(0 AS BIT) AS HasRecording
+						(SELECT COUNT(*) FROM GroupLessonMedia m WHERE m.GroupContentId = c.Id AND m.IsActive = 1) AS MediaCount
 					FROM GroupLessonContent c
 					JOIN Subjects s ON s.Id = c.SubjectId
 					WHERE c.GroupId = @GroupId
@@ -561,7 +571,14 @@ namespace TechHub.Service.Service
 						{ "GroupId", groupId },
 						{ "IsCreator", isCreator },
 						{ "StudentId", studentId }
-					});
+					})).ToList();
+
+				// Mongo can't be joined into the SQL query above, so enrich HasRecording
+				// per row — fine at this scale (a group's content list is always small).
+				foreach (var item in contentList)
+				{
+					item.HasRecording = await _boardRepository.GetManifestAsync(groupId.ToString(), item.CreatedBy.ToString()) is not null;
+				}
 
 				return Success("Group detail retrieved", new GroupDetailDto
 				{
@@ -571,12 +588,82 @@ namespace TechHub.Service.Service
 					ClassroomId = group.ClassroomId,
 					CreatedBy = group.CreatedBy,
 					Members = memberList,
-					Content = contentList.ToList()
+					Content = contentList
 				});
 			}
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "Unexpected error while fetching group detail - GroupId: {GroupId}", groupId);
+				return Fail(ResponseCode.ErrorOccured, "An unexpected error occurred");
+			}
+		}
+
+		public async Task<BaseResponse> GetContentDetail(Guid groupId, Guid contentId, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var callerId))
+					return Fail(ResponseCode.Unauthorized, "Invalid authentication");
+
+				var group = await _groupQuery.Get(groupId);
+				if (group is null || group.SchoolId != schoolId || !group.IsActive)
+					return Fail(ResponseCode.NotFound, "Group not found");
+
+				var isMember = group.CreatedBy == callerId || (await _memberQuery.CountAsync(
+					"SELECT COUNT(*) FROM StudentGroupMember WHERE GroupId = @GroupId AND StudentId = @StudentId AND IsActive = 1",
+					new Dictionary<string, object> { { "GroupId", groupId }, { "StudentId", callerId } })) > 0;
+
+				var approverId = await ResolveGroupApproverAsync(group.ClassroomId, schoolId);
+				var isApprover = approverId != Guid.Empty && approverId == callerId;
+
+				if (!isMember && !isApprover)
+					return Fail(ResponseCode.Forbidden, "You do not have access to this content");
+
+				var content = await _contentQuery.Get(contentId);
+				if (content is null || content.SchoolId != schoolId || content.GroupId != groupId)
+					return Fail(ResponseCode.NotFound, "Content not found");
+
+				var isCreator = content.CreatedBy == callerId;
+				var isApproved = string.Equals(content.Status, "Approved", StringComparison.OrdinalIgnoreCase);
+
+				if (!isCreator && !isApprover && !isApproved)
+					return Fail(ResponseCode.Forbidden, "This content is awaiting approval");
+
+				var creator = await _userQuery.Get(content.CreatedBy);
+				var subjectName = (await _userQuery.QueryAsync<string>(
+					"SELECT TOP 1 Subject FROM Subjects WHERE Id = @SubjectId",
+					new Dictionary<string, object> { { "SubjectId", content.SubjectId } })).FirstOrDefault() ?? "Unknown";
+
+				var media = await _contentMediaQuery.QueryAsync<GroupContentMediaDto>(@"
+					SELECT Id, FileName, OriginalFileName, MediaType, CloudinaryUrl, FileSizeBytes, Duration, DisplayOrder
+					FROM GroupLessonMedia
+					WHERE GroupContentId = @ContentId AND IsActive = 1
+					ORDER BY DisplayOrder",
+					new Dictionary<string, object> { { "ContentId", contentId } });
+
+				return Success("Content detail retrieved", new GroupContentDetailDto
+				{
+					ContentId = content.Id,
+					GroupId = content.GroupId,
+					SubjectId = content.SubjectId,
+					SubjectName = subjectName,
+					TopicId = content.TopicId,
+					SubTopic = content.SubTopic,
+					Aim = content.Aim,
+					Description = content.Description,
+					Status = content.Status,
+					CreatedBy = content.CreatedBy,
+					CreatedByName = creator is null ? "Unknown" : $"{creator.FirstName} {creator.LastName}",
+					CreatedAt = content.CreatedAt,
+					ApprovedAt = content.ApprovedAt,
+					RejectionReason = content.RejectionReason,
+					HasRecording = await _boardRepository.GetManifestAsync(content.GroupId.ToString(), content.CreatedBy.ToString()) is not null,
+					Media = media.ToList()
+				});
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Unexpected error while fetching content detail - GroupId: {GroupId}, ContentId: {ContentId}", groupId, contentId);
 				return Fail(ResponseCode.ErrorOccured, "An unexpected error occurred");
 			}
 		}

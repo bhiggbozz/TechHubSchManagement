@@ -13,4 +13,7 @@ public interface IGroupContentBoardRepository
 	// ── Status lookups — let the frontend tell "resume" from "already submitted" ──
 	Task<int?> GetLatestBatchIndexAsync(string groupId, string studentId);
 	Task<GroupContentManifestDocument?> GetManifestAsync(string groupId, string studentId);
+
+	// ── Playback/download ────────────────────────────────────────────────────
+	Task<GroupContentBatchDocument?> GetBatchAsync(string groupId, string studentId, int batchIndex);
 }

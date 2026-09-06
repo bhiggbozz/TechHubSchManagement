@@ -210,4 +210,12 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 			.Find(Builders<GroupContentManifestDocument>.Filter.Eq(m => m.Id, id))
 			.FirstOrDefaultAsync();
 	}
+
+	public async Task<GroupContentBatchDocument?> GetBatchAsync(string groupId, string studentId, int batchIndex)
+	{
+		var indexKey = BuildIndexKey(groupId, studentId, batchIndex);
+		return await _batches
+			.Find(Builders<GroupContentBatchDocument>.Filter.Eq(b => b.Id, indexKey))
+			.FirstOrDefaultAsync();
+	}
 }
