@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using System.Reflection;
+using System.Text.RegularExpressions;
 
 namespace TechHub.Entity.Migration;
 
@@ -289,7 +290,17 @@ public class DatabaseInitializer : IHostedService
                 "IF OBJECT_ID('GroupLessonContent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_GroupLessonContent_GroupId' AND object_id = OBJECT_ID('GroupLessonContent')) CREATE INDEX IX_GroupLessonContent_GroupId ON GroupLessonContent(GroupId)",
                 "IF OBJECT_ID('GroupLessonContent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_GroupLessonContent_CreatedBy' AND object_id = OBJECT_ID('GroupLessonContent')) CREATE INDEX IX_GroupLessonContent_CreatedBy ON GroupLessonContent(CreatedBy)",
                 "IF OBJECT_ID('GroupLessonMedia', 'U') IS NULL CREATE TABLE GroupLessonMedia (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), GroupContentId UNIQUEIDENTIFIER NOT NULL, SchoolId UNIQUEIDENTIFIER NOT NULL, FileName NVARCHAR(300) NOT NULL, OriginalFileName NVARCHAR(300) NOT NULL, FileExtension NVARCHAR(20) NOT NULL, MediaType NVARCHAR(50) NOT NULL, FileSizeBytes BIGINT NOT NULL DEFAULT 0, CloudinaryUrl NVARCHAR(1000) NOT NULL, PublicId NVARCHAR(500) NOT NULL, Duration INT NULL, Status NVARCHAR(50) NOT NULL DEFAULT 'Ready', DisplayOrder INT NOT NULL DEFAULT 1, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), IsActive BIT NOT NULL DEFAULT 1, MetaData NVARCHAR(MAX) NULL, CONSTRAINT PK_GroupLessonMedia PRIMARY KEY (Id))",
-                "IF OBJECT_ID('GroupLessonMedia', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_GroupLessonMedia_GroupContentId' AND object_id = OBJECT_ID('GroupLessonMedia')) CREATE INDEX IX_GroupLessonMedia_GroupContentId ON GroupLessonMedia(GroupContentId) WHERE IsActive = 1"
+                "IF OBJECT_ID('GroupLessonMedia', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_GroupLessonMedia_GroupContentId' AND object_id = OBJECT_ID('GroupLessonMedia')) CREATE INDEX IX_GroupLessonMedia_GroupContentId ON GroupLessonMedia(GroupContentId) WHERE IsActive = 1",
+
+                // Questions.Title was NVARCHAR(500) — too small for long-form theory/
+                // practical exam questions, where the "title" the frontend sends is the
+                // full question text (the same content also goes into TextContent, which
+                // is NVARCHAR(MAX)). Caused "String or binary data would be truncated" on
+                // /api/questions/batch for any question over 500 characters.
+                @"IF OBJECT_ID('Questions', 'U') IS NOT NULL AND EXISTS (
+                    SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_NAME = 'Questions' AND COLUMN_NAME = 'Title' AND CHARACTER_MAXIMUM_LENGTH <> -1)
+                  ALTER TABLE Questions ALTER COLUMN Title NVARCHAR(MAX) NOT NULL"
             };
 
             await using var connection = new SqlConnection(connStr);
@@ -309,11 +320,80 @@ public class DatabaseInitializer : IHostedService
                     Log.Warning(ex, "DatabaseInitializer: Schema migration skipped (may already exist): {Sql}", migrationSql);
                 }
             }
+
+            // One-time backfill: scanned questions were saved with Title = '' (only
+            // QuestionHtml carried real content — see QuestionJobService), so the
+            // question list screen had nothing to show and displayed "Untitled".
+            // Self-limiting: once every row has a real title, the SELECT finds
+            // nothing and this is a no-op on every subsequent startup.
+            try
+            {
+                var toBackfill = new List<(Guid Id, string Html)>();
+
+                await using (var selectCmd = new SqlCommand(
+                    @"SELECT Id, QuestionHtml FROM Questions
+                      WHERE (Title IS NULL OR Title = '' OR Title LIKE '{{image:%')
+                      AND QuestionHtml IS NOT NULL AND QuestionHtml <> ''",
+                    connection))
+                await using (var titleReader = await selectCmd.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await titleReader.ReadAsync(cancellationToken))
+                    {
+                        toBackfill.Add((titleReader.GetGuid(0), titleReader.GetString(1)));
+                    }
+                }
+
+                foreach (var (id, html) in toBackfill)
+                {
+                    var derivedTitle = DeriveTitleFromHtml(html);
+                    if (string.IsNullOrEmpty(derivedTitle)) continue;
+
+                    await using var updateCmd = new SqlCommand(
+                        "UPDATE Questions SET Title = @Title WHERE Id = @Id", connection);
+                    updateCmd.Parameters.AddWithValue("@Title", derivedTitle);
+                    updateCmd.Parameters.AddWithValue("@Id", id);
+                    await updateCmd.ExecuteNonQueryAsync(cancellationToken);
+                }
+
+                if (toBackfill.Count > 0)
+                {
+                    Log.Information(
+                        "DatabaseInitializer: Backfilled Title for {Count} scanned question(s) from QuestionHtml",
+                        toBackfill.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DatabaseInitializer: Question title backfill failed (non-fatal).");
+            }
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseInitializer: Schema migration block failed (non-fatal).");
         }
+    }
+
+    // Mirrors QuestionJobService.DeriveTitleFromHtml — kept in sync manually since
+    // this project has no dependency on TeachHub.QuestionBank.
+    private static string DeriveTitleFromHtml(string? html)
+    {
+        const int maxLength = 150;
+
+        if (string.IsNullOrWhiteSpace(html))
+            return string.Empty;
+
+        var text = Regex.Replace(html, "<[^>]+>", " ");
+        text = System.Net.WebUtility.HtmlDecode(text);
+        text = Regex.Replace(text, @"\{\{\s*image\s*:[^}]*\}\}", " ", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\s+", " ").Trim();
+
+        if (text.Length == 0)
+            return "Image-based question";
+
+        if (text.Length <= maxLength)
+            return text;
+
+        return text.Substring(0, maxLength).TrimEnd() + "…";
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

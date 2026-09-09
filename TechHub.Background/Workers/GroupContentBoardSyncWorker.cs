@@ -136,20 +136,11 @@ public class GroupContentBoardSyncWorker : BackgroundService
                     message.GroupId,
                     message.StudentId);
 
-                var exists = await _repository.BatchExistsAsync(message.GroupId, message.StudentId, message.BatchIndex);
-
-                if (exists)
-                {
-                    _logger.Warning(
-                        "Duplicate group-content batch detected - GroupId: {GroupId}, StudentId: {StudentId}, BatchIndex: {BatchIndex}. Acknowledging without save.",
-                        message.GroupId,
-                        message.StudentId,
-                        message.BatchIndex);
-
-                    ch.BasicAck(ea.DeliveryTag, multiple: false);
-                    return;
-                }
-
+                // SaveBatchAsync upserts by {groupId}_{studentId}_{batchIndex}, so this is
+                // safe to call unconditionally: a genuine RabbitMQ redelivery just rewrites
+                // the same content (harmless), and a re-recording's batch correctly replaces
+                // the previous recording's stale data instead of being dropped as a
+                // "duplicate" of it — which is what a pre-check here used to do.
                 await _repository.SaveBatchAsync(message);
 
                 ch.BasicAck(ea.DeliveryTag, multiple: false);

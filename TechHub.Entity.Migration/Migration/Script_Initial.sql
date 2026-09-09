@@ -1073,7 +1073,7 @@ BEGIN
         ClassroomId           UNIQUEIDENTIFIER NULL,
         SubTopicId            UNIQUEIDENTIFIER NULL,
         CreatedBy             UNIQUEIDENTIFIER NOT NULL,
-        Title                 NVARCHAR(500)    NOT NULL,
+        Title                 NVARCHAR(MAX)    NOT NULL,
         Topic                 NVARCHAR(300)    NULL,
         SubTopic              NVARCHAR(300)    NULL,
         SubjectName           NVARCHAR(200)    NULL,

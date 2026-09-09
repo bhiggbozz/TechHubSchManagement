@@ -978,7 +978,12 @@ public class QuestionJobService : IQuestionJobService
 							SubTopicId = job.SubTopicId,
 							CreatedBy = job.TeacherId,
 							Topic = string.Empty,
-							Title = string.Empty,
+							// QuestionHtml is the actual rendered content for scanned
+							// questions (frontend: DOMPurify → innerHTML → KaTeX) — Title
+							// was always left blank here, which the question list screen
+							// has nothing else to fall back to, so it shows "Untitled".
+							// Derive a plain-text preview instead of leaving it empty.
+							Title = DeriveTitleFromHtml(extracted.QuestionHtml),
 							TextContent = string.Empty,
 							QuestionType = ParseQuestionType(job.QuestionType),
 							QuestionHtml = extracted.QuestionHtml
@@ -2028,6 +2033,37 @@ STRICT RULES:
 		}
 
 		return content;
+	}
+
+	/// <summary>
+	/// Plain-text preview for the question list screen — strips tags/entities from
+	/// Claude's rendered HTML and truncates, since Title is otherwise left blank for
+	/// scanned questions (only QuestionHtml carries real content).
+	/// </summary>
+	private static string DeriveTitleFromHtml(string? html)
+	{
+		const int maxLength = 150;
+
+		if (string.IsNullOrWhiteSpace(html))
+			return string.Empty;
+
+		var text = Regex.Replace(html, "<[^>]+>", " ");
+		text = System.Net.WebUtility.HtmlDecode(text);
+		// {{image:xxx}} placeholders are internal markers, meant to be swapped for a
+		// real image URL — if that substitution never ran (e.g. image upload failed
+		// and imageUrlMap came back empty), the raw token stays in QuestionHtml
+		// forever. Never show that literal token as a title; strip it like any other
+		// non-content markup.
+		text = Regex.Replace(text, @"\{\{\s*image\s*:[^}]*\}\}", " ", RegexOptions.IgnoreCase);
+		text = Regex.Replace(text, @"\s+", " ").Trim();
+
+		if (text.Length == 0)
+			return "Image-based question";
+
+		if (text.Length <= maxLength)
+			return text;
+
+		return text.Substring(0, maxLength).TrimEnd() + "…";
 	}
 
 	private string ReplacePlaceholdersInHtml(string? html, Dictionary<string, string> imageUrlMap)

@@ -3575,7 +3575,7 @@ namespace TechHub.Service.Service
 						updatedFields.Add("EmailAddress");
 					}
 
-					if (!string.IsNullOrWhiteSpace(updateUserViewModel.HashPassword))
+					if (updateUserViewModel.ChangePassword && !string.IsNullOrWhiteSpace(updateUserViewModel.HashPassword))
 					{
 						// TODO: Hash password before storing
 						updateDict["HashPassword"] = updateUserViewModel.HashPassword;
@@ -3854,7 +3854,7 @@ namespace TechHub.Service.Service
 					updatedFields.Add("ProfileImage");
 				}
 
-				if (!string.IsNullOrWhiteSpace(updateUserViewModel.HashPassword))
+				if (updateUserViewModel.ChangePassword && !string.IsNullOrWhiteSpace(updateUserViewModel.HashPassword))
 				{
 					// TODO: Hash password before storing
 					updateDict["HashPassword"] = updateUserViewModel.HashPassword;

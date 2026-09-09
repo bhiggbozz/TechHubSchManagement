@@ -55,18 +55,6 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 		{
 			var indexKey = BuildIndexKey(message.GroupId, message.StudentId, message.BatchIndex);
 
-			var exists = await _batches
-				.Find(Builders<GroupContentBatchDocument>.Filter.Eq(b => b.Id, indexKey))
-				.AnyAsync();
-
-			if (exists)
-			{
-				_logger.Warning(
-					"Duplicate group-content batch - GroupId: {GroupId}, StudentId: {StudentId}, BatchIndex: {BatchIndex}",
-					message.GroupId, message.StudentId, message.BatchIndex);
-				return;
-			}
-
 			var strokes = message.Strokes.Select(s => new BoardStroke
 			{
 				Id = s.Id,
@@ -105,7 +93,14 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 				Strokes = strokes
 			};
 
-			await _batches.InsertOneAsync(batchDoc);
+			// Upsert, not insert-once: a re-recording reuses the same {groupId}_{studentId}_
+			// {batchIndex} key by design (one recording slot per student per group), so a
+			// later recording's batch must replace the earlier one's — not be silently
+			// dropped as a "duplicate" of it.
+			await _batches.ReplaceOneAsync(
+				Builders<GroupContentBatchDocument>.Filter.Eq(b => b.Id, indexKey),
+				batchDoc,
+				new ReplaceOptions { IsUpsert = true });
 
 			_logger.Information(
 				"Group-content batch saved - IndexKey: {IndexKey}, Strokes: {Count}",
@@ -176,6 +171,24 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 			var options = new ReplaceOptions { IsUpsert = true };
 
 			await _manifests.ReplaceOneAsync(filter, document, options);
+
+			// A shorter re-recording only overwrites the batch indices it actually posts —
+			// any higher-index batches left over from a longer PRIOR recording would
+			// otherwise survive and get mixed into playback as a stale tail. Prune them
+			// now that the new manifest defines the real extent of this recording.
+			var maxBatchIndex = manifest.StrokeBatches.Any() ? manifest.StrokeBatches.Max(b => b.BatchIndex) : -1;
+			var pruneFilter = Builders<GroupContentBatchDocument>.Filter.And(
+				Builders<GroupContentBatchDocument>.Filter.Eq(b => b.GroupId, groupId),
+				Builders<GroupContentBatchDocument>.Filter.Eq(b => b.StudentId, studentId),
+				Builders<GroupContentBatchDocument>.Filter.Gt(b => b.BatchIndex, maxBatchIndex));
+
+			var pruneResult = await _batches.DeleteManyAsync(pruneFilter);
+			if (pruneResult.DeletedCount > 0)
+			{
+				_logger.Information(
+					"Pruned {Count} stale tail batch(es) beyond index {MaxBatchIndex} - GroupId: {GroupId}, StudentId: {StudentId}",
+					pruneResult.DeletedCount, maxBatchIndex, groupId, studentId);
+			}
 
 			_logger.Information(
 				"Group-content manifest saved - GroupId: {GroupId}, StudentId: {StudentId}", groupId, studentId);

@@ -7,7 +7,7 @@ CREATE TABLE Questions (
     CreatedBy               UNIQUEIDENTIFIER    NOT NULL,
 
     -- Content
-    Title                   NVARCHAR(500)       NOT NULL,
+    Title                   NVARCHAR(MAX)       NOT NULL,
     Topic                   NVARCHAR(300)       NULL,
     SubTopic                NVARCHAR(300)       NULL,
     QuestionType            INT                 NOT NULL,
