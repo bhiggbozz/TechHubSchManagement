@@ -23,6 +23,7 @@ services:
       # ── RabbitMQ (CloudAMQP) ────────────────────────────────────────────────
       RabbitMQ__AmqpUrl: ${RABBITMQ_AMQP_URL}
       RabbitMQ__BoardBatchQueue: ${RABBITMQ_BOARD_BATCH_QUEUE}
+      RabbitMQ__GroupContentBatchQueue: ${RABBITMQ_GROUP_CONTENT_BATCH_QUEUE}
 
       # ── JWT ─────────────────────────────────────────────────────────────────
       Jwt__SecretKey: ${JWT_SECRET_KEY}

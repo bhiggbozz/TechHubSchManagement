@@ -29,21 +29,22 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 		_manifests = database.GetCollection<GroupContentManifestDocument>("group_content_manifests");
 
 		// _id lookups (BatchExistsAsync/SaveBatchAsync) are covered by Mongo's automatic
-		// _id index. GetLatestBatchIndexAsync queries by GroupId+StudentId instead, so it
-		// needs its own index or it would fall back to a collection scan.
+		// _id index. GetLatestBatchIndexAsync queries by GroupId+StudentId+ContentId
+		// instead, so it needs its own index or it would fall back to a collection scan.
 		var indexKeys = Builders<GroupContentBatchDocument>.IndexKeys
 			.Ascending(b => b.GroupId)
 			.Ascending(b => b.StudentId)
+			.Ascending(b => b.ContentId)
 			.Descending(b => b.BatchIndex);
 		_batches.Indexes.CreateOne(new CreateIndexModel<GroupContentBatchDocument>(indexKeys));
 	}
 
-	private static string BuildIndexKey(string groupId, string studentId, int batchIndex) =>
-		$"{groupId}_{studentId}_{batchIndex}";
+	private static string BuildIndexKey(string groupId, string studentId, string contentId, int batchIndex) =>
+		$"{groupId}_{studentId}_{contentId}_{batchIndex}";
 
-	public async Task<bool> BatchExistsAsync(string groupId, string studentId, int batchIndex)
+	public async Task<bool> BatchExistsAsync(string groupId, string studentId, string contentId, int batchIndex)
 	{
-		var indexKey = BuildIndexKey(groupId, studentId, batchIndex);
+		var indexKey = BuildIndexKey(groupId, studentId, contentId, batchIndex);
 		return await _batches
 			.Find(Builders<GroupContentBatchDocument>.Filter.Eq(b => b.Id, indexKey))
 			.AnyAsync();
@@ -53,7 +54,7 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 	{
 		try
 		{
-			var indexKey = BuildIndexKey(message.GroupId, message.StudentId, message.BatchIndex);
+			var indexKey = BuildIndexKey(message.GroupId, message.StudentId, message.ContentId, message.BatchIndex);
 
 			var strokes = message.Strokes.Select(s => new BoardStroke
 			{
@@ -76,6 +77,7 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 				GroupId = message.GroupId,
 				SchoolId = message.SchoolId,
 				StudentId = message.StudentId,
+				ContentId = message.ContentId,
 				BatchIndex = message.BatchIndex,
 				BoardIndex = message.BoardIndex,
 				StartMs = message.StartMs,
@@ -114,17 +116,18 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 		}
 	}
 
-	public async Task SaveManifestAsync(string groupId, string studentId, string schoolId, GroupContentManifestViewModel manifest)
+	public async Task SaveManifestAsync(string groupId, string studentId, string contentId, string schoolId, GroupContentManifestViewModel manifest)
 	{
 		try
 		{
-			var id = $"{groupId}_{studentId}";
+			var id = $"{groupId}_{studentId}_{contentId}";
 
 			var document = new GroupContentManifestDocument
 			{
 				Id = id,
 				GroupId = groupId,
 				StudentId = studentId,
+				ContentId = contentId,
 				SchoolId = schoolId,
 				Stats = new SessionStats
 				{
@@ -138,10 +141,12 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 					BoardCount = manifest.Stats.BoardCount,
 					StrokeBatchCount = manifest.Stats.StrokeBatchCount
 				},
+				// IndexKey is re-derived server-side, not trusted from the client payload —
+				// the server knows groupId/studentId/contentId/batchIndex authoritatively.
 				StrokeBatches = manifest.StrokeBatches.Select(b => new BatchRef
 				{
 					BatchIndex = b.BatchIndex,
-					IndexKey = b.IndexKey,
+					IndexKey = BuildIndexKey(groupId, studentId, contentId, b.BatchIndex),
 					StartMs = b.StartMs,
 					EndMs = b.EndMs,
 					StrokeCount = b.StrokeCount,
@@ -164,6 +169,12 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 					TimestampMs = s.TimestampMs
 				}).ToList(),
 				AudioFinalUrl = manifest.AudioFinalUrl,
+				AudioChunks = manifest.AudioChunks.Select(a => new AudioChunkRef
+				{
+					ChunkIndex = a.ChunkIndex,
+					Url = a.Url,
+					MediaId = a.MediaId
+				}).ToList(),
 				UpdatedAt = DateTime.UtcNow
 			};
 
@@ -180,32 +191,34 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 			var pruneFilter = Builders<GroupContentBatchDocument>.Filter.And(
 				Builders<GroupContentBatchDocument>.Filter.Eq(b => b.GroupId, groupId),
 				Builders<GroupContentBatchDocument>.Filter.Eq(b => b.StudentId, studentId),
+				Builders<GroupContentBatchDocument>.Filter.Eq(b => b.ContentId, contentId),
 				Builders<GroupContentBatchDocument>.Filter.Gt(b => b.BatchIndex, maxBatchIndex));
 
 			var pruneResult = await _batches.DeleteManyAsync(pruneFilter);
 			if (pruneResult.DeletedCount > 0)
 			{
 				_logger.Information(
-					"Pruned {Count} stale tail batch(es) beyond index {MaxBatchIndex} - GroupId: {GroupId}, StudentId: {StudentId}",
-					pruneResult.DeletedCount, maxBatchIndex, groupId, studentId);
+					"Pruned {Count} stale tail batch(es) beyond index {MaxBatchIndex} - GroupId: {GroupId}, StudentId: {StudentId}, ContentId: {ContentId}",
+					pruneResult.DeletedCount, maxBatchIndex, groupId, studentId, contentId);
 			}
 
 			_logger.Information(
-				"Group-content manifest saved - GroupId: {GroupId}, StudentId: {StudentId}", groupId, studentId);
+				"Group-content manifest saved - GroupId: {GroupId}, StudentId: {StudentId}, ContentId: {ContentId}", groupId, studentId, contentId);
 		}
 		catch (Exception ex)
 		{
 			_logger.Error(ex,
-				"Failed to save group-content manifest - GroupId: {GroupId}, StudentId: {StudentId}", groupId, studentId);
+				"Failed to save group-content manifest - GroupId: {GroupId}, StudentId: {StudentId}, ContentId: {ContentId}", groupId, studentId, contentId);
 			throw;
 		}
 	}
 
-	public async Task<int?> GetLatestBatchIndexAsync(string groupId, string studentId)
+	public async Task<int?> GetLatestBatchIndexAsync(string groupId, string studentId, string contentId)
 	{
 		var filter = Builders<GroupContentBatchDocument>.Filter.And(
 			Builders<GroupContentBatchDocument>.Filter.Eq(b => b.GroupId, groupId),
-			Builders<GroupContentBatchDocument>.Filter.Eq(b => b.StudentId, studentId));
+			Builders<GroupContentBatchDocument>.Filter.Eq(b => b.StudentId, studentId),
+			Builders<GroupContentBatchDocument>.Filter.Eq(b => b.ContentId, contentId));
 
 		var latest = await _batches
 			.Find(filter)
@@ -216,17 +229,17 @@ public class GroupContentBoardRepository : IGroupContentBoardRepository
 		return latest?.BatchIndex;
 	}
 
-	public async Task<GroupContentManifestDocument?> GetManifestAsync(string groupId, string studentId)
+	public async Task<GroupContentManifestDocument?> GetManifestAsync(string groupId, string studentId, string contentId)
 	{
-		var id = $"{groupId}_{studentId}";
+		var id = $"{groupId}_{studentId}_{contentId}";
 		return await _manifests
 			.Find(Builders<GroupContentManifestDocument>.Filter.Eq(m => m.Id, id))
 			.FirstOrDefaultAsync();
 	}
 
-	public async Task<GroupContentBatchDocument?> GetBatchAsync(string groupId, string studentId, int batchIndex)
+	public async Task<GroupContentBatchDocument?> GetBatchAsync(string groupId, string studentId, string contentId, int batchIndex)
 	{
-		var indexKey = BuildIndexKey(groupId, studentId, batchIndex);
+		var indexKey = BuildIndexKey(groupId, studentId, contentId, batchIndex);
 		return await _batches
 			.Find(Builders<GroupContentBatchDocument>.Filter.Eq(b => b.Id, indexKey))
 			.FirstOrDefaultAsync();

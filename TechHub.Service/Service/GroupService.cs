@@ -32,6 +32,7 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<ApprovalRequests> _approvalCommand;
 		private readonly IDbTransactionScopeFactory _scopeFactory;
 		private readonly IGroupContentBoardRepository _boardRepository;
+		private readonly INotificationService _notificationService;
 		private readonly ILogger _logger;
 
 		public GroupService(
@@ -49,6 +50,7 @@ namespace TechHub.Service.Service
 			ICommandRespository<ApprovalRequests> approvalCommand,
 			IDbTransactionScopeFactory scopeFactory,
 			IGroupContentBoardRepository boardRepository,
+			INotificationService notificationService,
 			ILogger logger)
 		{
 			_groupQuery = groupQuery;
@@ -65,6 +67,7 @@ namespace TechHub.Service.Service
 			_approvalCommand = approvalCommand;
 			_scopeFactory = scopeFactory;
 			_boardRepository = boardRepository;
+			_notificationService = notificationService;
 			_logger = logger;
 		}
 
@@ -328,6 +331,7 @@ namespace TechHub.Service.Service
 				var contentId = Guid.NewGuid();
 				var approvalId = Guid.NewGuid();
 				var now = DateTime.UtcNow;
+				var hasTextContent = !string.IsNullOrWhiteSpace(model.TextContent);
 
 				var contentDict = new Dictionary<string, object>
 				{
@@ -339,6 +343,7 @@ namespace TechHub.Service.Service
 					{ "SubTopic", string.IsNullOrWhiteSpace(model.SubTopic) ? (object)DBNull.Value : model.SubTopic.Trim() },
 					{ "Aim", model.Aim.Trim() },
 					{ "Description", model.Description.Trim() },
+					{ "TextContent", hasTextContent ? model.TextContent!.Trim() : (object)DBNull.Value },
 					{ "Status", "PendingApproval" },
 					{ "CreatedBy", studentId },
 					{ "ApprovedBy", DBNull.Value },
@@ -362,24 +367,31 @@ namespace TechHub.Service.Service
 						{ "FileSizeBytes", file.FileSizeBytes },
 						{ "CloudinaryUrl", file.CloudinaryUrl },
 						{ "PublicId", file.PublicId },
-						{ "Duration", file.Duration.HasValue ? (object)file.Duration.Value : DBNull.Value },
+						{ "Duration", file.Duration.HasValue ? (object)file.Duration.Value : null },
 						{ "Status", "Ready" },
 						{ "DisplayOrder", file.DisplayOrder > 0 ? file.DisplayOrder : index + 1 },
 						{ "CreatedAt", now },
 						{ "IsActive", true },
-						{ "MetaData", (object)file.MetaData ?? DBNull.Value }
+						{ "MetaData", (object)file.MetaData ?? null }
 					}).ToList();
 
 				var subjectName = (await _userQuery.QueryAsync<string>(
 					"SELECT TOP 1 Subject FROM Subjects WHERE Id = @SubjectId",
 					new Dictionary<string, object> { { "SubjectId", model.SubjectId } })).FirstOrDefault() ?? "Unknown";
 
-				// Snapshot whether a board recording exists at submission time — it's
-				// finalized (manifest saved) before SubmitContent is ever called, so
-				// this won't change afterward. Stored in the approval payload so the
-				// approver's pending-approvals list can show "has recording" without
-				// a separate round trip per item.
-				var hasRecording = await _boardRepository.GetManifestAsync(groupId.ToString(), studentId.ToString()) is not null;
+				// Always false at creation time: recordings are keyed by
+				// {groupId, studentId, contentId}, and contentId is only just
+				// generated above, so no prior recording could ever exist for it yet.
+				// A board recording is always added afterward, against this same
+				// contentId, via the group-content board endpoints (mirrors the
+				// frontend's actual flow: create with text/media first, then
+				// optionally "Add board recording" to the resulting item).
+				var hasRecording = await _boardRepository.GetManifestAsync(groupId.ToString(), studentId.ToString(), contentId.ToString()) is not null;
+
+				var hasMedia = model.MediaFiles is { Count: > 0 };
+
+				if (!hasMedia && !hasRecording && !hasTextContent)
+					return Fail(ResponseCode.BadRequest, "Add media, a board recording, or written text before submitting — Description alone isn't content");
 
 				using var scope = _scopeFactory.Create("DbConnectionString");
 				try
@@ -431,6 +443,12 @@ namespace TechHub.Service.Service
 				_logger.Information(
 					"Group content submitted - ContentId: {ContentId}, GroupId: {GroupId}, CreatedBy: {StudentId}, ApproverId: {ApproverId}",
 					contentId, groupId, studentId, approverId);
+
+				// Disabled — fan-out-on-write was judged too much extra storage; the
+				// dashboard will surface "what's new" instead. Implementation kept in
+				// place (NotificationService et al.) in case this gets revisited.
+				//_ = Task.Run(() => _notificationService.NotifyGroupContentSubmittedAsync(
+				//	contentId, approverId, schoolId, model.Aim.Trim(), group.Name));
 
 				return Success("Content submitted, pending approval", new
 				{
@@ -560,7 +578,8 @@ namespace TechHub.Service.Service
 				var isCreator = group.CreatedBy == studentId;
 				var contentList = (await _contentQuery.QueryAsync<GroupContentSummaryDto>(@"
 					SELECT c.Id AS ContentId, c.Aim, s.Subject AS SubjectName, c.Status, c.CreatedBy, c.CreatedAt,
-						(SELECT COUNT(*) FROM GroupLessonMedia m WHERE m.GroupContentId = c.Id AND m.IsActive = 1) AS MediaCount
+						(SELECT COUNT(*) FROM GroupLessonMedia m WHERE m.GroupContentId = c.Id AND m.IsActive = 1) AS MediaCount,
+						CASE WHEN c.TextContent IS NOT NULL AND c.TextContent <> '' THEN 1 ELSE 0 END AS HasTextContent
 					FROM GroupLessonContent c
 					JOIN Subjects s ON s.Id = c.SubjectId
 					WHERE c.GroupId = @GroupId
@@ -577,7 +596,7 @@ namespace TechHub.Service.Service
 				// per row — fine at this scale (a group's content list is always small).
 				foreach (var item in contentList)
 				{
-					item.HasRecording = await _boardRepository.GetManifestAsync(groupId.ToString(), item.CreatedBy.ToString()) is not null;
+					item.HasRecording = await _boardRepository.GetManifestAsync(groupId.ToString(), item.CreatedBy.ToString(), item.ContentId.ToString()) is not null;
 				}
 
 				return Success("Group detail retrieved", new GroupDetailDto
@@ -651,13 +670,14 @@ namespace TechHub.Service.Service
 					SubTopic = content.SubTopic,
 					Aim = content.Aim,
 					Description = content.Description,
+					TextContent = content.TextContent,
 					Status = content.Status,
 					CreatedBy = content.CreatedBy,
 					CreatedByName = creator is null ? "Unknown" : $"{creator.FirstName} {creator.LastName}",
 					CreatedAt = content.CreatedAt,
 					ApprovedAt = content.ApprovedAt,
 					RejectionReason = content.RejectionReason,
-					HasRecording = await _boardRepository.GetManifestAsync(content.GroupId.ToString(), content.CreatedBy.ToString()) is not null,
+					HasRecording = await _boardRepository.GetManifestAsync(content.GroupId.ToString(), content.CreatedBy.ToString(), content.Id.ToString()) is not null,
 					Media = media.ToList()
 				});
 			}

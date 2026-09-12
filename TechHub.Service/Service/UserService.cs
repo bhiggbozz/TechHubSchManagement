@@ -94,6 +94,9 @@ namespace TechHub.Service.Service
 		private readonly ITenantService _tenantService;
 		private readonly IBackgroundJobService _backgroundJobService;
 		private readonly string? _connString;
+		private readonly IQueryRepository<StudentClassroom> _studentClassroomQueryRespository;
+		private readonly ICommandRespository<StudentPasswordResetLog> _studentPasswordResetLogCommandRepository;
+		private readonly INotificationService _notificationService;
 
 		public UserService(IQueryRepository<LoginHistory> queryRepositoryLoginHistory, IQueryRepository<Users> queryrepositoryUser,
 			ICommandRespository<LoginHistory> commandRepositoryLoginHistory, ICommandRespository<Users> commandRepositoryUser,
@@ -111,8 +114,14 @@ namespace TechHub.Service.Service
 			IQueryRepository<PasswordChangeConfirmation> passwordChangeConfirmationQueryRespository,
 			ICommandRespository<PasswordChangeConfirmation> passwordChangeConfirmationCommandRespository,
 			IMapper mapper, ILogger logger, IEmailService emailService, JwtTokenGenerator jwtTokenGenerator,
-			IBackgroundJobService backgroundJobService)
+			IBackgroundJobService backgroundJobService,
+			IQueryRepository<StudentClassroom> studentClassroomQueryRespository,
+			ICommandRespository<StudentPasswordResetLog> studentPasswordResetLogCommandRepository,
+			INotificationService notificationService)
 		{
+			_studentClassroomQueryRespository = studentClassroomQueryRespository;
+			_studentPasswordResetLogCommandRepository = studentPasswordResetLogCommandRepository;
+			_notificationService = notificationService;
 			_passwordResetTokenQueryRespository = passwordResetTokenQueryRespository;
 			_passwordResetTokenCommandRespository = passwordResetTokenCommandRespository;
 			_passwordChangeConfirmationQueryRespository = passwordChangeConfirmationQueryRespository;
@@ -341,6 +350,46 @@ namespace TechHub.Service.Service
 						ResponseCode = ResponseCode.Unauthorized,
 						ResponseMessage = "Incorrect credentials",
 						Status = "failed"
+					};
+				}
+
+				// ===== FORCED PASSWORD RESET (staff-issued temp password) =====
+				// Checked only after the temp password above verified correctly —
+				// never before — so this can't be used to skip authentication.
+				if (user.RequirePasswordChange && user.PasswordResetExpiresAt.HasValue && user.PasswordResetExpiresAt.Value < DateTime.UtcNow)
+				{
+					_logger.Information(
+						"Temp password expired - UserId: {UserId}, ExpiredAt: {ExpiresAt}", user.Id, user.PasswordResetExpiresAt);
+
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "This temporary password has expired. Ask your teacher or administrator to generate a new one.",
+						Status = "failed"
+					};
+				}
+
+				if (user.RequirePasswordChange)
+				{
+					_logger.Information(
+						"Login requires password reset completion - UserId: {UserId}", user.Id);
+
+					var schInfoReset = await _queryrepositorySchool.Get(user.SchoolId);
+					var mappedSchInfoReset = _mapper.Map<SchoolResponseModel>(schInfoReset);
+
+					return new UserLoginResponse
+					{
+						Id = user.Id,
+						FirstName = user.FirstName,
+						LastName = user.LastName,
+						EmailAddress = user.EmailAddress,
+						RoleId = user.RoleId,
+						IsActive = user.IsActive,
+						SchoolInfo = mappedSchInfoReset,
+						PasswordResetRequired = true,
+						ResponseCode = ResponseCode.successful,
+						ResponseMessage = "Your password was reset by your school. Please set a new password to continue.",
+						Status = "successful"
 					};
 				}
 
@@ -1482,11 +1531,22 @@ namespace TechHub.Service.Service
 					};
 
 				var loginHistory = await LastLoginHistorys(user.Id);
-				if (loginHistory.Any())
+				if (loginHistory.Any() && !user.RequirePasswordChange)
 					return new BaseResponse
 					{
 						ResponseCode = ResponseCode.Forbidden,
 						ResponseMessage = "This endpoint is only for first time login",
+						Status = "failed"
+					};
+
+				// A held-onto temp password can't be used to complete this flow after
+				// its 1-hour window — same rule as the login-time check, enforced here
+				// too since this endpoint can be called directly.
+				if (user.RequirePasswordChange && user.PasswordResetExpiresAt.HasValue && user.PasswordResetExpiresAt.Value < DateTime.UtcNow)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "This temporary password has expired. Ask your teacher or administrator to generate a new one.",
 						Status = "failed"
 					};
 
@@ -1517,8 +1577,10 @@ namespace TechHub.Service.Service
 
 				// ── Update password + log history + issue tokens atomically ──────────
 				var updateQuery = @"
-					UPDATE Users 
+					UPDATE Users
 					SET HashPassword = @HashPassword,
+						RequirePasswordChange = 0,
+						PasswordResetExpiresAt = NULL,
 						ModifiedDate = @ModifiedDate
 					WHERE Id       = @Id
 					AND   SchoolId = @SchoolId";
@@ -3033,6 +3095,161 @@ namespace TechHub.Service.Service
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "Failed to unlock user account - UserId: {UserId}", userId);
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.ErrorOccured,
+					ResponseMessage = "An unexpected error occurred",
+					Status = "failed"
+				};
+			}
+		}
+
+		/// <summary>
+		/// Staff-initiated password reset for a student who's forgotten theirs —
+		/// students have no self-service forgot-password path by design. Generates a
+		/// temp password, forces the account through the same "set your own
+		/// password" flow already used for first-time login on next successful
+		/// login with it, reactivates the account if it was locked, and records who
+		/// did this and when (StudentPasswordResetLog) — so a school can tell a
+		/// legitimate reset from someone getting another student's account reset
+		/// under false pretenses.
+		///
+		/// Allowed callers: SuperAdministrator and HeadTeacher (school-wide),
+		/// Administrator with ManageStudents permission (school-wide), and
+		/// ClassTeacher (only for a student in one of their own classrooms).
+		/// </summary>
+		public async Task<BaseResponse> ResetStudentPassword(Guid studentId, AuthenticatedUserClaims claims)
+		{
+			try
+			{
+				if (!Guid.TryParse(claims?.UserId, out var requesterId) || !Guid.TryParse(claims?.SchoolId, out var schoolId))
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Unauthorized,
+						ResponseMessage = "Invalid user claims",
+						Status = "failed"
+					};
+
+				var requester = await _queryrepositoryUser.Get(requesterId);
+				if (requester is null || requester.SchoolId != schoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.Forbidden,
+						ResponseMessage = "Access denied",
+						Status = "failed"
+					};
+
+				var targetUser = await _queryrepositoryUser.Get(studentId);
+				if (targetUser is null || targetUser.SchoolId != schoolId)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Student not found",
+						Status = "failed"
+					};
+
+				if (targetUser.RoleId != (int)UserRole.Student)
+					return new BaseResponse
+					{
+						ResponseCode = ResponseCode.BadRequest,
+						ResponseMessage = "This endpoint is only for resetting a student's password",
+						Status = "failed"
+					};
+
+				var isSchoolWideApprover =
+					requester.RoleId == (int)UserRole.SuperAdministrator ||
+					requester.RoleId == (int)UserRole.HeadTeacher ||
+					(requester.RoleId == (int)UserRole.Administrator &&
+						await HasPermission(requesterId, schoolId, AdminPermission.ManageStudents));
+
+				if (!isSchoolWideApprover)
+				{
+					var isOwnClassroomStudent = requester.RoleId == (int)UserRole.ClassTeacher &&
+						await _studentClassroomQueryRespository.CountAsync(
+							@"SELECT COUNT(*) FROM StudentClassroom sc
+							  JOIN TeacherClassroom tc ON tc.ClassroomId = sc.ClassroomId
+							  WHERE sc.StudentId = @StudentId AND tc.TeacherId = @TeacherId
+							  AND sc.SchoolId = @SchoolId AND sc.IsActive = 1 AND tc.IsActive = 1",
+							new Dictionary<string, object>
+							{
+								{ "StudentId", studentId },
+								{ "TeacherId", requesterId },
+								{ "SchoolId", schoolId }
+							}) > 0;
+
+					if (!isOwnClassroomStudent)
+						return new BaseResponse
+						{
+							ResponseCode = ResponseCode.Forbidden,
+							ResponseMessage = "You can only reset the password of a student in your own classroom",
+							Status = "failed"
+						};
+				}
+
+				var tempPassword = GenerateTempPassword();
+				var hashedPassword = HashPassword(tempPassword);
+				var now = DateTime.UtcNow;
+				var nowStr = now.ToString("yyyy-MM-dd HH:mm:ss");
+
+				using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
+				try
+				{
+					await scope.Connection.ExecuteAsync(
+						@"UPDATE Users
+						  SET HashPassword = @HashPassword,
+							  RequirePasswordChange = 1,
+							  PasswordResetExpiresAt = @ExpiresAt,
+							  IsActive = 1,
+							  ModifiedDate = @ModifiedDate
+						  WHERE Id = @Id AND SchoolId = @SchoolId",
+						new { HashPassword = hashedPassword, ExpiresAt = now.AddHours(1), ModifiedDate = nowStr, Id = studentId, SchoolId = schoolId },
+						scope.Transaction);
+
+					await _studentPasswordResetLogCommandRepository.Create(scope.Transaction, scope.Connection, new StudentPasswordResetLog
+					{
+						Id = Guid.NewGuid(),
+						StudentId = studentId,
+						SchoolId = schoolId,
+						ResetBy = requesterId,
+						ResetByName = $"{requester.FirstName} {requester.LastName}",
+						ResetByRole = ((UserRole)requester.RoleId).ToString(),
+						CreatedAt = now
+					});
+
+					await scope.CommitAsync();
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Failed to commit student password reset - StudentId: {StudentId}", studentId);
+					try { await scope.RollbackAsync(); }
+					catch (Exception rbEx)
+					{
+						_logger.Error(rbEx, "Rollback failed during student password reset - StudentId: {StudentId}", studentId);
+					}
+					throw;
+				}
+
+				_logger.Information(
+					"Student password reset - StudentId: {StudentId}, ResetBy: {ResetBy}, Role: {Role}",
+					studentId, requesterId, ((UserRole)requester.RoleId).ToString());
+
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.successful,
+					ResponseMessage = "Temporary password generated — share it with the student directly. It expires in 1 hour and only works to set a new password, not as an ongoing login.",
+					Status = "successful",
+					Data = new
+					{
+						StudentId = studentId,
+						StudentName = $"{targetUser.FirstName} {targetUser.LastName}",
+						TempPassword = tempPassword,
+						ExpiresAt = now.AddHours(1)
+					}
+				};
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Failed to reset student password - StudentId: {StudentId}", studentId);
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.ErrorOccured,
@@ -5074,7 +5291,23 @@ namespace TechHub.Service.Service
 							"Failed to enqueue auto image generation - LessonId: {LessonId}",
 							approval.EntityId.Value);
 					}
+
+					// Disabled — fan-out-on-write was judged too much extra storage; the
+					// dashboard will surface "what's new" instead. Implementation kept
+					// in place (NotificationService et al.) in case this gets revisited.
+					//_ = Task.Run(() => _notificationService.NotifyLessonPublishedAsync(
+					//	approval.EntityId.Value, approval.SchoolId));
 				}
+
+				// Notify the group's other members once submitted content is approved.
+				// Disabled — see the matching comment above.
+				//if (model.Approved &&
+				//	approval.OperationType == OperationType.SubmitGroupContent &&
+				//	approval.EntityId.HasValue)
+				//{
+				//	_ = Task.Run(() => _notificationService.NotifyGroupContentApprovedAsync(
+				//		approval.EntityId.Value, approval.SchoolId));
+				//}
 
 				_logger.Information(
 					"Approval {ApprovalId} {Status} by {ApproverId}",

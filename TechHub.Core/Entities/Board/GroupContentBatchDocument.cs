@@ -7,16 +7,18 @@ namespace TechHub.Core.Entities.Board;
 /// Mongo document for student group-content board batches — stored in its own
 /// "group_content_batches" collection, separate from the teacher's "board_batches".
 ///
-/// Id is {groupId}_{studentId}_{batchIndex} — a direct composite of IDs the caller
-/// already has, not an invented session GUID. Still a plain _id point lookup
-/// (Mongo indexes _id automatically), so retrieval stays index-based, not a scan.
+/// Id is {groupId}_{studentId}_{contentId}_{batchIndex} — scoped to the specific
+/// GroupLessonContent submission, so a second recording for a different
+/// submission in the same group can never overwrite this one. Still a plain
+/// _id point lookup (Mongo indexes _id automatically), so retrieval stays
+/// index-based, not a scan.
 /// </summary>
 [BsonIgnoreExtraElements]
 public class GroupContentBatchDocument
 {
 	[BsonId]
 	[BsonRepresentation(BsonType.String)]
-	public string Id { get; set; } = string.Empty;  // {groupId}_{studentId}_{batchIndex}
+	public string Id { get; set; } = string.Empty;  // {groupId}_{studentId}_{contentId}_{batchIndex}
 
 	[BsonElement("groupId")]
 	public string GroupId { get; set; } = string.Empty;
@@ -26,6 +28,9 @@ public class GroupContentBatchDocument
 
 	[BsonElement("studentId")]
 	public string StudentId { get; set; } = string.Empty;
+
+	[BsonElement("contentId")]
+	public string ContentId { get; set; } = string.Empty;
 
 	[BsonElement("batchIndex")]
 	public int BatchIndex { get; set; }

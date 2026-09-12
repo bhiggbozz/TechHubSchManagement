@@ -73,6 +73,11 @@ public class GroupContentBoardSyncWorker : BackgroundService
     {
         Cleanup();
 
+		if (string.IsNullOrWhiteSpace(_settings.GroupContentBatchQueue))
+			throw new InvalidOperationException(
+				"RabbitMQ:GroupContentBatchQueue is not configured — check appsettings.json/environment variables for this deployment. " +
+				"The RabbitMQ client throws an unhelpful ArgumentNullException deep inside QueueDeclare if this is missing.");
+
 		var factory = new ConnectionFactory
 		{
 			Uri = new Uri(_settings.AmqpUrl),
@@ -131,25 +136,29 @@ public class GroupContentBoardSyncWorker : BackgroundService
                 }
 
                 _logger.Debug(
-                    "Processing group-content batch {BatchIndex} for Group {GroupId}, Student {StudentId}",
+                    "Processing group-content batch {BatchIndex} for Group {GroupId}, Student {StudentId}, Content {ContentId}",
                     message.BatchIndex,
                     message.GroupId,
-                    message.StudentId);
+                    message.StudentId,
+                    message.ContentId);
 
-                // SaveBatchAsync upserts by {groupId}_{studentId}_{batchIndex}, so this is
-                // safe to call unconditionally: a genuine RabbitMQ redelivery just rewrites
-                // the same content (harmless), and a re-recording's batch correctly replaces
-                // the previous recording's stale data instead of being dropped as a
-                // "duplicate" of it — which is what a pre-check here used to do.
+                // SaveBatchAsync upserts by {groupId}_{studentId}_{contentId}_{batchIndex}, so
+                // this is safe to call unconditionally: a genuine RabbitMQ redelivery just
+                // rewrites the same content (harmless), and a re-recording's batch correctly
+                // replaces the previous recording's stale data instead of being dropped as a
+                // "duplicate" of it — which is what a pre-check here used to do. Scoping the
+                // key by ContentId also means a recording for a different submission in the
+                // same group can never overwrite this one.
                 await _repository.SaveBatchAsync(message);
 
                 ch.BasicAck(ea.DeliveryTag, multiple: false);
 
                 _logger.Information(
-                    "Successfully processed group-content batch {BatchIndex} for Group {GroupId}, Student {StudentId}",
+                    "Successfully processed group-content batch {BatchIndex} for Group {GroupId}, Student {StudentId}, Content {ContentId}",
                     message.BatchIndex,
                     message.GroupId,
-                    message.StudentId);
+                    message.StudentId,
+                    message.ContentId);
             }
             catch (JsonException jsonEx)
             {

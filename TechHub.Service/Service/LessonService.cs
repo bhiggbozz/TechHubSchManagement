@@ -35,6 +35,7 @@ public class LessonService : ILessonService
 	private readonly IConfiguration _configuration;	
 	private readonly ILogger _logger;
 	private readonly IBackgroundJobService _backgroundJobService;
+	private readonly INotificationService _notificationService;
 
 	public LessonService(
 	ICommandRespository<LessonContent> lessonCommand,
@@ -50,7 +51,8 @@ public class LessonService : ILessonService
 	IEmailService emailService,
 	IConfiguration configuration,
 	ILogger logger,
-	IBackgroundJobService backgroundJobService)
+	IBackgroundJobService backgroundJobService,
+	INotificationService notificationService)
 	{
 		_lessonCommand = lessonCommand;
 		_mediaCommand = mediaCommand;
@@ -67,6 +69,7 @@ public class LessonService : ILessonService
 		_emailService = emailService;
 		_configuration = configuration;
 		_logger = logger;
+		_notificationService = notificationService;
 	}
 
 // ── Submit lesson — saves to DB + fires approval simultaneously ──────────
@@ -362,6 +365,15 @@ public class LessonService : ILessonService
 						lessonId);
 				}
 			}
+
+			// Notify the classroom's students once the lesson is actually published.
+			// Disabled for now — fan-out-on-write was judged too much extra storage;
+			// the dashboard will surface "what's new" instead. Implementation kept
+			// in place (NotificationService et al.) in case this gets revisited.
+			//if (autoPublish && !model.IsDraft)
+			//{
+			//	_ = Task.Run(() => _notificationService.NotifyLessonPublishedAsync(lessonId, schoolId));
+			//}
 
 			_logger.Information(
 				"Lesson submitted - LessonId: {LessonId}, TeacherId: {TeacherId}, " +
@@ -669,6 +681,9 @@ public class LessonService : ILessonService
 						"Failed to enqueue auto image generation - LessonId: {LessonId}",
 						lessonId);
 				}
+
+				// Disabled — see the matching comment in SubmitLesson above.
+				//_ = Task.Run(() => _notificationService.NotifyLessonPublishedAsync(lessonId, schoolId));
 			}
 
 			_logger.Information(

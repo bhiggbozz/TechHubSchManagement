@@ -278,7 +278,12 @@ namespace TechHub.Service.Service
 				foreach (var item in items.Keys)
 				{
 					count2 -= 1;
-					parameter.Add($"@{item}_{count2}_{batchCount}", items[item]);
+					var value = items[item];
+					// Dapper can't infer a DbType from a raw DBNull.Value (throws
+					// "The member X of type System.DBNull cannot be used as a
+					// parameter value") — pass a real null instead, which it
+					// converts to DBNull at execution time automatically.
+					parameter.Add($"@{item}_{count2}_{batchCount}", value is DBNull ? null : value);
 				}
 				batchCount -= 1;
 			}

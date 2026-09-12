@@ -30,11 +30,14 @@ namespace TechHub.Core.DTO
 		public DateTime CreatedAt { get; set; }
 		public int MediaCount { get; set; }
 		public bool HasRecording { get; set; }
+		public bool HasTextContent { get; set; }
 	}
 
 	public class GroupContentStatusDto
 	{
-		// NoActiveContent | RecordingInProgress | AwaitingSubmission | PendingApproval | Approved | Rejected
+		// NoActiveContent | RecordingInProgress | Recorded | Approved | Rejected
+		// (PendingApproval content still recording falls through to the Mongo-derived
+		// states above — only a decided submission short-circuits with its own status)
 		public string Status { get; set; } = string.Empty;
 		public Guid? ContentId { get; set; }
 		public bool HasBoardRecording { get; set; }
@@ -65,6 +68,7 @@ namespace TechHub.Core.DTO
 		public string? SubTopic { get; set; }
 		public string Aim { get; set; } = string.Empty;
 		public string Description { get; set; } = string.Empty;
+		public string? TextContent { get; set; }
 		public string Status { get; set; } = string.Empty;
 		public Guid CreatedBy { get; set; }
 		public string CreatedByName { get; set; } = string.Empty;
