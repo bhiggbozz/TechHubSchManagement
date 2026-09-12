@@ -70,9 +70,12 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 
 	// ── Shared view-access check for playback/download — creator or the
 	// classroom's resolved approver can view any status; other group members
-	// only once the student's submission is Approved ───────────────────────────
-	private async Task<(bool Ok, BaseResponse? Error, Guid SchoolId)> ValidateViewAccessAsync(
-		string routeGroupId, string targetStudentId, AuthenticatedUserClaims claims)
+	// only once the student's submission is Approved. Resolves ONE specific
+	// GroupLessonContent by Id (not "the latest row for this student in this
+	// group") so permission checks can never be gated by the wrong submission's
+	// status. ────────────────────────────────────────────────────────────────
+	private async Task<(bool Ok, BaseResponse? Error, Guid SchoolId, GroupLessonContent? Content)> ValidateViewAccessAsync(
+		string routeGroupId, string routeContentId, AuthenticatedUserClaims claims)
 	{
 		if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var callerId))
 		{
@@ -81,17 +84,17 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				ResponseCode = ResponseCode.Unauthorized,
 				ResponseMessage = "Invalid user claims",
 				Status = "failed"
-			}, Guid.Empty);
+			}, Guid.Empty, null);
 		}
 
-		if (!Guid.TryParse(routeGroupId, out var groupId) || !Guid.TryParse(targetStudentId, out var targetId))
+		if (!Guid.TryParse(routeGroupId, out var groupId) || !Guid.TryParse(routeContentId, out var contentId))
 		{
 			return (false, new BaseResponse
 			{
 				ResponseCode = ResponseCode.BadRequest,
-				ResponseMessage = "Invalid GroupId or StudentId",
+				ResponseMessage = "Invalid GroupId or ContentId",
 				Status = "failed"
-			}, Guid.Empty);
+			}, Guid.Empty, null);
 		}
 
 		var group = await _groupQuery.Get(groupId);
@@ -102,7 +105,18 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				ResponseCode = ResponseCode.NotFound,
 				ResponseMessage = "Group not found",
 				Status = "failed"
-			}, Guid.Empty);
+			}, Guid.Empty, null);
+		}
+
+		var content = await _contentQuery.Get(contentId);
+		if (content is null || content.SchoolId != schoolId || content.GroupId != groupId)
+		{
+			return (false, new BaseResponse
+			{
+				ResponseCode = ResponseCode.NotFound,
+				ResponseMessage = "Content not found",
+				Status = "failed"
+			}, Guid.Empty, null);
 		}
 
 		var isMember = group.CreatedBy == callerId || (await _memberQuery.CountAsync(
@@ -119,37 +133,31 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				ResponseCode = ResponseCode.Forbidden,
 				ResponseMessage = "You do not have access to this content",
 				Status = "failed"
-			}, Guid.Empty);
+			}, Guid.Empty, null);
 		}
 
-		var isSelf = callerId == targetId;
+		var isSelf = callerId == content.CreatedBy;
+		var isApproved = string.Equals(content.Status, "Approved", StringComparison.OrdinalIgnoreCase);
 
-		if (!isSelf && !isApprover)
+		if (!isSelf && !isApprover && !isApproved)
 		{
-			var existing = (await _contentQuery.QueryAsync<GroupLessonContent>(
-				"SELECT TOP 1 * FROM GroupLessonContent WHERE GroupId = @GroupId AND CreatedBy = @StudentId ORDER BY CreatedAt DESC",
-				new Dictionary<string, object> { { "GroupId", groupId }, { "StudentId", targetId } }))
-				.FirstOrDefault();
-
-			var isApproved = existing is not null && string.Equals(existing.Status, "Approved", StringComparison.OrdinalIgnoreCase);
-
-			if (!isApproved)
+			return (false, new BaseResponse
 			{
-				return (false, new BaseResponse
-				{
-					ResponseCode = ResponseCode.Forbidden,
-					ResponseMessage = "This content is awaiting approval",
-					Status = "failed"
-				}, Guid.Empty);
-			}
+				ResponseCode = ResponseCode.Forbidden,
+				ResponseMessage = "This content is awaiting approval",
+				Status = "failed"
+			}, Guid.Empty, null);
 		}
 
-		return (true, null, schoolId);
+		return (true, null, schoolId, content);
 	}
 
-	// ── Shared membership check — both batch and manifest calls need it ─────────
-	private async Task<(bool Ok, BaseResponse? Error, Guid SchoolId, Guid StudentId)> ValidateMemberAsync(
-		string modelGroupId, AuthenticatedUserClaims claims)
+	// ── Shared membership + content-ownership check — batch/manifest/status
+	// calls all need it. Resolves ONE specific GroupLessonContent (owned by
+	// the caller) instead of the group's "latest" submission, so a recording
+	// session is always tied to exactly the submission the frontend intends. ──
+	private async Task<(bool Ok, BaseResponse? Error, Guid SchoolId, Guid StudentId, GroupLessonContent? Content)> ValidateOwnContentAsync(
+		string routeGroupId, string routeContentId, AuthenticatedUserClaims claims)
 	{
 		if (!Guid.TryParse(claims?.SchoolId, out var schoolId) || !Guid.TryParse(claims?.UserId, out var studentId))
 		{
@@ -158,17 +166,17 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				ResponseCode = ResponseCode.Unauthorized,
 				ResponseMessage = "Invalid user claims",
 				Status = "failed"
-			}, Guid.Empty, Guid.Empty);
+			}, Guid.Empty, Guid.Empty, null);
 		}
 
-		if (!Guid.TryParse(modelGroupId, out var groupId))
+		if (!Guid.TryParse(routeGroupId, out var groupId) || !Guid.TryParse(routeContentId, out var contentId))
 		{
 			return (false, new BaseResponse
 			{
 				ResponseCode = ResponseCode.BadRequest,
-				ResponseMessage = "Invalid GroupId",
+				ResponseMessage = "Invalid GroupId or ContentId",
 				Status = "failed"
-			}, Guid.Empty, Guid.Empty);
+			}, Guid.Empty, Guid.Empty, null);
 		}
 
 		var group = await _groupQuery.Get(groupId);
@@ -179,7 +187,7 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				ResponseCode = ResponseCode.NotFound,
 				ResponseMessage = "Group not found",
 				Status = "failed"
-			}, Guid.Empty, Guid.Empty);
+			}, Guid.Empty, Guid.Empty, null);
 		}
 
 		var isMember = group.CreatedBy == studentId || (await _memberQuery.CountAsync(
@@ -193,13 +201,34 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				ResponseCode = ResponseCode.Forbidden,
 				ResponseMessage = "You are not a member of this group",
 				Status = "failed"
-			}, Guid.Empty, Guid.Empty);
+			}, Guid.Empty, Guid.Empty, null);
 		}
 
-		return (true, null, schoolId, studentId);
+		var content = await _contentQuery.Get(contentId);
+		if (content is null || content.SchoolId != schoolId || content.GroupId != groupId)
+		{
+			return (false, new BaseResponse
+			{
+				ResponseCode = ResponseCode.NotFound,
+				ResponseMessage = "Content not found",
+				Status = "failed"
+			}, Guid.Empty, Guid.Empty, null);
+		}
+
+		if (content.CreatedBy != studentId)
+		{
+			return (false, new BaseResponse
+			{
+				ResponseCode = ResponseCode.Forbidden,
+				ResponseMessage = "You can only record for your own content",
+				Status = "failed"
+			}, Guid.Empty, Guid.Empty, null);
+		}
+
+		return (true, null, schoolId, studentId, content);
 	}
 
-	public async Task<BaseResponse> PublishBatchAsync(string routeGroupId, GroupContentBoardBatchViewModel model, AuthenticatedUserClaims claims)
+	public async Task<BaseResponse> PublishBatchAsync(string routeGroupId, string routeContentId, GroupContentBoardBatchViewModel model, AuthenticatedUserClaims claims)
 	{
 		try
 		{
@@ -213,16 +242,36 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				};
 			}
 
-			var (ok, error, schoolId, studentId) = await ValidateMemberAsync(model.GroupId, claims);
+			if (routeContentId != model.ContentId)
+			{
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = $"Content ID in route ({routeContentId}) does not match body ({model.ContentId})",
+					Status = "failed"
+				};
+			}
+
+			var (ok, error, schoolId, studentId, content) = await ValidateOwnContentAsync(routeGroupId, routeContentId, claims);
 			if (!ok) return error!;
+
+			if (!string.Equals(content!.Status, "PendingApproval", StringComparison.OrdinalIgnoreCase))
+			{
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.Forbidden,
+					ResponseMessage = $"This content has already been {content.Status} — its recording can no longer be changed",
+					Status = "failed"
+				};
+			}
 
 			var message = GroupContentBatchMessage.FromViewModel(model, schoolId.ToString(), studentId.ToString());
 
 			await _publisherService.PublishBatchAsync(message);
 
 			_logger.Information(
-				"Published group-content batch {BatchIndex} for Group: {GroupId}, Student: {StudentId}",
-				model.BatchIndex, model.GroupId, studentId);
+				"Published group-content batch {BatchIndex} for Group: {GroupId}, Student: {StudentId}, Content: {ContentId}",
+				model.BatchIndex, model.GroupId, studentId, model.ContentId);
 
 			return new BaseResponse
 			{
@@ -233,7 +282,7 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 		}
 		catch (Exception ex)
 		{
-			_logger.Error(ex, "Unexpected error publishing group-content batch - GroupId: {GroupId}", routeGroupId);
+			_logger.Error(ex, "Unexpected error publishing group-content batch - GroupId: {GroupId}, ContentId: {ContentId}", routeGroupId, routeContentId);
 			return new BaseResponse
 			{
 				ResponseCode = ResponseCode.ErrorOccured,
@@ -243,7 +292,7 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 		}
 	}
 
-	public async Task<BaseResponse> SaveManifestAsync(string routeGroupId, GroupContentManifestViewModel model, AuthenticatedUserClaims claims)
+	public async Task<BaseResponse> SaveManifestAsync(string routeGroupId, string routeContentId, GroupContentManifestViewModel model, AuthenticatedUserClaims claims)
 	{
 		try
 		{
@@ -257,14 +306,34 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				};
 			}
 
-			var (ok, error, schoolId, studentId) = await ValidateMemberAsync(model.GroupId, claims);
+			if (routeContentId != model.ContentId)
+			{
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = $"Content ID in route ({routeContentId}) does not match body ({model.ContentId})",
+					Status = "failed"
+				};
+			}
+
+			var (ok, error, schoolId, studentId, content) = await ValidateOwnContentAsync(routeGroupId, routeContentId, claims);
 			if (!ok) return error!;
 
-			await _repository.SaveManifestAsync(model.GroupId, studentId.ToString(), schoolId.ToString(), model);
+			if (!string.Equals(content!.Status, "PendingApproval", StringComparison.OrdinalIgnoreCase))
+			{
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.Forbidden,
+					ResponseMessage = $"This content has already been {content.Status} — its recording can no longer be changed",
+					Status = "failed"
+				};
+			}
+
+			await _repository.SaveManifestAsync(model.GroupId, studentId.ToString(), model.ContentId, schoolId.ToString(), model);
 
 			_logger.Information(
-				"Saved group-content manifest for Group: {GroupId}, Student: {StudentId}",
-				model.GroupId, studentId);
+				"Saved group-content manifest for Group: {GroupId}, Student: {StudentId}, Content: {ContentId}",
+				model.GroupId, studentId, model.ContentId);
 
 			return new BaseResponse
 			{
@@ -275,7 +344,7 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 		}
 		catch (Exception ex)
 		{
-			_logger.Error(ex, "Unexpected error saving group-content manifest - GroupId: {GroupId}", routeGroupId);
+			_logger.Error(ex, "Unexpected error saving group-content manifest - GroupId: {GroupId}, ContentId: {ContentId}", routeGroupId, routeContentId);
 			return new BaseResponse
 			{
 				ResponseCode = ResponseCode.ErrorOccured,
@@ -285,24 +354,17 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 		}
 	}
 
-	// ── Tells the frontend: resume the paused recording, wait on approval, or start fresh ──
-	public async Task<BaseResponse> GetStatusAsync(string routeGroupId, AuthenticatedUserClaims claims)
+	// ── Tells the frontend: resume the paused recording, this content already
+	// has one, or start fresh. Scoped to ONE specific content item — a decided
+	// (Approved/Rejected) submission short-circuits with its own status. ──────
+	public async Task<BaseResponse> GetStatusAsync(string routeGroupId, string routeContentId, AuthenticatedUserClaims claims)
 	{
 		try
 		{
-			var (ok, error, _, studentId) = await ValidateMemberAsync(routeGroupId, claims);
+			var (ok, error, _, studentId, content) = await ValidateOwnContentAsync(routeGroupId, routeContentId, claims);
 			if (!ok) return error!;
 
-			var groupId = Guid.Parse(routeGroupId);
-
-			// One finalized submission is authoritative — the recording slot for
-			// this group+student has already been used, no matter its outcome.
-			var existing = (await _contentQuery.QueryAsync<GroupLessonContent>(
-				"SELECT TOP 1 * FROM GroupLessonContent WHERE GroupId = @GroupId AND CreatedBy = @StudentId ORDER BY CreatedAt DESC",
-				new Dictionary<string, object> { { "GroupId", groupId }, { "StudentId", studentId } }))
-				.FirstOrDefault();
-
-			if (existing is not null)
+			if (!string.Equals(content!.Status, "PendingApproval", StringComparison.OrdinalIgnoreCase))
 			{
 				return new BaseResponse
 				{
@@ -311,15 +373,16 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 					Status = "successful",
 					Data = new GroupContentStatusDto
 					{
-						Status = existing.Status,
-						ContentId = existing.Id,
-						RejectionReason = existing.RejectionReason
+						Status = content.Status,
+						ContentId = content.Id,
+						RejectionReason = content.RejectionReason
 					}
 				};
 			}
 
-			// No SQL row yet — check whether a recording is mid-flight in Mongo.
-			var manifest = await _repository.GetManifestAsync(routeGroupId, studentId.ToString());
+			// Still pending review — check whether this specific content already
+			// has a finished recording, one mid-flight, or none at all.
+			var manifest = await _repository.GetManifestAsync(routeGroupId, studentId.ToString(), routeContentId);
 			if (manifest is not null)
 			{
 				return new BaseResponse
@@ -329,7 +392,8 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 					Status = "successful",
 					Data = new GroupContentStatusDto
 					{
-						Status = "AwaitingSubmission",
+						Status = "Recorded",
+						ContentId = content.Id,
 						HasBoardRecording = true,
 						HasManifest = true,
 						LastBatchIndex = manifest.StrokeBatches.Any() ? manifest.StrokeBatches.Max(b => b.BatchIndex) : null
@@ -337,7 +401,7 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				};
 			}
 
-			var lastBatchIndex = await _repository.GetLatestBatchIndexAsync(routeGroupId, studentId.ToString());
+			var lastBatchIndex = await _repository.GetLatestBatchIndexAsync(routeGroupId, studentId.ToString(), routeContentId);
 			if (lastBatchIndex.HasValue)
 			{
 				return new BaseResponse
@@ -348,6 +412,7 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 					Data = new GroupContentStatusDto
 					{
 						Status = "RecordingInProgress",
+						ContentId = content.Id,
 						HasBoardRecording = true,
 						LastBatchIndex = lastBatchIndex
 					}
@@ -359,12 +424,12 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 				ResponseCode = ResponseCode.successful,
 				ResponseMessage = "Content status retrieved",
 				Status = "successful",
-				Data = new GroupContentStatusDto { Status = "NoActiveContent" }
+				Data = new GroupContentStatusDto { Status = "NoActiveContent", ContentId = content.Id }
 			};
 		}
 		catch (Exception ex)
 		{
-			_logger.Error(ex, "Unexpected error fetching group-content status - GroupId: {GroupId}", routeGroupId);
+			_logger.Error(ex, "Unexpected error fetching group-content status - GroupId: {GroupId}, ContentId: {ContentId}", routeGroupId, routeContentId);
 			return new BaseResponse
 			{
 				ResponseCode = ResponseCode.ErrorOccured,
@@ -374,19 +439,19 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 		}
 	}
 
-	public async Task<BaseResponse> GetManifestForViewAsync(string routeGroupId, string targetStudentId, AuthenticatedUserClaims claims)
+	public async Task<BaseResponse> GetManifestForViewAsync(string routeGroupId, string routeContentId, AuthenticatedUserClaims claims)
 	{
 		try
 		{
-			var (ok, error, _) = await ValidateViewAccessAsync(routeGroupId, targetStudentId, claims);
+			var (ok, error, _, content) = await ValidateViewAccessAsync(routeGroupId, routeContentId, claims);
 			if (!ok) return error!;
 
-			var manifest = await _repository.GetManifestAsync(routeGroupId, targetStudentId);
+			var manifest = await _repository.GetManifestAsync(routeGroupId, content!.CreatedBy.ToString(), routeContentId);
 			if (manifest is null)
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.NotFound,
-					ResponseMessage = "No recording found for this student in this group",
+					ResponseMessage = "No recording found for this content",
 					Status = "failed"
 				};
 
@@ -400,7 +465,7 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 		}
 		catch (Exception ex)
 		{
-			_logger.Error(ex, "Unexpected error fetching group-content manifest - GroupId: {GroupId}, StudentId: {StudentId}", routeGroupId, targetStudentId);
+			_logger.Error(ex, "Unexpected error fetching group-content manifest - GroupId: {GroupId}, ContentId: {ContentId}", routeGroupId, routeContentId);
 			return new BaseResponse
 			{
 				ResponseCode = ResponseCode.ErrorOccured,
@@ -410,14 +475,14 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 		}
 	}
 
-	public async Task<BaseResponse> GetBatchForViewAsync(string routeGroupId, string targetStudentId, int batchIndex, AuthenticatedUserClaims claims)
+	public async Task<BaseResponse> GetBatchForViewAsync(string routeGroupId, string routeContentId, int batchIndex, AuthenticatedUserClaims claims)
 	{
 		try
 		{
-			var (ok, error, _) = await ValidateViewAccessAsync(routeGroupId, targetStudentId, claims);
+			var (ok, error, _, content) = await ValidateViewAccessAsync(routeGroupId, routeContentId, claims);
 			if (!ok) return error!;
 
-			var batch = await _repository.GetBatchAsync(routeGroupId, targetStudentId, batchIndex);
+			var batch = await _repository.GetBatchAsync(routeGroupId, content!.CreatedBy.ToString(), routeContentId, batchIndex);
 			if (batch is null)
 				return new BaseResponse
 				{
@@ -436,7 +501,7 @@ public class GroupContentBoardSessionService : IGroupContentBoardSessionService
 		}
 		catch (Exception ex)
 		{
-			_logger.Error(ex, "Unexpected error fetching group-content batch - GroupId: {GroupId}, StudentId: {StudentId}, BatchIndex: {BatchIndex}", routeGroupId, targetStudentId, batchIndex);
+			_logger.Error(ex, "Unexpected error fetching group-content batch - GroupId: {GroupId}, ContentId: {ContentId}, BatchIndex: {BatchIndex}", routeGroupId, routeContentId, batchIndex);
 			return new BaseResponse
 			{
 				ResponseCode = ResponseCode.ErrorOccured,

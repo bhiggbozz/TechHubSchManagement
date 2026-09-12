@@ -6,9 +6,9 @@ namespace TechHub.Service.Interface;
 
 public interface IGroupContentBoardSessionService
 {
-	Task<BaseResponse> PublishBatchAsync(string routeGroupId, GroupContentBoardBatchViewModel model, AuthenticatedUserClaims claims);
-	Task<BaseResponse> SaveManifestAsync(string routeGroupId, GroupContentManifestViewModel model, AuthenticatedUserClaims claims);
-	Task<BaseResponse> GetStatusAsync(string routeGroupId, AuthenticatedUserClaims claims);
-	Task<BaseResponse> GetManifestForViewAsync(string routeGroupId, string targetStudentId, AuthenticatedUserClaims claims);
-	Task<BaseResponse> GetBatchForViewAsync(string routeGroupId, string targetStudentId, int batchIndex, AuthenticatedUserClaims claims);
+	Task<BaseResponse> PublishBatchAsync(string routeGroupId, string routeContentId, GroupContentBoardBatchViewModel model, AuthenticatedUserClaims claims);
+	Task<BaseResponse> SaveManifestAsync(string routeGroupId, string routeContentId, GroupContentManifestViewModel model, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetStatusAsync(string routeGroupId, string routeContentId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetManifestForViewAsync(string routeGroupId, string routeContentId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetBatchForViewAsync(string routeGroupId, string routeContentId, int batchIndex, AuthenticatedUserClaims claims);
 }

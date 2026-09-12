@@ -28,6 +28,8 @@ namespace TechHub.Core.Model
 		public string? DOB { get; set; } = DateTime.MinValue.ToString("yyyy-MM-dd HH:mm:ss");
 		public Guid? LineManagerId { get; set; }
 		public string? QrCodeToken { get; set; }
+		public bool RequirePasswordChange { get; set; }
+		public DateTime? PasswordResetExpiresAt { get; set; }
 
 	}
 }

@@ -36,6 +36,7 @@ public class AssessmentService : IAssessmentService
     private readonly ILogger _logger;
     private readonly string _connString;
     private readonly IBoardSessionRepository _boardRepo;
+    private readonly INotificationService _notificationService;
 
     public AssessmentService(
         ICommandRespository<Assessments> assessmentCommand,
@@ -52,7 +53,8 @@ public class AssessmentService : IAssessmentService
         IDbTransactionScopeFactory dbTransactionScopeFactory,
         IConfiguration configuration,
         ILogger logger,
-        IBoardSessionRepository boardRepo)
+        IBoardSessionRepository boardRepo,
+        INotificationService notificationService)
     {
         _assessmentCommand = assessmentCommand;
         _configCommand = configCommand;
@@ -68,6 +70,7 @@ public class AssessmentService : IAssessmentService
         _dbTransactionScopeFactory = dbTransactionScopeFactory;
         _configuration = configuration;
         _logger = logger;
+        _notificationService = notificationService;
         _connString = _configuration.GetConnectionString("DbConnectionString") ?? string.Empty;
         _boardRepo = boardRepo;
     }
@@ -273,6 +276,12 @@ public class AssessmentService : IAssessmentService
                     try { await scope.RollbackAsync(); } catch { }
                     throw;
                 }
+
+                // Disabled — fan-out-on-write was judged too much extra storage; the
+                // dashboard will surface "what's new" instead. Implementation kept in
+                // place (NotificationService et al.) in case this gets revisited.
+                //_ = Task.Run(() => _notificationService.NotifyAssessmentAssignedAsync(
+                //    model.AssessmentId, model.TargetType, model.TargetIds.ToList(), schoolId));
 
                 return Ok($"Assessment assigned to {assignments.Count} {model.TargetType}(s)");
             }

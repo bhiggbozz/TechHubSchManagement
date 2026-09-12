@@ -583,6 +583,36 @@ namespace TechhubMS.Controllers
 		}
 
 		/// <summary>
+		/// Generate a temp password for a student who's forgotten theirs — students
+		/// have no self-service forgot-password path. The temp password only works
+		/// to get to the "set your own password" screen (same one used for
+		/// first-time login), never as an ongoing password. A ClassTeacher may only
+		/// reset a student in their own classroom; Administrator needs
+		/// ManageStudents; HeadTeacher/SuperAdministrator are unrestricted within
+		/// their school.
+		/// </summary>
+		[HttpPost("students/{studentId}/reset-password")]
+		[Authorize(Roles = "SuperAdministrator,Administrator,HeadTeacher,ClassTeacher")]
+		[ProducesResponseType(typeof(BaseResponse), 200)]
+		[ProducesResponseType(typeof(BaseResponse), 400)]
+		[ProducesResponseType(typeof(BaseResponse), 403)]
+		[ProducesResponseType(typeof(BaseResponse), 404)]
+		public async Task<IActionResult> ResetStudentPassword(Guid studentId)
+		{
+			var claims = User.GetAuthenticatedUserClaims();
+			var result = await _userService.ResetStudentPassword(studentId, claims);
+
+			return result.ResponseCode switch
+			{
+				ResponseCode.successful => Ok(result),
+				ResponseCode.NotFound => NotFound(result),
+				ResponseCode.Forbidden => StatusCode(403, result),
+				ResponseCode.Unauthorized => Unauthorized(result),
+				_ => BadRequest(result)
+			};
+		}
+
+		/// <summary>
 		/// Get students for the logged-in teacher (auto-detected from JWT)
 		/// </summary>
 		[HttpGet("teacher/students")]

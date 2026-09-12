@@ -7,13 +7,14 @@ namespace TechHub.Core.Messages;
 /// type from BoardBatchMessage (not just extra fields on it) so the two never share
 /// a queue, a consumer, or a Mongo collection — see GroupContentBatchQueue.
 ///
-/// No SessionId — GroupId + StudentId + BatchIndex is the whole key.
+/// No SessionId — GroupId + StudentId + ContentId + BatchIndex is the whole key.
 /// </summary>
 public class GroupContentBatchMessage
 {
 	public string GroupId { get; set; } = string.Empty;
 	public string SchoolId { get; set; } = string.Empty;
 	public string StudentId { get; set; } = string.Empty;
+	public string ContentId { get; set; } = string.Empty;
 	public int BatchIndex { get; set; }
 	public long StartMs { get; set; }
 	public long EndMs { get; set; }
@@ -33,6 +34,7 @@ public class GroupContentBatchMessage
 			GroupId = model.GroupId,
 			SchoolId = schoolId,
 			StudentId = studentId,
+			ContentId = model.ContentId,
 			BatchIndex = model.BatchIndex,
 			StartMs = model.StartMs,
 			EndMs = model.EndMs,

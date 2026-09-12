@@ -41,6 +41,11 @@ public class GroupContentBoardPublisherService : IGroupContentBoardPublisherServ
 			if (_connection is { IsOpen: true } && _channel is { IsOpen: true })
 				return;
 
+			if (string.IsNullOrWhiteSpace(_settings.GroupContentBatchQueue))
+				throw new InvalidOperationException(
+					"RabbitMQ:GroupContentBatchQueue is not configured — check appsettings.json/environment variables for this deployment. " +
+					"The RabbitMQ client throws an unhelpful ArgumentNullException deep inside QueueDeclare if this is missing.");
+
 			_logger.Information("Connecting to RabbitMQ (group content) - {AmqpUrl}", _settings.AmqpUrl);
 
 			var factory = new ConnectionFactory

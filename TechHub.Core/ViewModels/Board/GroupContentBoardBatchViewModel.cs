@@ -10,13 +10,19 @@ namespace TechHub.Core.ViewModels.Board;
 ///
 /// No SessionId: unlike a live classroom broadcast, a student's recording is
 /// already uniquely identified by GroupId (route/body) + StudentId (JWT claims) +
-/// BatchIndex — an invented session GUID would just be a second name for the same
-/// key, so the document ID is built directly from IDs the caller already has.
+/// ContentId (route/body) + BatchIndex — an invented session GUID would just be a
+/// second name for the same key, so the document ID is built directly from IDs
+/// the caller already has. ContentId scopes the recording to one specific
+/// GroupLessonContent submission so a second recording for a different
+/// submission in the same group never overwrites this one.
 /// </summary>
 public class GroupContentBoardBatchViewModel
 {
 	[JsonPropertyName("groupId")]
 	public string GroupId { get; set; } = string.Empty;
+
+	[JsonPropertyName("contentId")]
+	public string ContentId { get; set; } = string.Empty;
 
 	[JsonPropertyName("batchIndex")]
 	public int BatchIndex { get; set; }

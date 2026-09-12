@@ -15,9 +15,13 @@ namespace TechhubMS.Controllers;
 /// worker, or Mongo collection with the teacher's live board pipeline.
 ///
 /// No sessionId: keyed directly by GroupId (route/body) + the caller's StudentId
-/// (JWT claims) — a real business key the caller already has, same principle the
-/// teacher flow already uses in practice (its "sessionId" is set to LessonId by
-/// frontend convention), just made explicit in the schema here.
+/// (JWT claims) + ContentId (route/body) — a real business key the caller already
+/// has by the time recording starts (the GroupLessonContent row is always created
+/// first), same principle the teacher flow already uses in practice (its
+/// "sessionId" is set to LessonId by frontend convention), just made explicit in
+/// the schema here. ContentId scopes each recording to one specific submission so
+/// a second recording for a different submission in the same group can never
+/// overwrite or leak into this one.
 /// </summary>
 [ApiController]
 [Route("api/board/group-content")]
@@ -35,7 +39,7 @@ public class GroupContentBoardController : ControllerBase
     /// student is recording content for their group. Publishes to RabbitMQ and
     /// returns immediately.
     /// </summary>
-    [HttpPost("group/{groupId}/batch")]
+    [HttpPost("group/{groupId}/content/{contentId}/batch")]
     [Authorize(Roles = "Student")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -44,6 +48,7 @@ public class GroupContentBoardController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> SubmitBatch(
         [FromRoute] string groupId,
+        [FromRoute] string contentId,
         [FromBody] GroupContentBoardBatchViewModel model)
     {
         var claims = User.GetAuthenticatedUserClaims();
@@ -58,7 +63,7 @@ public class GroupContentBoardController : ControllerBase
             });
         }
 
-        var result = await _groupContentBoardSessionService.PublishBatchAsync(groupId, model, claims);
+        var result = await _groupContentBoardSessionService.PublishBatchAsync(groupId, contentId, model, claims);
 
         return result.ResponseCode switch
         {
@@ -75,7 +80,7 @@ public class GroupContentBoardController : ControllerBase
     /// boards, and final concatenated audio URL. Student equivalent of the
     /// teacher's POST session/{sessionId}/manifest.
     /// </summary>
-    [HttpPost("group/{groupId}/manifest")]
+    [HttpPost("group/{groupId}/content/{contentId}/manifest")]
     [Authorize(Roles = "Student")]
     [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -84,6 +89,7 @@ public class GroupContentBoardController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<BaseResponse>> SubmitManifest(
         [FromRoute] string groupId,
+        [FromRoute] string contentId,
         [FromBody] GroupContentManifestViewModel model)
     {
         var claims = User.GetAuthenticatedUserClaims();
@@ -98,7 +104,7 @@ public class GroupContentBoardController : ControllerBase
             });
         }
 
-        var result = await _groupContentBoardSessionService.SaveManifestAsync(groupId, model, claims);
+        var result = await _groupContentBoardSessionService.SaveManifestAsync(groupId, contentId, model, claims);
 
         return result.ResponseCode switch
         {
@@ -111,19 +117,21 @@ public class GroupContentBoardController : ControllerBase
     }
 
     /// <summary>
-    /// Tells the frontend what to do with a locally-saved, paused recording:
-    /// resume it, wait on approval, or start fresh. Checks the SQL submission
-    /// (GroupLessonContent) first — if one exists, that's authoritative — then
-    /// falls back to the Mongo recording state (manifest saved vs. batches only).
+    /// Tells the frontend what to do with a locally-saved, paused recording for
+    /// this specific content item: resume it, note it's already recorded, or
+    /// start fresh. If this content has already been decided (Approved/Rejected)
+    /// that status short-circuits and blocks further recording; otherwise falls
+    /// back to the Mongo recording state (manifest saved vs. batches only) for
+    /// this exact {groupId, studentId, contentId}.
     /// </summary>
-    [HttpGet("group/{groupId}/status")]
+    [HttpGet("group/{groupId}/content/{contentId}/status")]
     [Authorize(Roles = "Student")]
     [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<BaseResponse>> GetStatus([FromRoute] string groupId)
+    public async Task<ActionResult<BaseResponse>> GetStatus([FromRoute] string groupId, [FromRoute] string contentId)
     {
         var claims = User.GetAuthenticatedUserClaims();
 
@@ -137,7 +145,7 @@ public class GroupContentBoardController : ControllerBase
             });
         }
 
-        var result = await _groupContentBoardSessionService.GetStatusAsync(groupId, claims);
+        var result = await _groupContentBoardSessionService.GetStatusAsync(groupId, contentId, claims);
 
         return result.ResponseCode switch
         {
@@ -157,7 +165,7 @@ public class GroupContentBoardController : ControllerBase
     /// creator or approver see it at any status, other group members only once
     /// the submission is Approved.
     /// </summary>
-    [HttpGet("group/{groupId}/student/{studentId}/manifest")]
+    [HttpGet("group/{groupId}/content/{contentId}/manifest")]
     [Authorize]
     [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -165,7 +173,7 @@ public class GroupContentBoardController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<BaseResponse>> GetManifestForView(
-        [FromRoute] string groupId, [FromRoute] string studentId)
+        [FromRoute] string groupId, [FromRoute] string contentId)
     {
         var claims = User.GetAuthenticatedUserClaims();
 
@@ -179,7 +187,7 @@ public class GroupContentBoardController : ControllerBase
             });
         }
 
-        var result = await _groupContentBoardSessionService.GetManifestForViewAsync(groupId, studentId, claims);
+        var result = await _groupContentBoardSessionService.GetManifestForViewAsync(groupId, contentId, claims);
 
         return result.ResponseCode switch
         {
@@ -195,7 +203,7 @@ public class GroupContentBoardController : ControllerBase
     /// One stroke batch (playback chunk) for a student's board recording.
     /// Same access rule as the manifest endpoint above.
     /// </summary>
-    [HttpGet("group/{groupId}/student/{studentId}/batch/{batchIndex:int}")]
+    [HttpGet("group/{groupId}/content/{contentId}/batch/{batchIndex:int}")]
     [Authorize]
     [ProducesResponseType(typeof(BaseResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -203,7 +211,7 @@ public class GroupContentBoardController : ControllerBase
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<BaseResponse>> GetBatchForView(
-        [FromRoute] string groupId, [FromRoute] string studentId, [FromRoute] int batchIndex)
+        [FromRoute] string groupId, [FromRoute] string contentId, [FromRoute] int batchIndex)
     {
         var claims = User.GetAuthenticatedUserClaims();
 
@@ -217,7 +225,7 @@ public class GroupContentBoardController : ControllerBase
             });
         }
 
-        var result = await _groupContentBoardSessionService.GetBatchForViewAsync(groupId, studentId, batchIndex, claims);
+        var result = await _groupContentBoardSessionService.GetBatchForViewAsync(groupId, contentId, batchIndex, claims);
 
         return result.ResponseCode switch
         {

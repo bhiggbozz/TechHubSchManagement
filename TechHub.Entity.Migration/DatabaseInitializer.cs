@@ -289,6 +289,12 @@ public class DatabaseInitializer : IHostedService
                 "IF OBJECT_ID('GroupLessonContent', 'U') IS NULL CREATE TABLE GroupLessonContent (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), SchoolId UNIQUEIDENTIFIER NOT NULL, GroupId UNIQUEIDENTIFIER NOT NULL, SubjectId UNIQUEIDENTIFIER NOT NULL, TopicId UNIQUEIDENTIFIER NULL, SubTopic NVARCHAR(200) NULL, Aim NVARCHAR(500) NOT NULL, Description NVARCHAR(2000) NOT NULL, Status NVARCHAR(50) NOT NULL DEFAULT 'PendingApproval', CreatedBy UNIQUEIDENTIFIER NOT NULL, ApprovedBy UNIQUEIDENTIFIER NULL, ApprovedAt DATETIME2 NULL, RejectedBy UNIQUEIDENTIFIER NULL, RejectionReason NVARCHAR(500) NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), ModifiedAt DATETIME2 NULL, CONSTRAINT PK_GroupLessonContent PRIMARY KEY (Id))",
                 "IF OBJECT_ID('GroupLessonContent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_GroupLessonContent_GroupId' AND object_id = OBJECT_ID('GroupLessonContent')) CREATE INDEX IX_GroupLessonContent_GroupId ON GroupLessonContent(GroupId)",
                 "IF OBJECT_ID('GroupLessonContent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_GroupLessonContent_CreatedBy' AND object_id = OBJECT_ID('GroupLessonContent')) CREATE INDEX IX_GroupLessonContent_CreatedBy ON GroupLessonContent(CreatedBy)",
+
+                // A student writing an essay-style text response directly, with no
+                // board recording and no attached media — a third valid content
+                // shape alongside media/board, not a replacement for Description
+                // (which stays a short blurb, capped at 2000 chars).
+                "IF OBJECT_ID('GroupLessonContent', 'U') IS NOT NULL AND COL_LENGTH('GroupLessonContent', 'TextContent') IS NULL ALTER TABLE GroupLessonContent ADD TextContent NVARCHAR(MAX) NULL",
                 "IF OBJECT_ID('GroupLessonMedia', 'U') IS NULL CREATE TABLE GroupLessonMedia (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), GroupContentId UNIQUEIDENTIFIER NOT NULL, SchoolId UNIQUEIDENTIFIER NOT NULL, FileName NVARCHAR(300) NOT NULL, OriginalFileName NVARCHAR(300) NOT NULL, FileExtension NVARCHAR(20) NOT NULL, MediaType NVARCHAR(50) NOT NULL, FileSizeBytes BIGINT NOT NULL DEFAULT 0, CloudinaryUrl NVARCHAR(1000) NOT NULL, PublicId NVARCHAR(500) NOT NULL, Duration INT NULL, Status NVARCHAR(50) NOT NULL DEFAULT 'Ready', DisplayOrder INT NOT NULL DEFAULT 1, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), IsActive BIT NOT NULL DEFAULT 1, MetaData NVARCHAR(MAX) NULL, CONSTRAINT PK_GroupLessonMedia PRIMARY KEY (Id))",
                 "IF OBJECT_ID('GroupLessonMedia', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_GroupLessonMedia_GroupContentId' AND object_id = OBJECT_ID('GroupLessonMedia')) CREATE INDEX IX_GroupLessonMedia_GroupContentId ON GroupLessonMedia(GroupContentId) WHERE IsActive = 1",
 
@@ -300,7 +306,34 @@ public class DatabaseInitializer : IHostedService
                 @"IF OBJECT_ID('Questions', 'U') IS NOT NULL AND EXISTS (
                     SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
                     WHERE TABLE_NAME = 'Questions' AND COLUMN_NAME = 'Title' AND CHARACTER_MAXIMUM_LENGTH <> -1)
-                  ALTER TABLE Questions ALTER COLUMN Title NVARCHAR(MAX) NOT NULL"
+                  ALTER TABLE Questions ALTER COLUMN Title NVARCHAR(MAX) NOT NULL",
+
+                // Staff-initiated password reset for a locked-out/forgotten-password
+                // student (students have no self-service forgot-password path by
+                // design). RequirePasswordChange forces the SAME "set your own
+                // password" completion flow already used for first-time login
+                // (update-password/newUser) — the temp password only ever works to
+                // get to that screen, never as an ongoing password.
+                "IF OBJECT_ID('Users', 'U') IS NOT NULL AND COL_LENGTH('Users', 'RequirePasswordChange') IS NULL ALTER TABLE Users ADD RequirePasswordChange BIT NOT NULL DEFAULT 0",
+
+                // Temp password is only valid for 1 hour after a staff-initiated
+                // reset — past that, login rejects it outright rather than letting
+                // an unused reset sit as a standing valid credential forever.
+                "IF OBJECT_ID('Users', 'U') IS NOT NULL AND COL_LENGTH('Users', 'PasswordResetExpiresAt') IS NULL ALTER TABLE Users ADD PasswordResetExpiresAt DATETIME2 NULL",
+
+                // Audit trail: which staff member reset which student's password, and
+                // when — so a school can tell a legitimate reset from someone
+                // impersonating a student to get another student's account reset.
+                "IF OBJECT_ID('StudentPasswordResetLog', 'U') IS NULL CREATE TABLE StudentPasswordResetLog (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), StudentId UNIQUEIDENTIFIER NOT NULL, SchoolId UNIQUEIDENTIFIER NOT NULL, ResetBy UNIQUEIDENTIFIER NOT NULL, ResetByName NVARCHAR(200) NOT NULL, ResetByRole NVARCHAR(50) NOT NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), CONSTRAINT PK_StudentPasswordResetLog PRIMARY KEY (Id))",
+                "IF OBJECT_ID('StudentPasswordResetLog', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StudentPasswordResetLog_StudentId' AND object_id = OBJECT_ID('StudentPasswordResetLog')) CREATE INDEX IX_StudentPasswordResetLog_StudentId ON StudentPasswordResetLog(StudentId)",
+
+                // In-app notifications (fan-out-on-write: one row per recipient).
+                // IsDelivered = shown once as a popup (e.g. right after login);
+                // IsRead = explicitly opened/dismissed. A notification a student
+                // never noticed stays in their list until read — it doesn't
+                // vanish just because they logged in again.
+                "IF OBJECT_ID('Notification', 'U') IS NULL CREATE TABLE Notification (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), SchoolId UNIQUEIDENTIFIER NOT NULL, RecipientId UNIQUEIDENTIFIER NOT NULL, Type NVARCHAR(50) NOT NULL, Title NVARCHAR(200) NOT NULL, Body NVARCHAR(1000) NOT NULL, EntityType NVARCHAR(50) NULL, EntityId UNIQUEIDENTIFIER NULL, IsDelivered BIT NOT NULL DEFAULT 0, IsRead BIT NOT NULL DEFAULT 0, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), ReadAt DATETIME2 NULL, CONSTRAINT PK_Notification PRIMARY KEY (Id))",
+                "IF OBJECT_ID('Notification', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Notification_Recipient' AND object_id = OBJECT_ID('Notification')) CREATE INDEX IX_Notification_Recipient ON Notification(RecipientId, CreatedAt DESC)"
             };
 
             await using var connection = new SqlConnection(connStr);

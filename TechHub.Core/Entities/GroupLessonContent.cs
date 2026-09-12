@@ -12,6 +12,7 @@ public class GroupLessonContent
 	public string? SubTopic { get; set; }
 	public string Aim { get; set; } = string.Empty;
 	public string Description { get; set; } = string.Empty;
+	public string? TextContent { get; set; }
 	public string Status { get; set; } = string.Empty;
 	public Guid CreatedBy { get; set; }
 	public Guid? ApprovedBy { get; set; }

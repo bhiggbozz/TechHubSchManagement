@@ -15,6 +15,14 @@ namespace TechHub.Core.ResponseModel
 		public Guid Id { get; set; }
 		public int RoleId { get; set; }
 		public bool FirstTimeLogin { get; set; }
+
+		/// <summary>
+		/// True when a staff member reset this account's password (student forgot
+		/// theirs) — the caller must complete the same flow as first-time login
+		/// (update-password/newUser) before a real session is issued. Token/
+		/// RefreshToken are left unset on this response, same as FirstTimeLogin.
+		/// </summary>
+		public bool PasswordResetRequired { get; set; }
 		public string Token { get; set; }
 		public int TokenExpiresIn { get; set; }
 		public string RefreshToken { get; set; }
