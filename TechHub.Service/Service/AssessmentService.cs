@@ -75,6 +75,16 @@ public class AssessmentService : IAssessmentService
         _boardRepo = boardRepo;
     }
 
+    // Row shape for GetAssessmentAnalytics' aggregate query — not a public DTO,
+    // just an intermediate mapping target for Dapper.
+    private class AggregateAttemptDto
+    {
+        public int TotalAttempts { get; set; }
+        public int TotalStudents { get; set; }
+        public decimal AverageScore { get; set; }
+        public decimal PassRate { get; set; }
+    }
+
     private static BaseResponse Ok(string message, object? data = null) => new()
     {
         ResponseCode = ResponseCode.successful,
@@ -1457,6 +1467,99 @@ public class AssessmentService : IAssessmentService
             {
                 _logger.Error(ex, "Error fetching classroom assessment performance for {ClassroomId}", classroomId);
                 return Bad("An error occurred while fetching classroom assessment performance", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
+    // ── Per-question analytics for one assessment — e.g. a WAEC-style exam
+    // whose questions span multiple subjects/topics. Same concept as
+    // QuizService.GetLessonQuizAnalytics, but a quiz's questions are all one
+    // subject/topic by construction (it's attached to a single lesson), so
+    // this carries SubjectName/TopicName per question and isn't scoped to a
+    // lesson at all — an assessment's audience comes from AssessmentAssignment,
+    // not from being embedded in a lesson.
+    public async Task<BaseResponse> GetAssessmentAnalytics(Guid assessmentId, AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                var assessment = await _assessmentQuery.Get(assessmentId);
+                if (assessment is null || assessment.SchoolId != schoolId || !assessment.IsActive)
+                    return Bad("Assessment not found", ResponseCode.NotFound);
+
+                using var conn = new SqlConnection(_connString);
+                conn.Open();
+
+                var aggSql = @"
+                    SELECT
+                        COUNT(*) AS TotalAttempts,
+                        COUNT(DISTINCT StudentId) AS TotalStudents,
+                        AVG(CAST(ISNULL(FinalScorePercent, 0) AS DECIMAL(10,2))) AS AverageScore,
+                        SUM(CASE WHEN IsPassed = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) AS PassRate
+                    FROM AssessmentAttempt
+                    WHERE AssessmentId = @AssessmentId
+                      AND SchoolId = @SchoolId
+                      AND Status IN ('Submitted','PartiallyGraded','FullyGraded')";
+
+                var agg = (await conn.QueryAsync<AggregateAttemptDto>(aggSql, new
+                {
+                    AssessmentId = assessmentId,
+                    SchoolId = schoolId
+                })).FirstOrDefault();
+
+                // Only counts answers the student actually attempted (IsSkipped = 0) —
+                // a blank/skipped answer isn't a "response" to weigh the pass rate on.
+                var questionSql = @"
+                    SELECT
+                        ans.QuestionId,
+                        q.Title              AS QuestionTitle,
+                        ans.QuestionType,
+                        ans.MaxMarks,
+                        q.SubjectId,
+                        s.Subject            AS SubjectName,
+                        q.TopicId,
+                        ISNULL(t.Name, '')   AS TopicName,
+                        AVG(CAST(ISNULL(ans.AutoMarksObtained, 0) + ISNULL(ans.ManualMarksObtained, 0) AS DECIMAL(10,2))) AS AverageMarksObtained,
+                        SUM(CASE WHEN ISNULL(ans.AutoMarksObtained, 0) + ISNULL(ans.ManualMarksObtained, 0) = ans.MaxMarks THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) AS SuccessRate,
+                        COUNT(*)             AS TotalAttempts
+                    FROM AssessmentAttemptAnswer ans
+                    JOIN AssessmentAttempt att ON att.Id = ans.AttemptId
+                    JOIN Questions q ON q.Id = ans.QuestionId
+                    JOIN Subjects s ON s.Id = q.SubjectId
+                    LEFT JOIN Topic t ON t.Id = q.TopicId
+                    WHERE att.AssessmentId = @AssessmentId
+                      AND ans.SchoolId = @SchoolId
+                      AND att.Status IN ('Submitted','PartiallyGraded','FullyGraded')
+                      AND ans.IsSkipped = 0
+                    GROUP BY ans.QuestionId, q.Title, ans.QuestionType, ans.MaxMarks, q.SubjectId, s.Subject, q.TopicId, t.Name
+                    ORDER BY SuccessRate ASC";
+
+                var questionStats = (await conn.QueryAsync<AssessmentQuestionAnalyticsDto>(questionSql, new
+                {
+                    AssessmentId = assessmentId,
+                    SchoolId = schoolId
+                })).ToList();
+
+                return Ok("Analytics retrieved", new AssessmentAnalyticsDto
+                {
+                    AssessmentId = assessmentId,
+                    Code = assessment.Code,
+                    Title = assessment.Title,
+                    TotalStudents = agg?.TotalStudents ?? 0,
+                    TotalAttempts = agg?.TotalAttempts ?? 0,
+                    AverageScore = Math.Round(agg?.AverageScore ?? 0m, 2),
+                    PassRate = Math.Round(agg?.PassRate ?? 0m, 2),
+                    PerQuestionStats = questionStats
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error fetching assessment analytics for {AssessmentId}", assessmentId);
+                return Bad("An error occurred while fetching assessment analytics", ResponseCode.ErrorOccured);
             }
         }
     }

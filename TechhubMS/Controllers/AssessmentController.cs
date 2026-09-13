@@ -162,6 +162,15 @@ public class AssessmentController : ControllerBase
 		return MapResponse(result);
 	}
 
+	[HttpGet("{assessmentId}/analytics")]
+	[Authorize]
+	public async Task<IActionResult> GetAssessmentAnalytics(Guid assessmentId)
+	{
+		var claims = GetUserClaims();
+		var result = await _assessmentService.GetAssessmentAnalytics(assessmentId, claims);
+		return MapResponse(result);
+	}
+
 	[HttpGet("result/{attemptId}")]
 	[Authorize]
 	public async Task<IActionResult> GetResult(Guid attemptId)

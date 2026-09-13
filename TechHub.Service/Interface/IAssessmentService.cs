@@ -29,4 +29,5 @@ public interface IAssessmentService
 	Task<BaseResponse> GetPendingGrading(AuthenticatedUserClaims claims);
 	Task<BaseResponse> GradeAnswer(Guid answerId, GradeAssessmentAnswerViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetClassroomAssessmentPerformance(Guid classroomId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetAssessmentAnalytics(Guid assessmentId, AuthenticatedUserClaims claims);
 }
