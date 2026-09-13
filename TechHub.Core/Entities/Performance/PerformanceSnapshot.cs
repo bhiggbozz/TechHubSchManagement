@@ -6,6 +6,16 @@ namespace TechHub.Core.Entities.Performance;
 [BsonIgnoreExtraElements]
 public class PerformanceSnapshot
 {
+    // Never set by application code (see the 8 `new PerformanceSnapshot { ... }`
+    // sites in PerformanceAggregationService.cs) — left at its default
+    // ObjectId.Empty. BsonIgnoreIfDefault means the driver omits _id entirely
+    // from the document sent to Mongo when it's still that default, instead of
+    // sending a literal all-zero _id: on UpsertSnapshotAsync's ReplaceOneAsync,
+    // that lets the server auto-generate a fresh unique _id on insert, and
+    // leaves an existing document's _id untouched (immutable) on update.
+    // Without this, every brand-new snapshot in the same aggregation run
+    // collided on the same all-zero _id after the first one.
+    [BsonIgnoreIfDefault]
     public ObjectId Id { get; set; }
 
     public string DocType { get; set; } = string.Empty;

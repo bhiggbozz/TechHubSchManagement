@@ -512,6 +512,14 @@ namespace TechHub.Service.Service
 		/// <param name="userInfo"></param>
 		/// <returns></returns>
 		#region
+		// Row shape for the live StudentClassroom count query — not a public DTO,
+		// just an intermediate mapping target for Dapper.
+		private class ClassroomStudentCountRow
+		{
+			public Guid ClassroomId { get; set; }
+			public int StudentCount { get; set; }
+		}
+
 		public async Task<ClassroomDetails> GetAllClassrooms(AuthenticatedUserClaims userInfo,int pageNumber = 1,int pageSize = 50)
 		{
 			using (LogContext.PushProperty("RequestedBy", userInfo.UserId))
@@ -560,12 +568,21 @@ namespace TechHub.Service.Service
 						.Take(pageSize)
 						.ToList();
 
+					// Classroom.NoOfStudents is a stored column that's only ever set at
+					// creation time and never updated when students actually enroll — so
+					// it drifts to stale/zero almost immediately. Count live from
+					// StudentClassroom instead of trusting that column.
+					var liveCounts = (await _studentClassQueryRespository.QueryAsync<ClassroomStudentCountRow>(
+						"SELECT ClassroomId, COUNT(*) AS StudentCount FROM StudentClassroom WHERE SchoolId = @SchoolId AND IsActive = 1 GROUP BY ClassroomId",
+						new Dictionary<string, object> { { "SchoolId", schoolId } }))
+						.ToDictionary(r => r.ClassroomId, r => r.StudentCount);
+
 					// Map to DTOs
 					var classroomDtos = paginatedClassrooms.Select(c => new ClassroomDto
 					{
 						Id = c!.Id,
 						Name = c.Name ?? string.Empty,
-						NoOfStudents = c.NoOfStudents,
+						NoOfStudents = liveCounts.GetValueOrDefault(c.Id, 0),
 						IsActive = c.IsActive,
 						CreationDate = c.CreationDate ?? string.Empty,
 						ModifiedDate = c.ModifiedDate ?? string.Empty
@@ -1462,6 +1479,12 @@ namespace TechHub.Service.Service
 					// Get active teachers assigned to this classroom
 					var teachers = await GetActiveTeachersForClassroom(classroomId);
 
+					// Classroom.NoOfStudents is a stale stored column (see GetAllClassrooms) —
+					// count live from StudentClassroom instead.
+					var studentCount = await _studentClassQueryRespository.CountAsync(
+						"SELECT COUNT(*) FROM StudentClassroom WHERE ClassroomId = @ClassroomId AND IsActive = 1",
+						new Dictionary<string, object> { { "ClassroomId", classroomId } });
+
 					_logger.Information(
 						"Classroom details retrieved successfully - ClassroomId: {ClassroomId}, Name: {ClassroomName}, TeacherCount: {TeacherCount}",
 						classroom.Id,
@@ -1473,11 +1496,11 @@ namespace TechHub.Service.Service
 						ResponseCode = ResponseCode.successful,
 						ResponseMessage = "Classroom details retrieved successfully",
 						Status = "successful",
-						Data = new 
+						Data = new
 						{
 							Id = classroom.Id,
 							Name = classroom.Name ?? string.Empty,
-							NoOfStudents = classroom.NoOfStudents,
+							NoOfStudents = studentCount,
 							IsActive = classroom.IsActive,
 							CreationDate = classroom.CreationDate ?? string.Empty,
 							ModifiedDate = classroom.ModifiedDate ?? string.Empty,
@@ -3040,6 +3063,12 @@ namespace TechHub.Service.Service
 					};
 				}
 
+				// Classroom.NoOfStudents is a stale stored column (see GetAllClassrooms) —
+				// count live from StudentClassroom instead.
+				var studentCount = await _studentClassQueryRespository.CountAsync(
+					"SELECT COUNT(*) FROM StudentClassroom WHERE ClassroomId = @ClassroomId AND IsActive = 1",
+					new Dictionary<string, object> { { "ClassroomId", classroomId } });
+
 				return new BaseResponse
 				{
 					ResponseCode = ResponseCode.successful,
@@ -3050,7 +3079,7 @@ namespace TechHub.Service.Service
 						classroom.Id,
 						classroom.Name,
 						classroom.TeacherName,
-						classroom.NoOfStudents,
+						NoOfStudents = studentCount,
 						classroom.SchoolId,
 						classroom.IsActive,
 						classroom.CreationDate,

@@ -266,3 +266,40 @@ public class ClassroomAssessmentPerformanceDto
 	public int FailedCount { get; set; }
 	public decimal PassRate { get; set; }
 }
+
+// ── Per-question analytics for a standalone Assessment (e.g. a WAEC-style exam
+// whose questions span multiple subjects/topics) — same concept as
+// QuizAnalyticsDto/QuestionAnalyticsDto (CreateQuizViewModel.cs), but a quiz's
+// questions are all one subject/topic by construction so that DTO has no need
+// for SubjectName/TopicName per row. An assessment's do, so this one carries them.
+public class AssessmentQuestionAnalyticsDto
+{
+	public Guid QuestionId { get; set; }
+	public string QuestionTitle { get; set; } = string.Empty;
+	public int QuestionType { get; set; }
+	public decimal MaxMarks { get; set; }
+	public Guid SubjectId { get; set; }
+	public string SubjectName { get; set; } = string.Empty;
+	public Guid? TopicId { get; set; }
+	public string TopicName { get; set; } = string.Empty;
+	public decimal AverageMarksObtained { get; set; }
+	// % of respondents who scored exactly MaxMarks on this question — same
+	// exact-full-marks definition as the quiz version, not a partial-credit
+	// threshold. See AverageMarksObtained alongside it for partial-credit signal.
+	public decimal SuccessRate { get; set; }
+	// Students who actually answered (IsSkipped = 0) — not the full assigned
+	// roster, and not students who left it blank.
+	public int TotalAttempts { get; set; }
+}
+
+public class AssessmentAnalyticsDto
+{
+	public Guid AssessmentId { get; set; }
+	public string Code { get; set; } = string.Empty;
+	public string Title { get; set; } = string.Empty;
+	public int TotalStudents { get; set; }
+	public int TotalAttempts { get; set; }
+	public decimal AverageScore { get; set; }
+	public decimal PassRate { get; set; }
+	public List<AssessmentQuestionAnalyticsDto> PerQuestionStats { get; set; } = new();
+}
