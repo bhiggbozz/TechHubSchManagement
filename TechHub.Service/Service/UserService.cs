@@ -4478,7 +4478,13 @@ namespace TechHub.Service.Service
 						};
 					}
 
-					// Build a query to get students in teacher's classrooms OR taking teacher's subjects
+					// Build a query to get students in teacher's classrooms OR taking teacher's subjects.
+					// "Taking teacher's subject" must cover BOTH a core/major classroom subject
+					// (StudentClassroom joined to ClassroomSubject) and an elective
+					// (StudentMinorSubject) — matching the same expansion already used
+					// everywhere else in this codebase (AssessmentService, AttendanceService,
+					// GroupService). Checking StudentMinorSubject alone missed every
+					// SubjectTeacher's core-subject students entirely.
 					var conditions = new List<string>();
 					if (classroomIdList.Any())
 					{
@@ -4488,7 +4494,8 @@ namespace TechHub.Service.Service
 					if (subjectIdList.Any())
 					{
 						var sIds = string.Join(",", subjectIdList.Select(id => $"'{id}'"));
-						conditions.Add($"(sms.SubjectId IN ({sIds}))");
+						conditions.Add($"(cs.SubjectId IN ({sIds}) AND sc.IsActive = 1 AND cs.IsActive = 1)");
+						conditions.Add($"(sms.SubjectId IN ({sIds}) AND sms.IsActive = 1)");
 					}
 
 					var whereClause = string.Join(" OR ", conditions);
@@ -4504,6 +4511,7 @@ namespace TechHub.Service.Service
 							u.CreationDate
 						FROM   Users u
 						LEFT JOIN StudentClassroom sc ON sc.StudentId = u.Id
+						LEFT JOIN ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId
 						LEFT JOIN StudentMinorSubject sms ON sms.StudentId = u.Id
 						WHERE  u.SchoolId = '{schoolId}'
 						AND    u.RoleId  = {(int)UserRole.Student}

@@ -85,6 +85,15 @@ public class AssessmentService : IAssessmentService
         public decimal PassRate { get; set; }
     }
 
+    // Row shape for GetResult's ranking query — not a public DTO, just an
+    // intermediate mapping target for Dapper.
+    private class AssessmentRankRow
+    {
+        public Guid StudentId { get; set; }
+        public int Position { get; set; }
+        public int TotalStudents { get; set; }
+    }
+
     private static BaseResponse Ok(string message, object? data = null) => new()
     {
         ResponseCode = ResponseCode.successful,
@@ -1325,6 +1334,25 @@ public class AssessmentService : IAssessmentService
                     answers = answerRows.ToList();
                 }
 
+                // Rank among every student's OFFICIAL attempt at this assessment — not
+                // the attempt being viewed here, which may itself be a non-official
+                // retake. A student's position always reflects their official record.
+                var rankSql = @"
+                    SELECT StudentId,
+                           RANK() OVER (ORDER BY FinalScorePercent DESC) AS Position,
+                           COUNT(*) OVER () AS TotalStudents
+                    FROM AssessmentAttempt
+                    WHERE AssessmentId = @AssessmentId
+                      AND SchoolId = @SchoolId
+                      AND IsOfficial = 1
+                      AND Status IN ('Submitted','PartiallyGraded','FullyGraded')
+                      AND FinalScorePercent IS NOT NULL";
+
+                var rankRows = (await conn.QueryAsync<AssessmentRankRow>(
+                    rankSql, new { AssessmentId = (Guid)attempt.AssessmentId, SchoolId = schoolId })).ToList();
+
+                var myRank = rankRows.FirstOrDefault(r => r.StudentId == studentId);
+
                 return Ok("Result retrieved", new AssessmentResultDto
                 {
                     AttemptId = attempt.Id,
@@ -1339,6 +1367,8 @@ public class AssessmentService : IAssessmentService
                     IsPassed = attempt.IsPassed,
                     Status = attempt.Status,
                     SubmittedAt = attempt.SubmittedAt?.ToString(),
+                    Position = myRank?.Position,
+                    TotalStudents = rankRows.Count,
                     Answers = answers
                 });
             }

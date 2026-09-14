@@ -214,6 +214,16 @@ public class LessonController : ControllerBase
 		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
 	}
 
+	/// <summary>Which students in this lesson's classroom have watched it, and when.</summary>
+	[HttpGet("{lessonId}/watch-status")]
+	[Authorize(Roles = "Administrator,SuperAdministrator,HeadTeacher")]
+	public async Task<IActionResult> GetLessonWatchStatus(Guid lessonId)
+	{
+		var claims = GetClaims();
+		var result = await _lessonService.GetLessonWatchStatus(lessonId, claims);
+		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
 	[HttpGet("subject/{subjectId}")]
 	[Authorize]
 	public async Task<IActionResult> GetLessonsBySubject(Guid subjectId)

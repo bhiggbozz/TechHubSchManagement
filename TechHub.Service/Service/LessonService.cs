@@ -523,6 +523,64 @@ public class LessonService : ILessonService
 		}
 	}
 
+	// ── Admin/HeadTeacher roster view: who in this lesson's classroom has
+	// watched it, and when — StudentLessonProgress already has the data
+	// (written by POST /lessons/{id}/watch), nobody had ever queried it this way. ──
+	public async Task<BaseResponse> GetLessonWatchStatus(Guid lessonId, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+				return Unauthorized();
+
+			var lesson = await _lessonQuery.Get(lessonId);
+			if (lesson is null || lesson.SchoolId != schoolId)
+				return NotFound("Lesson not found");
+
+			var classroom = await _classroomQuery.Get(lesson.ClassroomId);
+
+			var query = $@"
+                SELECT u.Id AS StudentId, (u.FirstName + ' ' + u.LastName) AS StudentName,
+                       CASE WHEN slp.Id IS NOT NULL THEN 1 ELSE 0 END AS HasWatched,
+                       slp.WatchedAt
+                FROM   StudentClassroom sc
+                JOIN   Users u ON u.Id = sc.StudentId AND u.IsActive = 1
+                LEFT JOIN StudentLessonProgress slp ON slp.LessonId = '{lessonId}'
+                       AND slp.StudentId = sc.StudentId
+                       AND slp.SchoolId = '{schoolId}'
+                WHERE  sc.ClassroomId = '{lesson.ClassroomId}'
+                AND    sc.SchoolId    = '{schoolId}'
+                AND    sc.IsActive    = 1
+                ORDER  BY HasWatched DESC, u.FirstName ASC";
+
+			var students = (await _lessonQuery.QueryAsync<StudentWatchStatusDto>(query, new Dictionary<string, object>())).ToList();
+			var watchedCount = students.Count(s => s.HasWatched);
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = "Lesson watch status retrieved successfully",
+				Status = "successful",
+				Data = new LessonWatchStatusDto
+				{
+					LessonId = lessonId,
+					Aim = lesson.Aim,
+					ClassroomId = lesson.ClassroomId,
+					ClassroomName = classroom?.Name ?? "Unknown",
+					TotalStudents = students.Count,
+					WatchedCount = watchedCount,
+					WatchedRate = students.Count > 0 ? Math.Round((decimal)watchedCount / students.Count * 100, 1) : 0,
+					Students = students
+				}
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex, "Error fetching lesson watch status - LessonId: {LessonId}", lessonId);
+			return ServerError();
+		}
+	}
+
 	// ── Get single lesson with all its media ──────────────────────────────────
 	public async Task<BaseResponse> GetLessonById(Guid lessonId, AuthenticatedUserClaims claims)
 	{
