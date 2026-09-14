@@ -1180,7 +1180,12 @@ var schoolId = ParseSchoolId(claims);
 				"s.SchoolId = @SchoolId",
 				"s.IsActive = 1",
 				"s.Status = 1",
-				"s.ClassroomId IS NOT NULL OR s.SubjectId IS NOT NULL",
+				// Must stay parenthesized as one unit — joined into the rest of this
+				// list with " AND ", and SQL's AND binds tighter than OR. Unparenthesized,
+				// the second half of this OR (SubjectId IS NOT NULL) silently drops every
+				// other condition after it — including SchoolId and Status — off the end
+				// of the OR's right-hand side, leaking other schools' open sessions in.
+				"(s.ClassroomId IS NOT NULL OR s.SubjectId IS NOT NULL)",
 				"s.StartedAt >= @From",
 				"s.StartedAt <= @To"
 			};

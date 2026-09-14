@@ -156,10 +156,20 @@ public class AssessmentResultDto
 	public decimal TotalMarks { get; set; }
 	public decimal AutoMarksObtained { get; set; }
 	public decimal ManualMarksObtained { get; set; }
-	public decimal FinalScorePercent { get; set; }
+	// Nullable to match AssessmentAttempt.FinalScorePercent — null before the
+	// attempt is graded, not 0%. Assigning a real DB null into a non-nullable
+	// decimal here previously crashed GetResult outright for any ungraded attempt.
+	public decimal? FinalScorePercent { get; set; }
 	public bool? IsPassed { get; set; }
 	public string Status { get; set; }
 	public string? SubmittedAt { get; set; }
+	// Rank among every student's OFFICIAL attempt at this assessment (RANK(), so
+	// ties share a position and the next distinct score skips ahead — e.g. two
+	// students tied for 2nd are both "2nd", the next best is "4th"). Null when
+	// the caller has no completed official attempt yet, so can't be ranked —
+	// not the same as being ranked last.
+	public int? Position { get; set; }
+	public int TotalStudents { get; set; }
 	public List<AssessmentAnswerResultDto> Answers { get; set; } = new();
 }
 

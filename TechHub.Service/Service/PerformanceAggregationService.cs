@@ -270,6 +270,17 @@ public class PerformanceAggregationService : IPerformanceAggregationService
                       AND aa2.TargetType = 'Classroom'
                       AND aa2.IsActive = 1
                 ) cl
+                -- aas and aq must be independent sibling APPLYs off a guaranteed
+                -- single-row anchor (base), not aas as the base FROM table with aq
+                -- nested under it — when an assessment is assigned by Classroom (or
+                -- Student), the TargetType='Subject' assignment aas looks for simply
+                -- doesn't exist, and with aas as the base table that starved the
+                -- entire FROM chain (including aq's question-based fallback) down to
+                -- zero rows, so SubjectId/TopicId always came out NULL even though
+                -- aq alone would have resolved them fine from the assessment's own
+                -- questions. This is why classroom-assigned assessments (the majority
+                -- — Classroom/Student assignments outnumber Subject ones) were
+                -- silently missing from every classroom/subject performance snapshot.
                 OUTER APPLY (
                     SELECT TOP 1
                         COALESCE(aas.TargetId, aq.SubjectId) AS SubjectId,
@@ -278,20 +289,21 @@ public class PerformanceAggregationService : IPerformanceAggregationService
                         t.Name AS TopicName,
                         aq.SubTopicId,
                         st.Name AS SubTopicName
-                    FROM (
+                    FROM (SELECT aa.AssessmentId AS AssessmentId) base
+                    OUTER APPLY (
                         SELECT TOP 1 TargetId
                         FROM AssessmentAssignment aa_subj WITH(NOLOCK)
-                        WHERE aa_subj.AssessmentId = aa.AssessmentId
+                        WHERE aa_subj.AssessmentId = base.AssessmentId
                           AND aa_subj.TargetType = 'Subject'
                           AND aa_subj.IsActive = 1
                     ) aas
-                    LEFT JOIN Subjects s_subj WITH(NOLOCK) ON s_subj.Id = aas.TargetId
                     OUTER APPLY (
                         SELECT TOP 1 q.SubjectId, q.TopicId, aq_q.SubTopicId
                         FROM AssessmentQuestion aq_q WITH(NOLOCK)
                         JOIN Questions q WITH(NOLOCK) ON q.Id = aq_q.QuestionId
-                        WHERE aq_q.AssessmentId = aa.AssessmentId AND aq_q.IsActive = 1
+                        WHERE aq_q.AssessmentId = base.AssessmentId AND aq_q.IsActive = 1
                     ) aq
+                    LEFT JOIN Subjects s_subj WITH(NOLOCK) ON s_subj.Id = aas.TargetId
                     LEFT JOIN Subjects s_q WITH(NOLOCK) ON s_q.Id = aq.SubjectId
                     LEFT JOIN Topic t WITH(NOLOCK) ON t.Id = aq.TopicId
                     LEFT JOIN SubTopic st WITH(NOLOCK) ON st.Id = aq.SubTopicId

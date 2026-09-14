@@ -22,5 +22,6 @@ public interface ILessonService
     Task<BaseResponse> GetLessonsByClassroomForAdmin(Guid classroomId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetLessonsBySubject(Guid subjectId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetSubjectLessonCounts(Guid classroomId, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetLessonWatchStatus(Guid lessonId, AuthenticatedUserClaims claims);
 }
 
