@@ -47,5 +47,11 @@ public class SubmitQuestionJobViewModel
 
 	// "image" | "pdf" (lowercase, as returned by Cloudinary upload)
 	public string? FileType { get; set; }
+
+	// Opt-in for the hidden admin-only tier. Only takes effect when the
+	// submitter is an Administrator/SuperAdministrator (enforced server-side
+	// in QuestionJobService.SubmitJob) — a non-admin sending true is silently
+	// downgraded to false, never trusted as-is.
+	public bool IsAdminOnly { get; set; }
 }
 

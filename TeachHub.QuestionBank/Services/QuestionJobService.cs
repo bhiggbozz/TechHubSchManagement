@@ -21,6 +21,7 @@ using TechHub.Core.Model;
 using TechHub.QuestionBank.Core.DTO;
 using TechHub.QuestionBank.Core.Entities;
 using TechHub.QuestionBank.Core.Enums;
+using TechHub.QuestionBank.Core.Helpers;
 using TechHub.QuestionBank.Core.Model;
 using TechHub.QuestionBank.Core.Response;
 using TechHub.QuestionBank.Core.ViewModel;
@@ -216,6 +217,10 @@ public class QuestionJobService : IQuestionJobService
 				// ── Create QuestionJob record ─────────────────────────────────────
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 
+				// A non-admin can never make their own extraction admin-only,
+				// regardless of what the request body says.
+				var isAdminOnly = model.IsAdminOnly && ClaimsHelper.IsAdmin(userClaims.Role);
+
 				var job = new QuestionJob
 				{
 					Id = jobId,
@@ -235,7 +240,8 @@ public class QuestionJobService : IQuestionJobService
 					CompletedAt = "",
 					FailureReason = "",
 					ProcessedAt = null,
-					ProcessedBy = null
+					ProcessedBy = null,
+					IsAdminOnly = isAdminOnly
 				};
 
 				await _jobCommandRepo.Create(job, DatabaseTarget.QuestionBank);
@@ -1009,8 +1015,9 @@ public class QuestionJobService : IQuestionJobService
 							IsDeleted = false,
 							CreationDate = now,
 							ModifiedDate = now,
-							QuestionNumber = extracted.QuestionNumber, 
-							IsPartial = extracted.IsPartial
+							QuestionNumber = extracted.QuestionNumber,
+							IsPartial = extracted.IsPartial,
+							IsAdminOnly = job.IsAdminOnly
 						};
 
 						await _questionCommandRepo.Create(saveScope.Transaction, saveScope.Connection, question, DatabaseTarget.QuestionBank);

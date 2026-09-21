@@ -248,6 +248,10 @@ public class QuestionService : IQuestionService
 				var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 				var questionId = Guid.NewGuid();
 
+				// A non-admin can never make their own question admin-only,
+				// regardless of what the request body says.
+				var isAdminOnly = model.IsAdminOnly && ClaimsHelper.IsAdmin(userClaims.Role);
+
 				var question = new Questions
 				{
 					Id = questionId,
@@ -285,7 +289,8 @@ public class QuestionService : IQuestionService
 					CreationDate = now,
 					ModifiedDate = now,
 					QuestionNumber = 0,
-					IsPartial = false
+					IsPartial = false,
+					IsAdminOnly = isAdminOnly
 				};
 
 
@@ -699,7 +704,9 @@ public class QuestionService : IQuestionService
 
 				var isAdmin = userRole == UserRole.Administrator || userRole == UserRole.SuperAdministrator;
 
-				if (!isAdmin && question.CreatedBy != userId)
+				// A non-admin can never touch an admin-only question, even in
+				// the (shouldn't-happen-by-design) case CreatedBy matched them.
+				if (!isAdmin && (question.CreatedBy != userId || question.IsAdminOnly))
 				{
 					_logger.Warning("Ownership check failed - " + "QuestionId: {QuestionId}, " + "RequestedBy: {UserId}", model.QuestionId, userId);
 
@@ -999,6 +1006,24 @@ public class QuestionService : IQuestionService
 					};
 				}
 
+				// Admin-only question, non-admin caller — same vague "not found"
+				// as the cross-tenant case above, so a teacher probing a GUID
+				// can't distinguish "wrong school" from "exists but hidden".
+				if (question.IsAdminOnly && !isAdmin)
+				{
+					_logger.Warning(
+						"Non-admin attempted to access admin-only question - " +
+						"QuestionId: {QuestionId}, UserId: {UserId}",
+						questionId, userClaims.UserId);
+
+					return new QuestionDetailResponse
+					{
+						ResponseCode = ResponseCode.NotFound,
+						ResponseMessage = "Question not found",
+						Status = "failed"
+					};
+				}
+
 
 				var options = new List<QuestionOptions>();
 
@@ -1136,7 +1161,8 @@ public class QuestionService : IQuestionService
 						WHERE q.SchoolId    = '{schoolId}'
 						AND   q.SubjectId   = '{subjectId}'
 						AND   q.IsDeleted   = 0
-						AND   q.IsActive    = 1";
+						AND   q.IsActive    = 1"
+					+ ClaimsHelper.BuildAdminOnlyFilter(userClaims.Role, filter.AdminOnly);
 
 				if (!filter.IncludePendingReview)
 				{
@@ -1369,7 +1395,7 @@ public class QuestionService : IQuestionService
 					};
 				}
 
-				if (!isAdmin && question.CreatedBy != userId)
+				if (!isAdmin && (question.CreatedBy != userId || question.IsAdminOnly))
 				{
 					_logger.Warning( "Ownership check failed - " +"QuestionId: {QuestionId}, " + "RequestedBy: {UserId}",questionId, userId);
 
@@ -1574,7 +1600,7 @@ public class QuestionService : IQuestionService
 					};
 				}
 
-				if (!isAdmin && question.CreatedBy != userId)
+				if (!isAdmin && (question.CreatedBy != userId || question.IsAdminOnly))
 				{
 					_logger.Warning("Ownership check failed - " +"QuestionId: {QuestionId}, " +"RequestedBy: {UserId}",questionId,userId);
 
@@ -1954,7 +1980,7 @@ public class QuestionService : IQuestionService
 				// STEP 4: OWNERSHIP CHECK
 				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-				if (!isAdmin && question.CreatedBy != userId)
+				if (!isAdmin && (question.CreatedBy != userId || question.IsAdminOnly))
 				{
 					_logger.Warning(
 						"Ownership check failed - " +
@@ -2213,7 +2239,7 @@ public class QuestionService : IQuestionService
 				// STEP 4: OWNERSHIP CHECK
 				// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-				if (!isAdmin && question.CreatedBy != userId)
+				if (!isAdmin && (question.CreatedBy != userId || question.IsAdminOnly))
 				{
 					_logger.Warning(
 						"🚫 Ownership check failed - " +
@@ -2768,7 +2794,8 @@ public class QuestionService : IQuestionService
 					WHERE  q.SchoolId    = '{schoolId}'
 					AND    q.ClassroomId = '{classroomId}'
 					AND    q.IsDeleted   = 0
-					AND    q.IsActive    = 1";
+					AND    q.IsActive    = 1"
+					+ ClaimsHelper.BuildAdminOnlyFilter(userClaims.Role, filter.AdminOnly);
 
 				// ── Optional filters ─────────────────────────────────────
 				if (filter.SubjectId.HasValue && filter.SubjectId != Guid.Empty)
@@ -2930,12 +2957,16 @@ public class QuestionService : IQuestionService
 					};
 
 				// ── Base filter shared across all queries ────────────────
+				// No adminOnly toggle here (no filter object on this summary
+				// route) — teachers get the shared-only count, admins get the
+				// combined (shared + admin-only) count.
 				var baseFilter = $@"
 					WHERE  q.SchoolId    = '{schoolId}'
 					AND    q.ClassroomId = '{classroomId}'
 					AND    q.SubjectId   = '{subjectId}'
 					AND    q.IsDeleted   = 0
-					AND    q.IsActive    = 1";
+					AND    q.IsActive    = 1"
+					+ ClaimsHelper.BuildAdminOnlyFilter(userClaims.Role, null);
 
 				// ── Total count for this subject in this classroom ───────
 				var totalCount = await _questionQueryRepo.CountAsync($"SELECT COUNT(*) FROM Questions q {baseFilter}",DatabaseTarget.QuestionBank);
@@ -3174,7 +3205,8 @@ public class QuestionService : IQuestionService
 					WHERE  q.SchoolId  = '{schoolId}'
 					AND    q.IsDeleted = 0
 					AND    q.IsActive  = 1
-					AND    {baseWhere}";
+					AND    {baseWhere}"
+					+ ClaimsHelper.BuildAdminOnlyFilter(userClaims.Role, filter.AdminOnly);
 
 				// Optional filters
 				if (filter.QuestionType.HasValue)
@@ -3332,7 +3364,8 @@ public class QuestionService : IQuestionService
 					AND    q.SubjectId   = '{subjectId}'
 					AND    q.TopicId     = '{topicId}'
 					AND    q.IsDeleted   = 0
-					AND    q.IsActive    = 1";
+					AND    q.IsActive    = 1"
+					+ ClaimsHelper.BuildAdminOnlyFilter(userClaims.Role, filter.AdminOnly);
 
 				// ── Optional filters ───────────────────────────────────────
 				if (filter.SubTopicIds?.Any() == true)

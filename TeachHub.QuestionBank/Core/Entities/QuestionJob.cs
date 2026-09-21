@@ -58,4 +58,10 @@ public class QuestionJob
 	public string? ProcessedAt { get; set; }
 	public Guid? ProcessedBy { get; set; }
 	public string? FileType { get; internal set; }
+
+	// Captured once at submit time from the caller's role (only ever true for
+	// an Administrator/SuperAdministrator, enforced server-side in SubmitJob).
+	// The background worker reads this to tag the Questions rows it creates
+	// for this job as admin-only.
+	public bool IsAdminOnly { get; set; }
 }

@@ -36,4 +36,21 @@ public static class ClaimsHelper
 		var parsed = ParseRole(role);
 		return parsed == UserRole.SuperAdministrator;
 	}
+
+	/// <summary>
+	/// SQL fragment gating visibility of the admin-only question tier.
+	/// Teachers can never see IsAdminOnly rows, no matter what they request —
+	/// admins see everything by default and can optionally narrow to just
+	/// their own admin-only stash. Callers append this fragment onto a WHERE
+	/// clause that already filters by SchoolId/etc (alias defaults to "q").
+	/// </summary>
+	public static string BuildAdminOnlyFilter(string role, bool? adminOnlyRequested, string alias = "q")
+	{
+		if (!IsAdmin(role))
+			return $" AND {alias}.IsAdminOnly = 0";
+
+		return adminOnlyRequested == true
+			? $" AND {alias}.IsAdminOnly = 1"
+			: string.Empty;
+	}
 }

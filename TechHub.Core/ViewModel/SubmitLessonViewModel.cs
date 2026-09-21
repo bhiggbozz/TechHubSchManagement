@@ -28,7 +28,6 @@ public class SubmitLessonViewModel
 	public string SubTopic { get; set; }
 
 	[Required]
-	[StringLength(500)]
 	public string Aim { get; set; }
 
 	[Required]

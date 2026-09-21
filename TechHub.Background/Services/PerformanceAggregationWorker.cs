@@ -73,9 +73,11 @@ public class PerformanceAggregationWorker : BackgroundService
         await using var scope = _scopeFactory.CreateAsyncScope();
         var aggregationService = scope.ServiceProvider
             .GetRequiredService<IPerformanceAggregationService>();
+        var tracker = scope.ServiceProvider
+            .GetRequiredService<IBackgroundJobRunTracker>();
 
         _logger.Information("Performance aggregation cycle starting");
-        await aggregationService.AggregateAllSchoolsAsync();
+        await tracker.TrackAsync("PerformanceAggregation", aggregationService.AggregateAllSchoolsAsync);
         _logger.Information("Performance aggregation cycle complete");
     }
 }

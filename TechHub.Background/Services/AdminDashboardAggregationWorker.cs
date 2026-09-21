@@ -47,9 +47,10 @@ public class AdminDashboardAggregationWorker : BackgroundService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<IAdminDashboardService>();
+        var tracker = scope.ServiceProvider.GetRequiredService<IBackgroundJobRunTracker>();
 
         _logger.Information("Admin dashboard aggregation cycle starting");
-        await service.AggregateAllSchoolsAsync();
+        await tracker.TrackAsync("AdminDashboardAggregation", service.AggregateAllSchoolsAsync);
         _logger.Information("Admin dashboard aggregation cycle complete");
     }
 }

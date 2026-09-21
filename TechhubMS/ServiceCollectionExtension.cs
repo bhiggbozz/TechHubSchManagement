@@ -69,6 +69,7 @@ namespace TechhubMS
 			services.AddScoped<ILessonService, LessonService>();
 			services.AddScoped<IGroupService, GroupService>();
 			services.AddScoped<INotificationService, NotificationService>();
+			services.AddScoped<IBackgroundJobRunTracker, BackgroundJobRunTracker>();
 			services.AddScoped<IPerformanceAggregationService, PerformanceAggregationService>();
 			services.AddScoped<IPerformanceDashboardService, PerformanceDashboardService>();
 			services.AddScoped<IPerformanceIncrementalService, PerformanceIncrementalService>();
