@@ -274,20 +274,23 @@ var schoolId = ParseSchoolId(claims);
 					if (session.TeacherId != teacherId && !IsAdminRole(claims?.Role))
 						return Fail(ResponseCode.Forbidden, "You can only end your own sessions");
 
-					if (session.Status != (int)AttendanceSessionStatus.Open)
-						return Fail(ResponseCode.BadRequest, "This session is already closed");
+					// Scans now auto-close a session as they're recorded, so by the time a
+					// teacher explicitly clicks "End Session" it's very likely already closed.
+					// Treat that as a harmless no-op rather than an error.
+					if (session.Status == (int)AttendanceSessionStatus.Open)
+					{
+						var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+						await _sessionCommandRepo.UpdateTableColumnById(
+							new Dictionary<string, object>
+							{
+								{ "Status", (int)AttendanceSessionStatus.Closed },
+								{ "EndedAt", now },
+								{ "ModifiedDate", now }
+							},
+							new KeyValuePair<string, object>("Id", session.Id));
 
-					var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
-					await _sessionCommandRepo.UpdateTableColumnById(
-						new Dictionary<string, object>
-						{
-							{ "Status", (int)AttendanceSessionStatus.Closed },
-							{ "EndedAt", now },
-							{ "ModifiedDate", now }
-						},
-						new KeyValuePair<string, object>("Id", session.Id));
-
-					_logger.Information("Attendance: session {SessionId} closed by teacher {TeacherId}", sessionId, teacherId);
+						_logger.Information("Attendance: session {SessionId} closed by teacher {TeacherId}", sessionId, teacherId);
+					}
 
 					return new BaseResponse
 					{
@@ -325,8 +328,9 @@ var schoolId = ParseSchoolId(claims);
 					if (session is null || session.SchoolId != schoolId || !session.IsActive)
 						return Fail(ResponseCode.NotFound, "Session not found");
 
-					if (session.Status != (int)AttendanceSessionStatus.Open)
-						return Fail(ResponseCode.BadRequest, "This session is not open for scanning");
+					// A session no longer has to be Open to accept scans: the first scan
+					// auto-closes it (see below), and later scans into the same session
+					// must keep working rather than being rejected as "not open".
 
 					if (session.TeacherId != callerId && !IsAdminRole(claims?.Role))
 						return Fail(ResponseCode.Forbidden, "You are not authorized to scan for this session");
@@ -337,6 +341,21 @@ var schoolId = ParseSchoolId(claims);
 
 					if (!await IsStudentEligibleForSessionAsync(student.Id, session, schoolId))
 						return Fail(ResponseCode.BadRequest, "Student is not part of this class or subject");
+
+					if (session.Status == (int)AttendanceSessionStatus.Open)
+					{
+						var closedAt = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+						await _sessionCommandRepo.UpdateTableColumnById(
+							new Dictionary<string, object>
+							{
+								{ "Status", (int)AttendanceSessionStatus.Closed },
+								{ "EndedAt", closedAt },
+								{ "ModifiedDate", closedAt }
+							},
+							new KeyValuePair<string, object>("Id", session.Id));
+
+						_logger.Information("Attendance: session {SessionId} auto-closed on scan by {CallerId}", sessionId, callerId);
+					}
 
 					var existing = await _recordQueryRepo.SelectByColumns(
 						"SELECT * FROM AttendanceRecord WHERE SessionId = @SessionId AND StudentId = @StudentId",
@@ -1110,7 +1129,12 @@ var schoolId = ParseSchoolId(claims);
 				"s.SchoolId = @SchoolId",
 				"s.ClassroomId IS NOT NULL",
 				"s.IsActive = 1",
-				"s.Status = 1",
+				// A session counts if it was explicitly Closed, OR it has at least one
+				// real scan already — a teacher forgetting to click "End Session"
+				// shouldn't make otherwise-real attendance data invisible everywhere
+				// except the raw history endpoint (which never filtered by Status at
+				// all, and was the one place this data actually showed up).
+				"(s.Status = 1 OR EXISTS (SELECT 1 FROM AttendanceRecord ar_chk WHERE ar_chk.SessionId = s.Id AND ar_chk.SchoolId = @SchoolId AND ar_chk.IsActive = 1))",
 				"s.StartedAt >= @From",
 				"s.StartedAt <= @To"
 			};
@@ -1141,7 +1165,8 @@ var schoolId = ParseSchoolId(claims);
 				"s.SchoolId = @SchoolId",
 				"s.SubjectId IS NOT NULL",
 				"s.IsActive = 1",
-				"s.Status = 1",
+				// See BuildClassAnalyticsSql above for why this is OR'd with a scan check.
+				"(s.Status = 1 OR EXISTS (SELECT 1 FROM AttendanceRecord ar_chk WHERE ar_chk.SessionId = s.Id AND ar_chk.SchoolId = @SchoolId AND ar_chk.IsActive = 1))",
 				"s.StartedAt >= @From",
 				"s.StartedAt <= @To"
 			};
@@ -1179,7 +1204,8 @@ var schoolId = ParseSchoolId(claims);
 			{
 				"s.SchoolId = @SchoolId",
 				"s.IsActive = 1",
-				"s.Status = 1",
+				// See BuildClassAnalyticsSql above for why this is OR'd with a scan check.
+				"(s.Status = 1 OR EXISTS (SELECT 1 FROM AttendanceRecord ar_chk WHERE ar_chk.SessionId = s.Id AND ar_chk.SchoolId = @SchoolId AND ar_chk.IsActive = 1))",
 				// Must stay parenthesized as one unit — joined into the rest of this
 				// list with " AND ", and SQL's AND binds tighter than OR. Unparenthesized,
 				// the second half of this OR (SubjectId IS NOT NULL) silently drops every
@@ -1275,7 +1301,7 @@ var schoolId = ParseSchoolId(claims);
 						JOIN dbo.StudentClassroom sc ON sc.ClassroomId = s.ClassroomId AND sc.SchoolId = @SchoolId AND sc.IsActive = 1
 						JOIN dbo.Users u ON u.Id = sc.StudentId AND u.IsActive = 1
 						LEFT JOIN dbo.AttendanceRecord r ON r.SessionId = s.Id AND r.StudentId = u.Id AND r.SchoolId = @SchoolId AND r.IsPresent = 1 AND r.IsActive = 1
-						WHERE s.SchoolId = @SchoolId AND s.AttendanceType = 0 AND s.ClassroomId = @ClassroomId AND s.IsActive = 1 AND s.Status = 1
+						WHERE s.SchoolId = @SchoolId AND s.AttendanceType = 0 AND s.ClassroomId = @ClassroomId AND s.IsActive = 1 AND (s.Status = 1 OR EXISTS (SELECT 1 FROM dbo.AttendanceRecord ar_chk WHERE ar_chk.SessionId = s.Id AND ar_chk.SchoolId = @SchoolId AND ar_chk.IsActive = 1))
 							AND s.StartedAt >= @From AND s.StartedAt <= @To
 						GROUP BY u.Id, u.FirstName, u.LastName
 						HAVING SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END) > 0
@@ -1303,7 +1329,7 @@ var schoolId = ParseSchoolId(claims);
 						) roster
 						JOIN dbo.Users u ON u.Id = roster.StudentId AND u.IsActive = 1
 						LEFT JOIN dbo.AttendanceRecord r ON r.SessionId = s.Id AND r.StudentId = u.Id AND r.SchoolId = @SchoolId AND r.IsPresent = 1 AND r.IsActive = 1
-						WHERE s.SchoolId = @SchoolId AND s.AttendanceType IN (1,2) AND s.SubjectId = @SubjectId AND s.IsActive = 1 AND s.Status = 1
+						WHERE s.SchoolId = @SchoolId AND s.AttendanceType IN (1,2) AND s.SubjectId = @SubjectId AND s.IsActive = 1 AND (s.Status = 1 OR EXISTS (SELECT 1 FROM dbo.AttendanceRecord ar_chk WHERE ar_chk.SessionId = s.Id AND ar_chk.SchoolId = @SchoolId AND ar_chk.IsActive = 1))
 							AND s.StartedAt >= @From AND s.StartedAt <= @To
 						GROUP BY u.Id, u.FirstName, u.LastName
 						HAVING SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END) > 0
@@ -1323,7 +1349,7 @@ var schoolId = ParseSchoolId(claims);
 							ISNULL(SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END), 0) AS AbsentCount
 						FROM dbo.AttendanceSession s
 						LEFT JOIN dbo.AttendanceRecord r ON r.SessionId = s.Id AND r.StudentId = @StudentId AND r.SchoolId = @SchoolId AND r.IsPresent = 1 AND r.IsActive = 1
-						WHERE s.SchoolId = @SchoolId AND s.AttendanceType = 0 AND s.ClassroomId = @ClassroomId AND s.IsActive = 1 AND s.Status = 1
+						WHERE s.SchoolId = @SchoolId AND s.AttendanceType = 0 AND s.ClassroomId = @ClassroomId AND s.IsActive = 1 AND (s.Status = 1 OR EXISTS (SELECT 1 FROM dbo.AttendanceRecord ar_chk WHERE ar_chk.SessionId = s.Id AND ar_chk.SchoolId = @SchoolId AND ar_chk.IsActive = 1))
 							AND s.StartedAt >= @From AND s.StartedAt <= @To
 							AND EXISTS (SELECT 1 FROM dbo.StudentClassroom sc WHERE sc.ClassroomId = s.ClassroomId AND sc.StudentId = @StudentId AND sc.SchoolId = @SchoolId AND sc.IsActive = 1)";
 				return (sql, parameters);
@@ -1336,7 +1362,7 @@ var schoolId = ParseSchoolId(claims);
 							ISNULL(SUM(CASE WHEN r.Id IS NULL THEN 1 ELSE 0 END), 0) AS AbsentCount
 						FROM dbo.AttendanceSession s
 						LEFT JOIN dbo.AttendanceRecord r ON r.SessionId = s.Id AND r.StudentId = @StudentId AND r.SchoolId = @SchoolId AND r.IsPresent = 1 AND r.IsActive = 1
-						WHERE s.SchoolId = @SchoolId AND s.AttendanceType IN (1,2) AND s.SubjectId = @SubjectId AND s.IsActive = 1 AND s.Status = 1
+						WHERE s.SchoolId = @SchoolId AND s.AttendanceType IN (1,2) AND s.SubjectId = @SubjectId AND s.IsActive = 1 AND (s.Status = 1 OR EXISTS (SELECT 1 FROM dbo.AttendanceRecord ar_chk WHERE ar_chk.SessionId = s.Id AND ar_chk.SchoolId = @SchoolId AND ar_chk.IsActive = 1))
 							AND s.StartedAt >= @From AND s.StartedAt <= @To
 							AND (
 								EXISTS (SELECT 1 FROM dbo.StudentClassroom sc JOIN dbo.ClassroomSubject cs ON cs.ClassroomId = sc.ClassroomId

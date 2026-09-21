@@ -110,6 +110,31 @@ public class AssessmentService : IAssessmentService
         Data = null
     };
 
+    // Matches TeachHub.QuestionBank's ClaimsHelper.IsAdmin (Administrator or
+    // SuperAdministrator only) — kept as a local copy since TechHub.Service
+    // doesn't reference the QuestionBank project.
+    private static bool IsAdminRole(string? role) =>
+        (role?.Replace(" ", "") ?? string.Empty).Equals("Administrator", StringComparison.OrdinalIgnoreCase)
+        || (role?.Replace(" ", "") ?? string.Empty).Equals("SuperAdministrator", StringComparison.OrdinalIgnoreCase);
+
+    // Blocks a non-admin from attaching a hidden admin-only question to their
+    // own quiz/assessment even if they somehow obtained its QuestionId — the
+    // browse/listing filter alone is cosmetic without this server-side check.
+    private async Task<bool> ContainsAdminOnlyQuestionsAsync(IEnumerable<Guid> questionIds)
+    {
+        var ids = questionIds.Distinct().ToList();
+        if (!ids.Any()) return false;
+
+        using var conn = new SqlConnection(_connString);
+        await conn.OpenAsync();
+
+        var hiddenCount = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM Questions WHERE Id IN @Ids AND IsAdminOnly = 1",
+            new { Ids = ids });
+
+        return hiddenCount > 0;
+    }
+
     private static decimal ResolveDifficultyMarks(AssessmentConfig? config, int difficultyLevel, decimal fallbackMarks)
     {
         if (config is null) return fallbackMarks;
@@ -171,6 +196,12 @@ public class AssessmentService : IAssessmentService
 						return Bad("Could not generate unique assessment code. Please try again.");
 				}
 				while (true);
+
+                if (model.QuestionIds.Any() && !IsAdminRole(claims.Role)
+                    && await ContainsAdminOnlyQuestionsAsync(model.QuestionIds))
+                {
+                    return Bad("One or more selected questions are unavailable");
+                }
 
                 using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
                 try

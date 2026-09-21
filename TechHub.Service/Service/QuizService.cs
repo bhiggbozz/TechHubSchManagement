@@ -77,6 +77,28 @@ public class QuizService : IQuizService
 		_logger = logger;
 	}
 
+	// Matches TeachHub.QuestionBank's ClaimsHelper.IsAdmin (Administrator or
+	// SuperAdministrator only) — kept as a local copy since TechHub.Service
+	// doesn't reference the QuestionBank project.
+	private static bool IsAdminRole(string? role) =>
+		(role?.Replace(" ", "") ?? string.Empty).Equals("Administrator", StringComparison.OrdinalIgnoreCase)
+		|| (role?.Replace(" ", "") ?? string.Empty).Equals("SuperAdministrator", StringComparison.OrdinalIgnoreCase);
+
+	// Blocks a non-admin from attaching a hidden admin-only question to their
+	// own quiz/assessment even if they somehow obtained its QuestionId — the
+	// browse/listing filter alone is cosmetic without this server-side check.
+	private async Task<bool> ContainsAdminOnlyQuestionsAsync(IEnumerable<Guid> questionIds)
+	{
+		var ids = questionIds.Distinct().ToList();
+		if (!ids.Any()) return false;
+
+		var hiddenRows = await _quizQuery.QueryAsync<Guid>(
+			"SELECT Id FROM Questions WHERE Id IN @Ids AND IsAdminOnly = 1",
+			new Dictionary<string, object> { { "Ids", ids } });
+
+		return hiddenRows.Any();
+	}
+
 	// ═════════════════════════════════════════════════════════════════════════
 	// EXISTING METHODS (unchanged)
 	// ═════════════════════════════════════════════════════════════════════════
@@ -130,6 +152,14 @@ public class QuizService : IQuizService
 					};
 
 			} while (true);
+
+			if (!IsAdminRole(claims.Role) && await ContainsAdminOnlyQuestionsAsync(model.QuestionIds))
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = "One or more selected questions are unavailable",
+					Status = "failed"
+				};
 
 			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
 			var quizId = Guid.NewGuid();
@@ -373,6 +403,14 @@ public class QuizService : IQuizService
 					};
 
 			} while (true);
+
+			if (!IsAdminRole(claims.Role) && await ContainsAdminOnlyQuestionsAsync(model.QuestionIds))
+				return new BaseResponse
+				{
+					ResponseCode = ResponseCode.BadRequest,
+					ResponseMessage = "One or more selected questions are unavailable",
+					Status = "failed"
+				};
 
 			// ── Insert Quiz + QuizQuestions ──────────────────────────────
 			var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");

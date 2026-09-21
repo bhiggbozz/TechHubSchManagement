@@ -164,6 +164,13 @@ public class Questions
 	public bool IsActive { get; set; } = true;
 	public bool IsDeleted { get; set; }
 
+	// Extracted/created by an Administrator or SuperAdministrator and never
+	// visible to teachers (browse, single-fetch, or quiz/assessment question
+	// picking) — an independent, un-exhausted pool admins can use to verify
+	// students actually understand a topic rather than having memorized every
+	// question the teacher's own bank has ever contained.
+	public bool IsAdminOnly { get; set; }
+
 	// ─────────────────────────────────────────────────────
 	// AUDIT
 	// ─────────────────────────────────────────────────────

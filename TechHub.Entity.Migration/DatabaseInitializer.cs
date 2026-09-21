@@ -333,7 +333,38 @@ public class DatabaseInitializer : IHostedService
                 // never noticed stays in their list until read — it doesn't
                 // vanish just because they logged in again.
                 "IF OBJECT_ID('Notification', 'U') IS NULL CREATE TABLE Notification (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), SchoolId UNIQUEIDENTIFIER NOT NULL, RecipientId UNIQUEIDENTIFIER NOT NULL, Type NVARCHAR(50) NOT NULL, Title NVARCHAR(200) NOT NULL, Body NVARCHAR(1000) NOT NULL, EntityType NVARCHAR(50) NULL, EntityId UNIQUEIDENTIFIER NULL, IsDelivered BIT NOT NULL DEFAULT 0, IsRead BIT NOT NULL DEFAULT 0, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), ReadAt DATETIME2 NULL, CONSTRAINT PK_Notification PRIMARY KEY (Id))",
-                "IF OBJECT_ID('Notification', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Notification_Recipient' AND object_id = OBJECT_ID('Notification')) CREATE INDEX IX_Notification_Recipient ON Notification(RecipientId, CreatedAt DESC)"
+                "IF OBJECT_ID('Notification', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Notification_Recipient' AND object_id = OBJECT_ID('Notification')) CREATE INDEX IX_Notification_Recipient ON Notification(RecipientId, CreatedAt DESC)",
+
+                // Run history for the periodic 24h IHostedService workers (performance
+                // aggregation, admin dashboard aggregation) — NOT Hangfire, which
+                // already tracks its own jobs in its own SQL schema. Answers "did
+                // today's aggregation actually run, when, how long did it take, did
+                // it fail" without having to grep raw log files for it.
+                "IF OBJECT_ID('BackgroundJobRun', 'U') IS NULL CREATE TABLE BackgroundJobRun (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), JobName NVARCHAR(100) NOT NULL, StartedAt DATETIME2 NOT NULL, CompletedAt DATETIME2 NULL, DurationMs BIGINT NULL, Status NVARCHAR(20) NOT NULL DEFAULT 'Running', ErrorMessage NVARCHAR(MAX) NULL, Details NVARCHAR(MAX) NULL, CONSTRAINT PK_BackgroundJobRun PRIMARY KEY (Id))",
+                "IF OBJECT_ID('BackgroundJobRun', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_BackgroundJobRun_JobName' AND object_id = OBJECT_ID('BackgroundJobRun')) CREATE INDEX IX_BackgroundJobRun_JobName ON BackgroundJobRun(JobName, StartedAt DESC)",
+
+                // LessonContent.Aim was nvarchar(500) — SubmitLessonViewModel's
+                // matching [StringLength(500)] has been removed so teachers can write
+                // longer lesson aims/objectives, but the column itself must be widened
+                // too or a longer submission just fails at the DB with a truncation
+                // error instead of the old 400. max_length = -1 means already MAX.
+                @"IF EXISTS (SELECT 1 FROM sys.columns c JOIN sys.types t ON c.user_type_id = t.user_type_id
+                             WHERE c.object_id = OBJECT_ID('LessonContent') AND c.name = 'Aim' AND c.max_length <> -1)
+                  ALTER TABLE LessonContent ALTER COLUMN Aim NVARCHAR(MAX) NOT NULL",
+
+                // Admin-only question bank tier: a question tagged IsAdminOnly=1 is
+                // extracted/created by an Administrator/SuperAdministrator and is never
+                // visible to teachers (in browse/listing, single-fetch, or when picking
+                // QuestionIds for a quiz/assessment) — lets admins independently verify
+                // whether students truly understand a topic, using questions the
+                // teacher's own (exhaustible) pool never exposed. Defaults to 0 so every
+                // existing row and every ordinary teacher-created row is unaffected.
+                "IF OBJECT_ID('Questions', 'U') IS NOT NULL AND COL_LENGTH('Questions', 'IsAdminOnly') IS NULL ALTER TABLE Questions ADD IsAdminOnly BIT NOT NULL DEFAULT 0",
+
+                // Captured once at job-submit time (from the submitter's role) so the
+                // background AI-extraction worker knows whether to tag the Questions
+                // rows it inserts for this job as admin-only.
+                "IF OBJECT_ID('QuestionJob', 'U') IS NOT NULL AND COL_LENGTH('QuestionJob', 'IsAdminOnly') IS NULL ALTER TABLE QuestionJob ADD IsAdminOnly BIT NOT NULL DEFAULT 0"
             };
 
             await using var connection = new SqlConnection(connStr);
@@ -398,6 +429,39 @@ public class DatabaseInitializer : IHostedService
             catch (Exception ex)
             {
                 Log.Warning(ex, "DatabaseInitializer: Question title backfill failed (non-fatal).");
+            }
+
+            // One-time backfill: every AttendanceSession ever created was left
+            // Status=0 (Open) forever because no teacher ever called the explicit
+            // "end session" endpoint (scanning now auto-closes sessions going
+            // forward, but this recovers historical sessions that already have
+            // real scans). Self-limiting: once no Open session has a scan, this
+            // UPDATE affects 0 rows on every subsequent startup.
+            try
+            {
+                await using var backfillCmd = new SqlCommand(
+                    @"UPDATE s SET Status = 1, EndedAt = latestRecord.LastAttendedAt, ModifiedDate = CONVERT(VARCHAR, GETUTCDATE(), 120)
+                      FROM AttendanceSession s
+                      CROSS APPLY (
+                          SELECT MAX(AttendedAt) AS LastAttendedAt
+                          FROM AttendanceRecord
+                          WHERE SessionId = s.Id AND IsActive = 1
+                      ) latestRecord
+                      WHERE s.Status = 0 AND latestRecord.LastAttendedAt IS NOT NULL",
+                    connection);
+                backfillCmd.CommandTimeout = 120;
+                var rowsClosed = await backfillCmd.ExecuteNonQueryAsync(cancellationToken);
+
+                if (rowsClosed > 0)
+                {
+                    Log.Information(
+                        "DatabaseInitializer: Backfilled Status=Closed for {Count} stuck-open AttendanceSession row(s) with real scans",
+                        rowsClosed);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DatabaseInitializer: AttendanceSession backfill failed (non-fatal).");
             }
         }
         catch (Exception ex)

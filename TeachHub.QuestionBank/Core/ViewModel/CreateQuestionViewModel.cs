@@ -35,6 +35,12 @@ public class CreateQuestionViewModel
 	public string? AIConfidenceScore { get; set; }
 	public string? ImageUrl { get; set; }
 	public string? ImagePublicId { get; set; }
+
+	// Opt-in for the hidden admin-only tier. Only takes effect when the
+	// caller is an Administrator/SuperAdministrator (enforced server-side in
+	// QuestionService.CreateQuestion) — a non-admin sending true is silently
+	// downgraded to false, never trusted as-is.
+	public bool IsAdminOnly { get; set; }
 }
 
 public class CreateOptionViewModel
@@ -118,6 +124,12 @@ public class QuestionFilterViewModel
 	// Filter by scan session
 	// Used on review screen to show all
 	// questions from one upload together
+
+	// Admin-only tier toggle. Ignored entirely for non-admin callers (they
+	// never see IsAdminOnly=1 rows regardless of this value). For admins:
+	// null/false = everything combined (shared + admin-only), true = only
+	// their admin-only stash. See ClaimsHelper.BuildAdminOnlyFilter.
+	public bool? AdminOnly { get; set; }
 }
 
 // Sync ViewModels

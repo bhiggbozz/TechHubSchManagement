@@ -20,5 +20,11 @@ public class QuestionFilterViewModelV2
 	public string? SearchText { get; set; }
 	public bool IncludePendingReview { get; set; } = false;
 	public Guid? ScanSessionId { get; set; }
+
+	// Admin-only tier toggle. Ignored entirely for non-admin callers (they
+	// never see IsAdminOnly=1 rows regardless of this value). For admins:
+	// null/false = everything combined (shared + admin-only), true = only
+	// their admin-only stash. See ClaimsHelper.BuildAdminOnlyFilter.
+	public bool? AdminOnly { get; set; }
 }
 

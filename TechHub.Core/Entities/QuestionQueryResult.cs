@@ -69,6 +69,7 @@ public class QuestionQueryResult
 	public int Status { get; set; }
 	public bool IsActive { get; set; }
 	public bool IsDeleted { get; set; }
+	public bool IsAdminOnly { get; set; }
 
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	// REVIEW TRACKING
