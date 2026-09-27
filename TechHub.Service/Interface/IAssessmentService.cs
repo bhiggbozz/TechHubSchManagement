@@ -30,4 +30,9 @@ public interface IAssessmentService
 	Task<BaseResponse> GradeAnswer(Guid answerId, GradeAssessmentAnswerViewModel model, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetClassroomAssessmentPerformance(Guid classroomId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetAssessmentAnalytics(Guid assessmentId, AuthenticatedUserClaims claims);
+
+	// Parent quick-assessment (additive — does not touch any existing method above)
+	Task<BaseResponse> GetTaughtTopicsForChildAsync(Guid studentId, DateTime fromDate, DateTime toDate, AuthenticatedUserClaims claims);
+	Task<BaseResponse> GetQuestionAvailabilityAsync(Guid studentId, List<Guid> topicIds, AuthenticatedUserClaims claims);
+	Task<BaseResponse> CreateQuickAssessmentForChildAsync(Guid studentId, ParentQuickAssessmentViewModel model, AuthenticatedUserClaims claims);
 }

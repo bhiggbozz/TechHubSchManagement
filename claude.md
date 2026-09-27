@@ -200,12 +200,14 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 
 | Table | Key Columns |
 |-------|-------------|
-| `Questions` | Id, Title, TextContent, QuestionType (Objective\|Theory\|TrueFalse), DifficultyLevel, MarksAllocation, SchoolId, SubjectId, TopicId, Status |
+| `Questions` | Id, Title, TextContent, QuestionType (Objective\|Theory\|TrueFalse), DifficultyLevel, MarksAllocation, SchoolId, SubjectId, TopicId, Status, **IsAdminOnly** |
 | `QuestionOptions` | Id, QuestionId, OptionLabel, OptionText, IsCorrect |
 | `QuestionImage` | Id, QuestionId, ImageUrl |
 | `ScanSession` | Id, TeacherId, SchoolId, Status |
 | `ScanToken` | Id, TeacherId, Remaining, ExpiresAt |
-| `QuestionJob` | Id, Status (Pending\|Processing\|Completed\|Failed), AIConfidenceScore |
+| `QuestionJob` | Id, Status (Pending\|Processing\|Completed\|Failed), AIConfidenceScore, **IsAdminOnly** |
+
+**Admin-only question tier**: `Questions.IsAdminOnly` (default `0`) marks a question extracted/created by an Administrator/SuperAdministrator as invisible to teachers — enforced server-side in every browse/single-fetch/update/publish/confirm/reject path in `QuestionService.cs`, not just in the UI. Set via an opt-in `IsAdminOnly` flag on `CreateQuestionViewModel`/`SubmitQuestionJobViewModel`, silently forced back to `false` if the caller isn't an admin (`ClaimsHelper.IsAdmin`). Every plural browse/listing endpoint accepts an optional `adminOnly` (bool) filter (`QuestionFilterViewModel`/`QuestionFilterViewModelV2`): teachers can never see `IsAdminOnly=1` rows regardless of this value; admins see everything combined by default, or only their admin-only stash when `adminOnly=true`. `AssessmentService.CreateAssessment` and `QuizService.CreateQuiz`/`CreateAssessment` reject (400) any non-admin submission whose `QuestionIds` include a hidden question — closes the gap where hiding a question from browse screens alone wouldn't stop a teacher who obtained its GUID by other means from still attaching it to their own quiz/assessment.
 
 ### Board Session (MongoDB)
 

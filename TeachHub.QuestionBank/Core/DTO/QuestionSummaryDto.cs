@@ -36,5 +36,6 @@ public class QuestionSummaryDto
 	public string? ClassName { get; set; }
 	public string? BoardSessionId { get; set; }  // ← add
     public string? SnapshotUrl { get; set; }
+    public bool IsAdminOnly { get; set; }
 }
 

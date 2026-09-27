@@ -1799,6 +1799,7 @@ public class QuestionService : IQuestionService
 			CanDelete = isOwner || isAdmin,
 			CanPublish = isOwner
 				&& question.Status == QuestionStatus.Draft,
+			IsAdminOnly = question.IsAdminOnly,
 
 			// Audit
 			//CreatedByName = question.CreatedByName,
@@ -1838,7 +1839,8 @@ public class QuestionService : IQuestionService
 			IsScanned = question.IsScanned,
 			Status = (int)question.Status,
 			StatusName = question.Status.ToString(),
-			CreationDate = question.CreationDate
+			CreationDate = question.CreationDate,
+			IsAdminOnly = question.IsAdminOnly
 		};
 		#endregion
 	}
@@ -3533,7 +3535,8 @@ public class QuestionService : IQuestionService
 			IsScanned = question.IsScanned,
 			Status = (int)question.Status,
 			StatusName = question.Status.ToString(),
-			CreationDate = question.CreationDate
+			CreationDate = question.CreationDate,
+			IsAdminOnly = question.IsAdminOnly
 		};
 	}
 

@@ -148,6 +148,275 @@ public class AssessmentService : IAssessmentService
         };
     }
 
+    // ═════════════════════════════════════════════════════════════════════
+    // PARENT QUICK-ASSESSMENT — additive only. Nothing above this block or
+    // below the closing marker is touched; these methods call the existing
+    // CreateAssessment/AssignAssessment as-is, the same way any other caller
+    // would, rather than reimplementing their internals.
+    // ═════════════════════════════════════════════════════════════════════
+
+    // Local copy of the same StudentParent ownership check AttendanceService
+    // already has privately — intentionally not extracted/shared, so this
+    // change never touches AttendanceService.cs.
+    private async Task<bool> IsParentOfChildAsync(Guid parentId, Guid studentId, Guid schoolId)
+    {
+        using var conn = new SqlConnection(_connString);
+        await conn.OpenAsync();
+
+        var count = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM StudentParent WHERE ParentId = @ParentId AND StudentId = @StudentId AND SchoolId = @SchoolId AND IsActive = 1",
+            new { ParentId = parentId, StudentId = studentId, SchoolId = schoolId });
+
+        return count > 0;
+    }
+
+    private async Task<Guid?> ResolveChildClassroomIdAsync(Guid studentId)
+    {
+        using var conn = new SqlConnection(_connString);
+        await conn.OpenAsync();
+
+        return await conn.ExecuteScalarAsync<Guid?>(
+            "SELECT TOP 1 ClassroomId FROM StudentClassroom WHERE StudentId = @StudentId AND IsActive = 1",
+            new { StudentId = studentId });
+    }
+
+    private static string DifficultyLevelName(int level) => level switch
+    {
+        1 => "Easy",
+        2 => "Medium",
+        3 => "Hard",
+        4 => "ExamLevel",
+        _ => "Unknown"
+    };
+
+    private class TaughtTopicRow
+    {
+        public Guid TopicId { get; set; }
+        public string TopicName { get; set; } = string.Empty;
+        public Guid SubjectId { get; set; }
+        public string SubjectName { get; set; } = string.Empty;
+        public DateTime LastTaughtDate { get; set; }
+        public int TimesTaught { get; set; }
+    }
+
+    public async Task<BaseResponse> GetTaughtTopicsForChildAsync(Guid studentId, DateTime fromDate, DateTime toDate, AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.UserId, out var parentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                if (!await IsParentOfChildAsync(parentId, studentId, schoolId))
+                    return Bad("You can only view topics for your own children", ResponseCode.Forbidden);
+
+                var classroomId = await ResolveChildClassroomIdAsync(studentId);
+                if (classroomId is null)
+                    return Ok("No topics found", new { Topics = new List<TaughtTopicRow>() });
+
+                using var conn = new SqlConnection(_connString);
+                await conn.OpenAsync();
+
+                var topics = await conn.QueryAsync<TaughtTopicRow>(@"
+                    SELECT t.Id AS TopicId, t.Name AS TopicName, cp.SubjectId, s.Subject AS SubjectName,
+                           MAX(cp.ScheduledDate) AS LastTaughtDate, COUNT(*) AS TimesTaught
+                    FROM ClassPreparation cp
+                    JOIN Topic t ON t.Id = cp.TopicId
+                    JOIN Subjects s ON s.Id = cp.SubjectId
+                    WHERE cp.SchoolId = @SchoolId AND cp.ClassroomId = @ClassroomId
+                      AND cp.Status = 2 /* Approved */ AND cp.IsActive = 1
+                      AND cp.ScheduledDate BETWEEN @FromDate AND @ToDate
+                    GROUP BY t.Id, t.Name, cp.SubjectId, s.Subject
+                    ORDER BY MAX(cp.ScheduledDate) DESC",
+                    new { SchoolId = schoolId, ClassroomId = classroomId, FromDate = fromDate, ToDate = toDate });
+
+                return Ok("Taught topics retrieved", new { Topics = topics.ToList() });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error getting taught topics for child - StudentId: {StudentId}", studentId);
+                return Bad("An error occurred while retrieving taught topics", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
+    public async Task<BaseResponse> GetQuestionAvailabilityAsync(Guid studentId, List<Guid> topicIds, AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (!Guid.TryParse(claims.UserId, out var parentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                if (!await IsParentOfChildAsync(parentId, studentId, schoolId))
+                    return Bad("You can only view questions for your own children", ResponseCode.Forbidden);
+
+                if (topicIds is null || !topicIds.Any())
+                    return Bad("At least one topic is required");
+
+                var classroomId = await ResolveChildClassroomIdAsync(studentId);
+                if (classroomId is null)
+                    return Bad("Child is not assigned to a classroom", ResponseCode.NotFound);
+
+                using var conn = new SqlConnection(_connString);
+                await conn.OpenAsync();
+
+                var counts = (await conn.QueryAsync<(int DifficultyLevel, int AvailableCount)>(@"
+                    SELECT DifficultyLevel, COUNT(*) AS AvailableCount
+                    FROM Questions
+                    WHERE SchoolId = @SchoolId AND ClassroomId = @ClassroomId AND TopicId IN @TopicIds
+                      AND Status = 1 /* Published */ AND IsDeleted = 0 AND IsActive = 1 AND IsAdminOnly = 0
+                    GROUP BY DifficultyLevel",
+                    new { SchoolId = schoolId, ClassroomId = classroomId, TopicIds = topicIds.Distinct().ToList() }))
+                    .ToDictionary(r => r.DifficultyLevel, r => r.AvailableCount);
+
+                var byDifficulty = new[] { 1, 2, 3, 4 }.Select(level => new
+                {
+                    DifficultyLevel = level,
+                    DifficultyLevelName = DifficultyLevelName(level),
+                    AvailableCount = counts.TryGetValue(level, out var c) ? c : 0
+                }).ToList();
+
+                return Ok("Question availability retrieved", new { ByDifficulty = byDifficulty });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error getting question availability for child - StudentId: {StudentId}", studentId);
+                return Bad("An error occurred while retrieving question availability", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
+    public async Task<BaseResponse> CreateQuickAssessmentForChildAsync(Guid studentId, ParentQuickAssessmentViewModel model, AuthenticatedUserClaims claims)
+    {
+        using (LogContext.PushProperty("RequestedBy", claims.UserId))
+        {
+            try
+            {
+                if (model is null)
+                    return Bad("Request data is required");
+
+                if (!Guid.TryParse(claims.UserId, out var parentId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+                if (!Guid.TryParse(claims.SchoolId, out var schoolId))
+                    return Bad("Invalid authentication", ResponseCode.Unauthorized);
+
+                if (!await IsParentOfChildAsync(parentId, studentId, schoolId))
+                    return Bad("You can only set assessments for your own children", ResponseCode.Forbidden);
+
+                if (model.TopicIds is null || !model.TopicIds.Any())
+                    return Bad("At least one topic is required");
+                if (model.DifficultySelections is null || !model.DifficultySelections.Any())
+                    return Bad("At least one difficulty selection is required");
+
+                var classroomId = await ResolveChildClassroomIdAsync(studentId);
+                if (classroomId is null)
+                    return Bad("Child is not assigned to a classroom", ResponseCode.NotFound);
+
+                var topicIds = model.TopicIds.Distinct().ToList();
+
+                using var conn = new SqlConnection(_connString);
+                await conn.OpenAsync();
+
+                var selectedQuestionIds = new List<Guid>();
+                var byDifficultyResult = new List<object>();
+
+                foreach (var selection in model.DifficultySelections)
+                {
+                    var requested = selection.Count;
+                    var picked = requested > 0
+                        ? (await conn.QueryAsync<Guid>(@"
+                            SELECT TOP (@Count) Id FROM Questions
+                            WHERE SchoolId = @SchoolId AND ClassroomId = @ClassroomId AND TopicId IN @TopicIds
+                              AND DifficultyLevel = @Difficulty AND Status = 1 /* Published */
+                              AND IsDeleted = 0 AND IsActive = 1 AND IsAdminOnly = 0
+                            ORDER BY NEWID()",
+                            new { Count = requested, SchoolId = schoolId, ClassroomId = classroomId, TopicIds = topicIds, Difficulty = selection.DifficultyLevel }))
+                            .ToList()
+                        : new List<Guid>();
+
+                    selectedQuestionIds.AddRange(picked);
+                    byDifficultyResult.Add(new
+                    {
+                        selection.DifficultyLevel,
+                        DifficultyLevelName = DifficultyLevelName(selection.DifficultyLevel),
+                        Requested = requested,
+                        Included = picked.Count
+                    });
+                }
+
+                if (!selectedQuestionIds.Any())
+                    return Bad("No questions available for the selected topics/difficulties");
+
+                var title = model.Title;
+                if (string.IsNullOrWhiteSpace(title))
+                {
+                    var childFirstName = await conn.ExecuteScalarAsync<string?>(
+                        "SELECT TOP 1 FirstName FROM Users WHERE Id = @StudentId", new { StudentId = studentId });
+                    var topicNames = (await conn.QueryAsync<string>(
+                        "SELECT Name FROM Topic WHERE Id IN @TopicIds", new { TopicIds = topicIds })).ToList();
+
+                    title = $"{childFirstName ?? "Student"} — {string.Join(", ", topicNames)}".Trim();
+                }
+
+                var createModel = new CreateAssessmentViewModel
+                {
+                    Title = title,
+                    Description = null,
+                    TimeLimitMinutes = model.TimeLimitMinutes ?? 20,
+                    ShuffleQuestions = true,
+                    PassMarkPercent = model.PassMarkPercent ?? 50,
+                    ShowResultImmediately = model.ShowResultImmediately ?? true,
+                    ShowCorrectAnswers = model.ShowCorrectAnswers ?? true,
+                    ExpiresAt = model.ExpiresAt,
+                    QuestionIds = selectedQuestionIds
+                };
+
+                var createResult = await CreateAssessment(createModel, claims);
+                if (createResult.ResponseCode != ResponseCode.successful)
+                    return createResult;
+
+                dynamic createdData = createResult.Data!;
+                Guid assessmentId = createdData.AssessmentId;
+                string code = createdData.Code;
+
+                var assignResult = await AssignAssessment(new AssignAssessmentViewModel
+                {
+                    AssessmentId = assessmentId,
+                    TargetType = "Student",
+                    TargetIds = new List<Guid> { studentId }
+                }, claims);
+
+                if (assignResult.ResponseCode != ResponseCode.successful)
+                    return assignResult;
+
+                return Ok("Assessment created and assigned successfully", new
+                {
+                    AssessmentId = assessmentId,
+                    Code = code,
+                    Title = title,
+                    TotalQuestions = selectedQuestionIds.Count,
+                    ByDifficulty = byDifficultyResult
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Error creating quick assessment for child - StudentId: {StudentId}", studentId);
+                return Bad("An error occurred while creating the assessment", ResponseCode.ErrorOccured);
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // END PARENT QUICK-ASSESSMENT
+    // ═════════════════════════════════════════════════════════════════════
+
     public async Task<BaseResponse> CreateAssessment(CreateAssessmentViewModel model, AuthenticatedUserClaims claims)
     {
         using (LogContext.PushProperty("RequestedBy", claims.UserId))

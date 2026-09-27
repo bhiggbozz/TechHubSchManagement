@@ -96,6 +96,7 @@ public class QuestionDto
 	public bool CanEdit { get; set; }
 	public bool CanDelete { get; set; }
 	public bool CanPublish { get; set; }
+	public bool IsAdminOnly { get; set; }
 
 	// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	// AUDIT
