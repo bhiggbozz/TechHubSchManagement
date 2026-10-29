@@ -49,6 +49,11 @@ try
 
 	var builder = WebApplication.CreateBuilder(args);
 
+	// GenerateAssemblyInfo is off in this project, so the UserSecretsId attribute is never
+	// emitted and the default secrets provider finds nothing — register it by id instead.
+	if (builder.Environment.IsDevelopment())
+		builder.Configuration.AddUserSecrets("803fb1d4-4972-4fcc-9c84-a09fd0487722");
+
 	builder.Services.Configure<HostOptions>(options =>
 	{
 		options.BackgroundServiceExceptionBehavior =

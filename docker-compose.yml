@@ -15,6 +15,7 @@ services:
       # ── Database (remote SQL Server, e.g. site4now) ─────────────────────────
       ConnectionStrings__DbConnectionString: ${DB_CONNECTION_STRING}
       ConnectionStrings__QuestionBankConnection: ${QUESTION_BANK_CONNECTION_STRING}
+      ConnectionStrings__LogsDb: ${DB_CONNECTION_STRING}
 
       # ── MongoDB (Atlas) ─────────────────────────────────────────────────────
       MongoDB__ConnectionString: ${MONGO_CONNECTION_STRING}
@@ -75,5 +76,32 @@ services:
     volumes:
       - techhub-logs:/app/logs
 
+  # ── Self-hosted SQL Server (copy of site4now; API still points at site4now) ─
+  # Published on public IPv4, but ONLY reachable from IPs in the VPS allowlist
+  # /etc/techhub/sql-allowlist (enforced in iptables DOCKER-USER by the
+  # techhub-sql-firewall systemd unit — Docker-published ports bypass ufw).
+  # On a host without that unit, change this back to 127.0.0.1:1433:1433.
+  # The API container can reach it at techhub-sql:1433.
+  techhub-sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: techhub-sql
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Express
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env}
+      MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-2048}
+    ports:
+      - "0.0.0.0:1433:1433"
+    volumes:
+      - techhub-sql-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
 volumes:
   techhub-logs:
+  techhub-sql-data:

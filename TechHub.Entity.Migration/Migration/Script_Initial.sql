@@ -1636,6 +1636,115 @@ BEGIN
 END;
 
 -- ========================================================================
+-- School calendar: AcademicSession -> AcademicTerm
+-- The admin defines the academic year and its terms (names/count are free
+-- text: "First Term", "Autumn Term", "Semester 1" ...). Dates are SQL DATE,
+-- inclusive on both ends, so there is no time/timezone component. Term
+-- Sequence is derived from start-date order by the service, never supplied
+-- by the client. Calendar entries (assessment weeks, exams, holidays ...)
+-- are a later addition that will reference these two tables.
+-- ========================================================================
+
+IF OBJECT_ID('AcademicSession', 'U') IS NULL
+BEGIN
+    CREATE TABLE AcademicSession (
+        Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        SchoolId     UNIQUEIDENTIFIER NOT NULL,
+        Name         NVARCHAR(100)    NOT NULL,
+        StartDate    DATE             NOT NULL,
+        EndDate      DATE             NOT NULL,
+        CreatedBy    UNIQUEIDENTIFIER NOT NULL,
+        CreatedAt    DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        ModifiedAt   DATETIME2        NULL,
+        IsActive     BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_AcademicSession PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_AcademicSession_School_Dates
+        ON AcademicSession(SchoolId, StartDate, EndDate) WHERE IsActive = 1;
+END;
+
+IF OBJECT_ID('AcademicTerm', 'U') IS NULL
+BEGIN
+    CREATE TABLE AcademicTerm (
+        Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        SessionId    UNIQUEIDENTIFIER NOT NULL,
+        SchoolId     UNIQUEIDENTIFIER NOT NULL,
+        Name         NVARCHAR(100)    NOT NULL,
+        Sequence     INT              NOT NULL DEFAULT 0,
+        StartDate    DATE             NOT NULL,
+        EndDate      DATE             NOT NULL,
+        CreatedBy    UNIQUEIDENTIFIER NOT NULL,
+        CreatedAt    DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        IsActive     BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_AcademicTerm PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_AcademicTerm_SessionId
+        ON AcademicTerm(SessionId, Sequence) WHERE IsActive = 1;
+END;
+
+-- Calendar entries: assessment/quiz periods, mid-term, exams, holidays.
+-- Scope is School | Classroom | Subject. SupersededLevel = highest authority level
+-- (1 teacher, 2 head teacher, 3 admin) that has changed someone else's entry; anyone
+-- below that level can no longer edit it.
+IF OBJECT_ID('CalendarEntry', 'U') IS NULL
+BEGIN
+    CREATE TABLE CalendarEntry (
+        Id              UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        SchoolId        UNIQUEIDENTIFIER NOT NULL,
+        SessionId       UNIQUEIDENTIFIER NOT NULL,
+        TermId          UNIQUEIDENTIFIER NULL,
+        Title           NVARCHAR(100)    NOT NULL,
+        EntryType       NVARCHAR(30)     NOT NULL,
+        Description     NVARCHAR(500)    NULL,
+        StartDate       DATE             NOT NULL,
+        EndDate         DATE             NOT NULL,
+        ScopeType       NVARCHAR(20)     NOT NULL,
+        ClassroomId     UNIQUEIDENTIFIER NULL,
+        SubjectId       UNIQUEIDENTIFIER NULL,
+        CreatedBy       UNIQUEIDENTIFIER NOT NULL,
+        CreatedByRole   NVARCHAR(30)     NOT NULL,
+        CreatedAt       DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        ModifiedAt      DATETIME2        NULL,
+        SupersededLevel INT              NOT NULL DEFAULT 0,
+        IsActive        BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_CalendarEntry PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_CalendarEntry_School_Dates
+        ON CalendarEntry(SchoolId, StartDate, EndDate) WHERE IsActive = 1;
+END;
+
+-- Before/after record of every edit or delete of a calendar entry. OnOthersEntry = 1 when
+-- the person changing it is not its creator — those are the changes shown to viewers.
+IF OBJECT_ID('CalendarEntryChange', 'U') IS NULL
+BEGIN
+    CREATE TABLE CalendarEntryChange (
+        Id             UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        EntryId        UNIQUEIDENTIFIER NOT NULL,
+        SchoolId       UNIQUEIDENTIFIER NOT NULL,
+        ChangedBy      UNIQUEIDENTIFIER NOT NULL,
+        ChangedByRole  NVARCHAR(30)     NOT NULL,
+        ChangedAt      DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        Action         NVARCHAR(20)     NOT NULL,
+        OldTitle       NVARCHAR(100)    NULL,
+        NewTitle       NVARCHAR(100)    NULL,
+        OldEntryType   NVARCHAR(30)     NULL,
+        NewEntryType   NVARCHAR(30)     NULL,
+        OldStartDate   DATE             NULL,
+        OldEndDate     DATE             NULL,
+        NewStartDate   DATE             NULL,
+        NewEndDate     DATE             NULL,
+        OnOthersEntry  BIT              NOT NULL DEFAULT 0,
+        CONSTRAINT PK_CalendarEntryChange PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_CalendarEntryChange_EntryId
+        ON CalendarEntryChange(EntryId, ChangedAt);
+END;
+
+-- ========================================================================
 -- ApplicationLogs (database error logging)
 -- Fire-and-forget, channel-based error logging written by IDbLogger /
 -- GlobalExceptionMiddleware, flushed in batches by the LogWriterService

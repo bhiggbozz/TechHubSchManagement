@@ -19,6 +19,7 @@ public enum AdminPermission
 	ManageLessons = 32,          // 0100000
 	ManageSubjects = 64,         // 1000000
 	CreateUsers = 128,           // ✅ NEW: 10000000 - Can create users
+	ManageCalendar = 256,        // 100000000 - Can set up academic sessions, terms and the school calendar
 
 	BasicAdmin = CreateLessons | ViewReports,  // = 18 (2 + 16)
 	FullAdmin = ApproveClasses | CreateLessons | ManageTeachers | ManageStudents | ViewReports | ManageLessons | ManageSubjects  // = 127

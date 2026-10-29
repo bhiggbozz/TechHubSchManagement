@@ -63,6 +63,8 @@ namespace TechhubMS
 			services.AddScoped<IMediaService, MediaService>();
 			services.AddScoped<IClassPreparationService, ClassPreparationService>();
 			services.AddScoped<IAttendanceService, AttendanceService>();
+			services.AddScoped<ICalendarService, CalendarService>();
+			services.AddScoped<ICalendarEntryService, CalendarEntryService>();
 			services.AddScoped<IBackgroundJobService, BackgroundJobService>();
 
 			services.AddScoped<IEmailService, EmailService>();

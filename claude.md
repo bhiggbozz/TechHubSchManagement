@@ -97,6 +97,7 @@ TechhubMS.sln
 | ManageLessons | 32 | Manage lessons (also gates teacher-to-classroom assignment) |
 | ManageSubjects | 64 | Manage subjects |
 | CreateUsers | 128 | Create user accounts |
+| ManageCalendar | 256 | Set up academic sessions, terms and the school calendar. **Not** part of `FullAdmin` (127), and provisioning inserts the literal `127` in `UserService`, `SchoolService` and TechSchPlatform — a newly provisioned Administrator does not have it until a SuperAdmin grants it via `AssignPermissions` (SuperAdmin always bypasses) |
 
 Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin = 127`
 
@@ -164,6 +165,22 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | `PlatformUser` | Id, FirstName, LastName, Email, Username, PasswordHash (SHA256), Role (PlatformSuperAdmin\|PlatformAdmin\|PlatformUser), IsActive, IsDeleted, CreatedBy |
 | `PlatformLoginHistory` | Id, PlatformUserId, Username, Email, Role, PasswordFailed, DeviceType, DeviceIp, CreatedAt |
 | `PlatformAuditLog` | Id, ActorId, ActorName, ActorRole, Action, EntityType, EntityId, Description, DetailsJson, CreatedAt |
+
+### School Calendar
+
+A **view-only** calendar — it does not restrict when quizzes/assessments can be created. Each school defines its own structure: names and number of terms are free text (no First/Second/Third assumption), so British (Autumn/Spring/Summer) and semester schools use the same tables. Dates are SQL `DATE`, inclusive on both ends, returned as `yyyy-MM-dd` strings. "Current" is derived from today's date (school-local, WAT) — there is no `IsCurrent` flag. Calendar entries (assessment weeks, exams, pop quizzes, holidays; admin vs head-teacher tier) are the next step and will reference these tables.
+
+| Table | Key Columns |
+|-------|-------------|
+| `AcademicSession` | Id, SchoolId, Name ("2026/2027"), StartDate, EndDate, CreatedBy, ModifiedAt, IsActive. Sessions of one school cannot overlap; max 550 days |
+| `AcademicTerm` | Id, SessionId, SchoolId, Name, Sequence, StartDate, EndDate, CreatedBy, IsActive. 1–6 per session, inside the session, no overlaps, unique names (case-insensitive). `Sequence` is always derived from start-date order, never client-supplied |
+
+**Calendar entries** (assessment weeks, quiz periods, mid-term, exams, holidays) sit on top of those tables. Still view-only — an entry never blocks or schedules a real quiz/assessment. Authority is a three-level ladder: **3 admin** (SuperAdministrator, or Administrator with `ManageCalendar`), **2 head teacher**, **1 class/subject teacher**. Each level creates entries only in its own scope (admin: school-wide/any class/any subject; head teacher: classes they are assigned to in `ClassroomTeacher`; class teacher: their assigned class; subject teacher: subjects in `TeacherSubject`). A higher level may edit the level below (head teacher → teachers' entries in the head teacher's own classes; admin → anything); nobody can edit at or above their own level. Every such edit is logged with before/after values and shown to viewers ("Updated by head teacher X on …: dates changed from … to …"). Once a higher level has changed an entry, the creator can no longer edit or delete it (`SupersededLevel`). Teachers' entries must sit inside a single term; only admins add holidays or entries in a break between terms.
+
+| Table | Key Columns |
+|-------|-------------|
+| `CalendarEntry` | Id, SchoolId, SessionId, TermId (null for an admin entry in a break), Title, EntryType (Assessment\|Quiz\|MidTerm\|Exam\|Holiday\|Other), Description, StartDate, EndDate (inclusive `DATE`), ScopeType (School\|Classroom\|Subject), ClassroomId, SubjectId, CreatedBy, CreatedByRole, SupersededLevel (0–3), IsActive |
+| `CalendarEntryChange` | Id, EntryId, SchoolId, ChangedBy, ChangedByRole, ChangedAt, Action (Updated\|Deleted), Old/New Title, EntryType, StartDate, EndDate, OnOthersEntry. Viewers are shown the latest `OnOthersEntry` change |
 
 ### Lesson Planning
 
@@ -381,6 +398,25 @@ Pre-defined combos: `BasicAdmin = 18` (CreateLessons\|ViewReports), `FullAdmin =
 | GET | `/api/Attendance/student/me/qrcode` / `student/me/qr-token` | Student | Own QR |
 | GET | `/api/Attendance/student/{studentId}/stats` | Teacher roles + **Parent** | Filterable (Daily/Weekly/Monthly/MonthlyRange × Class/Subject) attendance stats. Parent must own the student via an active `StudentParent` link, checked via `IsParentOfStudentAsync` — else 403 |
 | GET | `/api/Attendance/student/{studentId}/attendance` | JWT (staff, self, or **Parent** for own children) | Student attendance history — same Parent-ownership check as `/stats` |
+
+### Calendar
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/api/Calendar/templates` | JWT | Preset starting points (ThreeTerm, British, TwoSemester, Custom) — term names only, the admin supplies every date |
+| GET | `/api/Calendar/sessions` | JWT (any role, incl. Parent/Student) | School's sessions newest first, each with terms and Upcoming/Current/Past status |
+| GET | `/api/Calendar/sessions/current` | JWT | Session containing today, else next upcoming, else latest past; `data: null` if none set up yet |
+| GET | `/api/Calendar/sessions/{id}` | JWT | One session with terms (404 for another school's) |
+| POST | `/api/Calendar/sessions` | Admin w/ `ManageCalendar`, or SuperAdmin | `{ name, startDate, endDate, template?, terms[{name,startDate,endDate}] }` — session + terms in one transaction |
+| PUT / DELETE | `/api/Calendar/sessions/{id}` | same | Edit dates/name (existing terms must still fit) / soft-delete with its terms |
+| POST | `/api/Calendar/sessions/{id}/terms` | same | Add a term |
+| PUT / DELETE | `/api/Calendar/terms/{id}` | same | Edit / soft-delete a term (the last term of a session can't be deleted) |
+| GET | `/api/Calendar/entry-types` | JWT | Fixed list of entry types (Assessment, Quiz, MidTerm, Exam, Holiday, Other) |
+| GET | `/api/Calendar/entries` | JWT (any role) | `?from&to&classroomId&subjectId&studentId`. Admin/Administrator/HeadTeacher see everything; ClassTeacher sees school-wide + own classes; SubjectTeacher school-wide + own subjects; Student school-wide + own class/subjects; Parent the same for their children (`studentId` must be their own child, else 403). Each entry carries `canEdit` and `lastChange` (previous vs new values + a ready-made `message`) |
+| GET | `/api/Calendar/entries/{id}` | JWT | One entry with full `changes` history (404 if outside the caller's view) |
+| POST | `/api/Calendar/entries` | Admin w/ `ManageCalendar`, SuperAdmin, HeadTeacher, ClassTeacher, SubjectTeacher | `{ title, entryType, description?, startDate, endDate, scopeType, classroomId?, subjectId? }` — scope rules per level above; dates must be inside an academic session |
+| PUT | `/api/Calendar/entries/{id}` | same | `{ title, entryType, description?, startDate, endDate }` (scope fixed at creation). Editing someone else's entry records the change and locks out the levels below |
+| DELETE | `/api/Calendar/entries/{id}` | same | Soft delete; same edit rights; logged in `CalendarEntryChange` |
 
 ### Question Bank
 
