@@ -77,6 +77,12 @@ namespace TechhubMS.Controllers
 		public async Task<IActionResult> DeleteSession(Guid sessionId)
 			=> Map(await _calendarService.DeleteSessionAsync(sessionId, User.GetAuthenticatedUserClaims()));
 
+		/// <summary>Stamps existing quizzes/assessments/attempts (created before the calendar) with their session and term. Re-runnable.</summary>
+		[HttpPost("backfill-records")]
+		[Authorize(Roles = AdminRoles)]
+		public async Task<IActionResult> BackfillRecords()
+			=> Map(await _calendarService.BackfillRecordsAsync(User.GetAuthenticatedUserClaims()));
+
 		[HttpPost("sessions/{sessionId:guid}/terms")]
 		[Authorize(Roles = AdminRoles)]
 		public async Task<IActionResult> AddTerm(Guid sessionId, [FromBody] TermInputViewModel model)

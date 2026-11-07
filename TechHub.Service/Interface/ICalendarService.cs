@@ -24,6 +24,13 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> UpdateSessionAsync(Guid sessionId, UpdateAcademicSessionViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> DeleteSessionAsync(Guid sessionId, AuthenticatedUserClaims claims);
 
+		/// <summary>
+		/// Stamps the academic session/term on this school's existing quizzes, assessments and attempts
+		/// that were created before the calendar existed (matched by their WAT date). Safe to run again:
+		/// only rows still missing a session/term are touched, and nothing already stamped is changed.
+		/// </summary>
+		Task<BaseResponse> BackfillRecordsAsync(AuthenticatedUserClaims claims);
+
 		Task<BaseResponse> AddTermAsync(Guid sessionId, TermInputViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> UpdateTermAsync(Guid termId, TermInputViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> DeleteTermAsync(Guid termId, AuthenticatedUserClaims claims);

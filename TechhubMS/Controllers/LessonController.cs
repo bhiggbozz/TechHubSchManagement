@@ -185,7 +185,7 @@ public class LessonController : ControllerBase
 
 	// GET api/lesson/{lessonId}/class
 	[HttpGet("{lessonId}/class")]
-	[Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+	[Authorize(Roles = "SubjectTeacher,HeadTeacher,ClassTeacher")]
 	[ProducesResponseType(typeof(BaseResponse), 200)]
 	public async Task<IActionResult> GetLessonForClass(Guid lessonId)
 	{
@@ -222,6 +222,26 @@ public class LessonController : ControllerBase
 		var claims = GetClaims();
 		var result = await _lessonService.GetLessonWatchStatus(lessonId, claims);
 		return result.ResponseCode == ResponseCode.successful ? Ok(result) : BadRequest(result);
+	}
+
+	/// <summary>
+	/// What has been taught in a term or a whole session (subjects → topics → lessons).
+	/// Pass termId OR sessionId; with neither, the school's current term is used.
+	/// Student: own classroom. Parent: studentId of their own child. Staff: classroomId (or studentId).
+	/// </summary>
+	[HttpGet("topics-taught")]
+	public async Task<IActionResult> GetTopicsTaught([FromQuery] Guid? termId, [FromQuery] Guid? sessionId,
+		[FromQuery] Guid? classroomId, [FromQuery] Guid? studentId, [FromQuery] Guid? subjectId)
+	{
+		var result = await _lessonService.GetTopicsTaught(termId, sessionId, classroomId, studentId, subjectId, GetClaims());
+		return result.ResponseCode switch
+		{
+			ResponseCode.successful => Ok(result),
+			ResponseCode.NotFound => NotFound(result),
+			ResponseCode.Forbidden => StatusCode(403, result),
+			ResponseCode.Unauthorized => Unauthorized(result),
+			_ => BadRequest(result)
+		};
 	}
 
 	[HttpGet("subject/{subjectId}")]

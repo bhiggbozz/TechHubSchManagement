@@ -504,6 +504,32 @@ public class QuestionJobService : IQuestionJobService
 			// ── Build preview per question ────────────────────────────────
 			var previews = new List<QuestionPreviewItem>();
 
+			// Where this extraction was filed. Names are for display only, so a lookup
+			// failure must never break the preview.
+			PreviewFilingRow? filing = null;
+			try
+			{
+				filing = (await _jobQueryRepo.QueryAsync<PreviewFilingRow>(
+					@"SELECT st.TopicId, st.Name AS SubTopicName, t.Name AS TopicName,
+					         s.Subject AS SubjectName, c.Name AS ClassroomName
+					  FROM   SubTopic st
+					  LEFT JOIN Topic     t ON t.Id = st.TopicId
+					  LEFT JOIN Subjects  s ON s.Id = @SubjectId
+					  LEFT JOIN Classroom c ON c.Id = @ClassroomId
+					  WHERE  st.Id = @SubTopicId",
+					new Dictionary<string, object>
+					{
+						{ "SubjectId", job.SubjectId },
+						{ "ClassroomId", job.ClassroomId },
+						{ "SubTopicId", job.SubTopicId }
+					},
+					DatabaseTarget.QuestionBank))?.FirstOrDefault();
+			}
+			catch (Exception ex)
+			{
+				_logger.Warning(ex, "Preview filing names lookup failed - JobId: {JobId}", jobId);
+			}
+
 			foreach (var question in questionList)
 			{
 				var options = new List<OptionPreviewDto>();
@@ -538,6 +564,10 @@ public class QuestionJobService : IQuestionJobService
 				{
 					QuestionId = question.Id,
 					QuestionNumber = question.QuestionNumber,
+						ClassroomId = question.ClassroomId,
+						SubjectId = question.SubjectId,
+						TopicId = question.TopicId,
+						SubTopicId = question.SubTopicId,
 					QuestionType = job.QuestionType,
 					QuestionHtml = question.QuestionHtml,
 					ContentParts = question.ContentParts,
@@ -562,6 +592,14 @@ public class QuestionJobService : IQuestionJobService
 				Status = "successful",
 				JobId = jobId,
 				TotalExtracted = previews.Count,
+					ClassroomId = job.ClassroomId,
+					ClassroomName = filing?.ClassroomName,
+					SubjectId = job.SubjectId,
+					SubjectName = filing?.SubjectName,
+					TopicId = filing?.TopicId ?? questionList.First().TopicId,
+					TopicName = filing?.TopicName,
+					SubTopicId = job.SubTopicId,
+					SubTopicName = filing?.SubTopicName,
 				Questions = previews
 			};
 		}

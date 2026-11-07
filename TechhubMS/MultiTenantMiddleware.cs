@@ -24,7 +24,9 @@ public class MultiTenantMiddleware
 
 	public async Task InvokeAsync(HttpContext context, ITenantService tenantService)
 	{
-		if (context.Request.Path.StartsWithSegments("/swagger")
+		// SignalR hubs: a browser WebSocket cannot send X-Tenant-ID, and the hub takes the school from the JWT.
+		if (context.Request.Path.StartsWithSegments("/hubs")
+		    || context.Request.Path.StartsWithSegments("/swagger")
 		    || string.Equals(context.Request.Path, "/api/School/createschool", StringComparison.OrdinalIgnoreCase)
 		    || string.Equals(context.Request.Path, "/api/School/registration-requests", StringComparison.OrdinalIgnoreCase)
 		    || string.Equals(context.Request.Path, "/api/School/register", StringComparison.OrdinalIgnoreCase)

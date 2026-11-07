@@ -34,6 +34,7 @@ namespace TechHub.Service.Service
 		private readonly ICommandRespository<AcademicSession> _sessionCommandRepo;
 		private readonly IQueryRepository<AcademicTerm> _termQueryRepo;
 		private readonly ICommandRespository<AcademicTerm> _termCommandRepo;
+		private readonly IAcademicPeriodResolver _periods;
 		private readonly ILogger _logger;
 
 		public CalendarService(
@@ -41,12 +42,14 @@ namespace TechHub.Service.Service
 			ICommandRespository<AcademicSession> sessionCommandRepo,
 			IQueryRepository<AcademicTerm> termQueryRepo,
 			ICommandRespository<AcademicTerm> termCommandRepo,
+			IAcademicPeriodResolver periods,
 			ILogger logger)
 		{
 			_sessionQueryRepo = sessionQueryRepo;
 			_sessionCommandRepo = sessionCommandRepo;
 			_termQueryRepo = termQueryRepo;
 			_termCommandRepo = termCommandRepo;
+			_periods = periods;
 			_logger = logger;
 		}
 
@@ -197,6 +200,7 @@ namespace TechHub.Service.Service
 
 					var created = await LoadSessionAsync(sessionId, schoolId);
 					var terms = await LoadTermsAsync(sessionId);
+					_periods.Invalidate(ParseSchoolId(claims));
 					return Ok("Academic session created", ToDto(created!, terms, SchoolToday()));
 				}
 				catch (Exception ex)
@@ -247,6 +251,7 @@ namespace TechHub.Service.Service
 						});
 
 					var updated = await LoadSessionAsync(sessionId, schoolId);
+					_periods.Invalidate(ParseSchoolId(claims));
 					return Ok("Academic session updated", ToDto(updated!, await LoadTermsAsync(sessionId), SchoolToday()));
 				}
 				catch (Exception ex)
@@ -280,6 +285,7 @@ namespace TechHub.Service.Service
 						new Dictionary<string, object> { { "Id", sessionId }, { "SchoolId", schoolId } });
 
 					_logger.Information("Calendar: session {SessionId} deleted by {UserId}", sessionId, ParseUserId(claims));
+					_periods.Invalidate(ParseSchoolId(claims));
 					return Ok("Academic session deleted", null);
 				}
 				catch (Exception ex)
@@ -293,6 +299,63 @@ namespace TechHub.Service.Service
 		#endregion
 
 		#region Term writes
+
+		public async Task<BaseResponse> BackfillRecordsAsync(AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims?.UserId))
+			{
+				try
+				{
+					var denied = await CheckCanManageAsync(claims);
+					if (denied != null) return denied;
+					var schoolId = ParseSchoolId(claims);
+
+					// (table, SQL expression for the record's WAT calendar date). The text columns hold UTC
+					// "yyyy-MM-dd HH:mm:ss"; Assessments.CreatedAt is a datetime2 (UTC).
+					var targets = new (string Table, string LocalDate)[]
+					{
+						("Quiz",              "CAST(DATEADD(HOUR, 1, TRY_CONVERT(datetime2, r.CreationDate)) AS date)"),
+						("QuizAttempt",       "CAST(DATEADD(HOUR, 1, TRY_CONVERT(datetime2, r.StartedAt)) AS date)"),
+						("Assessments",       "CAST(DATEADD(HOUR, 1, r.CreatedAt) AS date)"),
+						("AssessmentAttempt", "CAST(DATEADD(HOUR, 1, TRY_CONVERT(datetime2, r.StartedAt)) AS date)")
+					};
+
+					var args = new Dictionary<string, object> { { "SchoolId", schoolId } };
+					var result = new List<object>();
+
+					foreach (var (table, localDate) in targets)
+					{
+						var sessions = (await _sessionQueryRepo.QueryAsync<int>(
+							$@"UPDATE r SET r.SessionId = s.Id
+							   FROM {table} r
+							   JOIN AcademicSession s ON s.SchoolId = r.SchoolId AND s.IsActive = 1
+							        AND {localDate} BETWEEN s.StartDate AND s.EndDate
+							   WHERE r.SchoolId = @SchoolId AND r.SessionId IS NULL;
+							   SELECT @@ROWCOUNT;", args)).FirstOrDefault();
+
+						var terms = (await _sessionQueryRepo.QueryAsync<int>(
+							$@"UPDATE r SET r.TermId = t.Id
+							   FROM {table} r
+							   JOIN AcademicTerm t ON t.SessionId = r.SessionId AND t.IsActive = 1
+							        AND {localDate} BETWEEN t.StartDate AND t.EndDate
+							   WHERE r.SchoolId = @SchoolId AND r.SessionId IS NOT NULL AND r.TermId IS NULL;
+							   SELECT @@ROWCOUNT;", args)).FirstOrDefault();
+
+						var unplaced = (await _sessionQueryRepo.QueryAsync<int>(
+							$"SELECT COUNT(*) FROM {table} WHERE SchoolId = @SchoolId AND SessionId IS NULL", args)).FirstOrDefault();
+
+						result.Add(new { table, sessionsStamped = sessions, termsStamped = terms, stillWithoutSession = unplaced });
+					}
+
+					return Ok("Existing records stamped with their academic session and term", result);
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "Calendar: error backfilling academic periods");
+					return Fail(ResponseCode.ErrorOccured, "An error occurred while stamping existing records");
+				}
+			}
+		}
 
 		public async Task<BaseResponse> AddTermAsync(Guid sessionId, TermInputViewModel model, AuthenticatedUserClaims claims)
 		{
@@ -330,6 +393,7 @@ namespace TechHub.Service.Service
 						});
 					await ResequenceAsync(sessionId);
 
+					_periods.Invalidate(ParseSchoolId(claims));
 					return Ok("Term added", ToDto(session, await LoadTermsAsync(sessionId), SchoolToday()));
 				}
 				catch (Exception ex)
@@ -377,6 +441,7 @@ namespace TechHub.Service.Service
 						});
 					await ResequenceAsync(session.Id);
 
+					_periods.Invalidate(ParseSchoolId(claims));
 					return Ok("Term updated", ToDto(session, await LoadTermsAsync(session.Id), SchoolToday()));
 				}
 				catch (Exception ex)
@@ -411,6 +476,7 @@ namespace TechHub.Service.Service
 					await ResequenceAsync(term.SessionId);
 
 					var session = await LoadSessionAsync(term.SessionId, schoolId);
+					_periods.Invalidate(ParseSchoolId(claims));
 					return Ok("Term deleted", ToDto(session!, await LoadTermsAsync(term.SessionId), SchoolToday()));
 				}
 				catch (Exception ex)

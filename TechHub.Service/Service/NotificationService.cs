@@ -212,6 +212,51 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public async Task NotifyParentQuizAssignedAsync(Guid quizId, Guid studentId, Guid schoolId, string title)
+		{
+			try
+			{
+				await FanOutAsync(
+					new List<Guid> { studentId }, schoolId, NotificationTypes.ParentQuizAssigned,
+					"New practice quiz from your parent", $"Your parent set you a practice quiz: \"{title}\"",
+					"ParentQuiz", quizId);
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Failed to notify parent quiz assigned - QuizId: {QuizId}", quizId);
+			}
+		}
+
+		public async Task NotifyParentQuizCompletedAsync(Guid quizId, Guid parentId, Guid schoolId, string studentName, string title, decimal scorePercent)
+		{
+			try
+			{
+				await FanOutAsync(
+					new List<Guid> { parentId }, schoolId, NotificationTypes.ParentQuizCompleted,
+					"Practice quiz completed", $"{studentName} finished \"{title}\" and scored {scorePercent:0.#}%",
+					"ParentQuiz", quizId);
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Failed to notify parent quiz completed - QuizId: {QuizId}", quizId);
+			}
+		}
+
+		public async Task NotifyLiveClassStartedAsync(Guid liveClassId, List<Guid> studentIds, Guid schoolId, string teacherName, string title)
+		{
+			try
+			{
+				await FanOutAsync(
+					studentIds, schoolId, NotificationTypes.LiveClassStarted,
+					"Live class started", $"{teacherName} has started a live class: \"{title}\". Tap to join.",
+					"LiveClass", liveClassId);
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Failed to notify live class started - LiveClassId: {LiveClassId}", liveClassId);
+			}
+		}
+
 		public async Task NotifyGroupContentSubmittedAsync(Guid contentId, Guid approverId, Guid schoolId, string aim, string groupName)
 		{
 			try

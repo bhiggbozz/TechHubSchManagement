@@ -37,6 +37,7 @@ public class QuizService : IQuizService
 
 	private readonly IDbTransactionScopeFactory _scopeFactory;
 	private readonly IPerformanceIncrementalService _perfIncremental;
+	private readonly IAcademicPeriodResolver _periods;
 	private readonly ILogger _logger;
 
 	public QuizService(
@@ -56,6 +57,7 @@ public class QuizService : IQuizService
 		ICommandRespository<AssessmentSet> assessmentSetCommand,
 		IDbTransactionScopeFactory scopeFactory,
 		IPerformanceIncrementalService perfIncremental,
+		IAcademicPeriodResolver periods,
 		ILogger logger)
 	{
 		_quizCommand = quizCommand;
@@ -74,6 +76,7 @@ public class QuizService : IQuizService
 		_assessmentSetCommand = assessmentSetCommand;
 		_scopeFactory = scopeFactory;
 		_perfIncremental = perfIncremental;
+		_periods = periods;
 		_logger = logger;
 	}
 
@@ -174,6 +177,7 @@ public class QuizService : IQuizService
 				{ "ModifiedDate", now      },
 				{ "IsActive",     true     }
 			};
+			(await _periods.ResolveNowAsync(schoolId)).ApplyTo(quizDict);
 
 			var questionDicts = model.QuestionIds.Select((qId, index) =>
 				new Dictionary<string, object>
@@ -427,6 +431,7 @@ public class QuizService : IQuizService
 				{ "ModifiedDate", now      },
 				{ "IsActive",     true     }
 			};
+			(await _periods.ResolveNowAsync(schoolId)).ApplyTo(quizDict);
 
 			var questionDicts = model.QuestionIds.Select((qId, index) =>
 				new Dictionary<string, object>
@@ -1595,6 +1600,7 @@ public class QuizService : IQuizService
 					{ "CreationDate", now },
 					{ "ModifiedDate", now }
 				};
+				(await _periods.ResolveNowAsync(schoolId)).ApplyTo(attemptDict);
 
 				using var scope = _scopeFactory.Create("DbConnectionString");
 				try

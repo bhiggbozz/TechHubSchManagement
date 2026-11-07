@@ -9,4 +9,7 @@ public static class FeatureKeys
 {
 	/// <summary>AI-generated teaching images attached to lessons.</summary>
 	public const string ImageGeneration = "ai_image_generation";
+
+	/// <summary>Live classes (teacher + up to 3 students, audio and board).</summary>
+	public const string LiveClass = "live_class";
 }

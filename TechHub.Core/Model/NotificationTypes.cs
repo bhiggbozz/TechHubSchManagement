@@ -9,5 +9,8 @@ namespace TechHub.Core.Model
 		public const string AssessmentAssigned = "AssessmentAssigned";
 		public const string GroupContentSubmitted = "GroupContentSubmitted";
 		public const string GroupContentApproved = "GroupContentApproved";
+		public const string ParentQuizAssigned = "ParentQuizAssigned";
+		public const string ParentQuizCompleted = "ParentQuizCompleted";
+		public const string LiveClassStarted = "LiveClassStarted";
 	}
 }

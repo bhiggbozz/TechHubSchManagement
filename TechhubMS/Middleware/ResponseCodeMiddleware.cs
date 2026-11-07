@@ -31,6 +31,13 @@ namespace TechhubMS.Middleware
 		public async Task Invoke(HttpContext context)
 		{
 
+			// SignalR (WebSocket / streaming) must not have its response buffered.
+			if (context.Request.Path.StartsWithSegments("/hubs"))
+			{
+				await _next(context);
+				return;
+			}
+
 			var originalBodyStream = context.Response.Body;
 			using var memoryStream = new MemoryStream();
 			context.Response.Body = memoryStream;
