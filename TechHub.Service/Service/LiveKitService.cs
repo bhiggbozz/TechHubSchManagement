@@ -36,6 +36,8 @@ namespace TechHub.Service.Service
 
 		public bool IsConfigured => _settings.IsConfigured;
 
+		public string? LastError { get; private set; }
+
 		public string ClientUrl => _settings.ResolvedClientUrl;
 
 		public string CreateJoinToken(string roomName, string identity, string displayName, bool canSpeak, TimeSpan ttl, bool canPublishData = false)
@@ -80,8 +82,12 @@ namespace TechHub.Service.Service
 
 		private async Task<bool> CallAsync(string method, object body, Dictionary<string, object> adminGrant)
 		{
+			LastError = null;
 			if (!IsConfigured)
+			{
+				LastError = "LiveKit is not configured";
 				return false;
+			}
 
 			try
 			{
@@ -99,11 +105,13 @@ namespace TechHub.Service.Service
 				var text = await response.Content.ReadAsStringAsync();
 				_logger.Warning("LiveKit {Method} returned {Status}: {Body}", method, (int)response.StatusCode,
 					text.Length > 300 ? text[..300] : text);
+				LastError = $"{method} returned {(int)response.StatusCode}: {(text.Length > 300 ? text[..300] : text)}";
 				return false;
 			}
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "LiveKit {Method} call failed", method);
+				LastError = $"{method} failed: {ex.GetType().Name}: {ex.Message}";
 				return false;
 			}
 		}

@@ -182,11 +182,42 @@ A **view-only** calendar — it does not restrict when quizzes/assessments can b
 | `CalendarEntry` | Id, SchoolId, SessionId, TermId (null for an admin entry in a break), Title, EntryType (Assessment\|Quiz\|MidTerm\|Exam\|Holiday\|Other), Description, StartDate, EndDate (inclusive `DATE`), ScopeType (School\|Classroom\|Subject), ClassroomId, SubjectId, CreatedBy, CreatedByRole, SupersededLevel (0–3), IsActive |
 | `CalendarEntryChange` | Id, EntryId, SchoolId, ChangedBy, ChangedByRole, ChangedAt, Action (Updated\|Deleted), Old/New Title, EntryType, StartDate, EndDate, OnOthersEntry. Viewers are shown the latest `OnOthersEntry` change |
 
+**Academic session/term stamping** (for term reports): `Quiz`, `QuizAttempt`, `Assessments` and `AssessmentAttempt` each carry nullable `SessionId`/`TermId`, set when the record is created (an attempt gets the term it *started* in, not the term of its assessment) by `IAcademicPeriodResolver` — a per-school cached lookup (5 min, cleared on any calendar edit) that matches the record's **WAT** date against the school's sessions/terms. No join at read time; indexed `(SchoolId, TermId)`. Null when the school has no calendar, the date is outside every session, or (term only) it falls in a break. The resolver never throws — a calendar failure must not stop a quiz being created or started. Records from before the calendar existed are stamped by `POST /api/Calendar/backfill-records` (admin with `ManageCalendar`, or SuperAdmin; re-runnable, only touches unstamped rows; create the earlier sessions first or those rows stay null).
+
+### Parent Practice Quizzes
+
+A parent sets a self-marking practice quiz for their own child. **Fully separate from teacher `Assessments`/`Quiz`** — own tables, so it never reaches school rankings, performance snapshots or teacher lists. Objective questions only (QuestionType 1 MultipleChoice, 4 TrueOrFalse), drawn from published, active, `IsAdminOnly=0` questions in the child's class (`Questions.ClassroomId` ∈ the child's `StudentClassroom`) for a subject the child takes (class subjects + `StudentMinorSubject`), each with ≥2 live options and one correct. `Mix` = ~40% easy / 40% medium / 20% hard-or-exam; a single difficulty falls back to the nearest level (with a `notice`); questions the child has already had in a parent quiz are used last; <5 available refuses. Limits: 5 unstarted quizzes per child, 10 created per parent per 24h. One attempt per quiz (unique index on `QuizId`); the child's answers are saved only on submit, and resuming after the time limit ends the quiz with everything skipped. Every create stamps `SessionId`/`TermId`.
+
+| Table | Key Columns |
+|-------|-------------|
+| `ParentQuizConfig` | ParentId, SchoolId (unique), QuestionCount (5–30, default 10), Mode (Mix\|Easy\|Medium\|Hard\|ExamLevel), TimeLimitMinutes (null = none), PassMarkPercent, ShuffleQuestions — the parent's saved defaults |
+| `ParentQuiz` | Id, SchoolId, ParentId, StudentId, SubjectId, SubjectName/TopicNames (snapshots), Title, Mode, QuestionCount, TimeLimitMinutes, PassMarkPercent, Status (Pending\|InProgress\|Completed\|Cancelled), SessionId, TermId, CreatedAt, CompletedAt |
+| `ParentQuizQuestion` | QuizId, QuestionId, DisplayOrder, DifficultyLevel |
+| `ParentQuizAttempt` | QuizId (unique), StudentId, Status (InProgress\|Submitted), StartedAt, SubmittedAt, TimeTakenSeconds, TotalCorrect/Wrong/Skipped, ScorePercent, IsPassed |
+| `ParentQuizAnswer` | AttemptId, QuestionId, SelectedOptionId, IsCorrect, IsSkipped (correctness is read from `QuestionOptions.IsCorrect` at submit, never trusted from the client) |
+
+### Live Classes
+
+A teacher runs a live class for **1 to 3 picked students** (hard cap in code, never trusted from the client), **max 40 minutes**, **audio + board only**. Always started from an **Approved** lesson owned by the teacher (a HeadTeacher may use any lesson in the school); finishing the teacher's normal board recording (`POST /api/board/session/{sessionId}/manifest`, with `LiveClass.BoardSessionId` as the session id) publishes the lesson, so every class becomes a replay. Parents cannot watch live (replay only). Roles allowed to run one: `SubjectTeacher`, `HeadTeacher`, `ClassTeacher` (`POST /api/board/session/{id}/batch` and `GET /api/lessons/{id}/class` were widened to include `ClassTeacher` so their classes can be recorded and the lesson opened in teaching mode). Only the picked students can ever join, only while the class is `Live`; the set is fixed at creation. Gated per school by the `live_class` feature (`POST /api/school-features`), switchable off with `LiveClass:RequireSchoolFeature=false`.
+
+- **Audio** is carried by self-hosted **LiveKit** (`https://live.bluetsch.com`, container in `/opt/livekit` on the VPS, signal port 7880 bound to localhost behind nginx). `LiveKitService` mints join tokens (HS256 JWT, `video` grant: microphone only, never camera/screen) and calls LiveKit's Twirp room API (CreateRoom capped at 4 participants, DeleteRoom on end, UpdateParticipant for speak permission). Students get `canPublish=false` until the teacher allows them (`LiveClassStudent.CanSpeak`, applied to a live connection and baked into the next token).
+- **Board** is carried by SignalR hub `/hubs/live-board` (`LiveBoardHub`), same stroke shape as the recorder (`pts`, `c`, `w`, `ts`, `currentBoard`) plus a server `seq`. Auth: the JWT goes in `?access_token=` (accepted on `/hubs` paths only); the hub is excluded from `MultiTenantMiddleware` and `ResponseCodeMiddleware` (WebSockets cannot send `X-Tenant-ID`, and the response must not be buffered) and takes the school from the token. Board state is in memory only (`LiveBoardState`) for late joiners; the saved replay comes from the teacher's batches.
+- **Scheduling (Teams/Meet style)**: `POST /api/live-class` also takes `scheduledStart` (ISO with offset, or UTC `Z`; **no offset = WAT**) and `durationMinutes` (5–40, default 40). The slot is fixed: the teacher can start **only inside it** (not before `scheduledStart`) and it ends at `scheduledEnd`, even if started late; if the slot passes unstarted the timer sets it `Cancelled`/`EndReason=Expired`. A scheduled class may be created while the lesson is still `PendingApproval`; **students only see it (mine/get) once the lesson is `Approved`/`Published`** — checked at read time, so the lesson approval code is untouched. When the lesson is approved, the timer (or create/reschedule) sends each picked student one `LiveClassScheduled` notification (`ScheduleNotifiedAt` claims it atomically; rescheduling re-sends). A `Rejected` lesson cancels its scheduled class. Clashes for the same teacher or any picked student on overlapping slots → 409. Without `scheduledStart` the old behaviour is unchanged (Approved lesson, start any time). DTO adds `scheduledStart/End`, `lessonStatus`, `canStartNow` (teacher), `serverTime`. New columns on `LiveClass`: `ScheduledStart`, `ScheduledEnd`, `ScheduleNotifiedAt`.
+- **Media in a live class**: no bytes ever travel through the class. `GET /api/live-class/{id}` and the join response carry `media[]` (`id, name, mediaType, fileExtension, url, sizeBytes, duration, displayOrder, metaData` — the lesson's active `LessonMedia`, in display order; not in `/mine`). The student app downloads them ahead of time (as soon as it can open the class, or in the background after joining); the teacher's open/close/page/scroll/play/pause **actions** go over the LiveKit data channel by `mediaId` (same events the recorder already stores, so the replay is unchanged). A student joining halfway gets a one-off `media-state` message from the teacher's browser.
+- **Time limit** is server-enforced by `LiveClassTimerService` (every 15 s): warnings at 5 and 2 minutes left, automatic end at `EndsAt` (`EndReason=TimeUp`), unstarted classes expire after 12 h. **Platform cap**: `LiveClass:MaxConcurrent` (default 30) checked atomically in the same `UPDATE` that sets the class `Live`.
+- Config (never committed): `LiveKit:ServerUrl` (`https://live.bluetsch.com`), `LiveKit:ApiKey`, `LiveKit:ApiSecret`, optional `LiveKit:ClientUrl`; `LiveClass:MaxConcurrent`, `LiveClass:DurationMinutes` (<= 40), `LiveClass:RequireSchoolFeature`; debugging aids: `LiveClass:LogBoardUpdates=true` logs every teacher board update that reaches the SignalR hub (after broadcast, no latency cost; LiveKit data-channel strokes never touch the server so they cannot be logged), `LiveClass__ShowErrorDetails=true` puts the real exception text in error responses and hub errors (always on outside `Production`; keep off in production). On the VPS add `LiveKit__ServerUrl/ApiKey/ApiSecret` to `/var/www/schooly/.env` and map them in `docker-compose.yml` (keys are in `/opt/livekit/keys.env`).
+- **nginx for `api.bluetsch.com` must forward WebSocket upgrades** (`proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`, ideally a `location /hubs/` block) or SignalR falls back to a slower transport.
+
+| Table | Key Columns |
+|-------|-------------|
+| `LiveClass` | Id, SchoolId, LessonId, ClassroomId, SubjectId, TeacherId, Title, Status (Scheduled\|Live\|Ended\|Cancelled), DurationMinutes (<=40), MaxStudents (3), BoardSessionId, RoomName (`lc-{id}`), CreatedAt, StartedAt, EndsAt, EndedAt, EndReason (TeacherEnded\|TimeUp\|Cancelled\|Expired), Warned5, Warned2, IsActive |
+| `LiveClassStudent` | Id, LiveClassId, StudentId, SchoolId, FirstJoinedAt, LastLeftAt, JoinCount, CanSpeak. Unique (LiveClassId, StudentId) |
+
 ### Lesson Planning
 
 | Table | Key Columns |
 |-------|-------------|
-| `LessonContent` | Id, SchoolId, ClassroomId, SubjectId, TopicId, Aim, Description, Status (Draft\|PendingApproval\|Approved\|Rejected\|Published), QuizCode, CreatedBy |
+| `LessonContent` | Id, SchoolId, ClassroomId, SubjectId, TopicId, Aim, Description, Status (Draft\|PendingApproval\|Approved\|Rejected\|Published), QuizCode, CreatedBy, **DeliveryMode** (`Recorded` default \| `Live`; sent on `POST /api/lessons/submit` and `/draft`, case-insensitive, anything else → 400; echoed in the submit/draft response `data.deliveryMode`, `my-lessons` rows and `GET /api/lessons/{id}/class`. It only flags the lesson — the live class itself is still created with `POST /api/live-class`) |
 | `LessonMedia` | Id, LessonId, MediaUrl, MediaType |
 | `ClassPreparation` | Id, SchoolId, TeacherId, Status (Draft\|Pending\|Approved\|Rejected\|InProgress\|Completed), SubmittedAt, ApprovedAt, ApprovalNotes, ApprovalTimeMinutes, IsUrgent, NeedsReview, AutoApprovalEligible |
 | `ClassPreparationMedia` | Id, ClassPreparationId, MediaUrl, MediaType |
@@ -326,6 +357,7 @@ A **view-only** calendar — it does not restrict when quizzes/assessments can b
 | GET | `/api/lessons/my-lessons` | Teacher | Teacher's lessons |
 | POST | `/api/lessons/{id}/respond` | JWT | Approve/reject lesson |
 | GET | `/api/lessons/pending-approvals` | JWT | Pending approvals |
+| GET | `/api/lessons/topics-taught` | JWT (any role) | What was taught in a term or session, grouped term → subject → topic → lessons. `?termId` **or** `?sessionId`; neither = the school's current term (else current/latest session). Student: own classroom(s) + `watched` flags. Parent: `studentId` of own child required (else 403). Staff: `classroomId` or `studentId` required. Optional `subjectId`. "Taught" = `Approved` lesson dated inside the period, where date = `AccessDate`, else `ApprovedAt` (WAT) — computed from dates, nothing stamped on `LessonContent`. Session requests return one entry per term plus a final null-term entry for lessons taught in a break |
 
 ### Quiz
 
@@ -411,12 +443,47 @@ A **view-only** calendar — it does not restrict when quizzes/assessments can b
 | PUT / DELETE | `/api/Calendar/sessions/{id}` | same | Edit dates/name (existing terms must still fit) / soft-delete with its terms |
 | POST | `/api/Calendar/sessions/{id}/terms` | same | Add a term |
 | PUT / DELETE | `/api/Calendar/terms/{id}` | same | Edit / soft-delete a term (the last term of a session can't be deleted) |
+| POST | `/api/Calendar/backfill-records` | Admin w/ `ManageCalendar`, or SuperAdmin | Stamps `SessionId`/`TermId` on this school's older quizzes/assessments/attempts (by WAT date); re-runnable, returns per-table counts |
 | GET | `/api/Calendar/entry-types` | JWT | Fixed list of entry types (Assessment, Quiz, MidTerm, Exam, Holiday, Other) |
 | GET | `/api/Calendar/entries` | JWT (any role) | `?from&to&classroomId&subjectId&studentId`. Admin/Administrator/HeadTeacher see everything; ClassTeacher sees school-wide + own classes; SubjectTeacher school-wide + own subjects; Student school-wide + own class/subjects; Parent the same for their children (`studentId` must be their own child, else 403). Each entry carries `canEdit` and `lastChange` (previous vs new values + a ready-made `message`) |
 | GET | `/api/Calendar/entries/{id}` | JWT | One entry with full `changes` history (404 if outside the caller's view) |
 | POST | `/api/Calendar/entries` | Admin w/ `ManageCalendar`, SuperAdmin, HeadTeacher, ClassTeacher, SubjectTeacher | `{ title, entryType, description?, startDate, endDate, scopeType, classroomId?, subjectId? }` — scope rules per level above; dates must be inside an academic session |
 | PUT | `/api/Calendar/entries/{id}` | same | `{ title, entryType, description?, startDate, endDate }` (scope fixed at creation). Editing someone else's entry records the change and locks out the levels below |
 | DELETE | `/api/Calendar/entries/{id}` | same | Soft delete; same edit rights; logged in `CalendarEntryChange` |
+
+### Parent Practice Quizzes
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/api/parent-quiz/children/{studentId}/subjects` | Parent (own child) | The child's subjects and topics with usable-question counts by difficulty, plus each topic's `subTopics[]` with their own counts (`available.easy/medium/hard/examLevel/total`) |
+| GET / PUT | `/api/parent-quiz/settings` | Parent | Saved defaults (`isCustomised=false` until first saved). PUT replaces all fields |
+| POST | `/api/parent-quiz` | Parent | `{ studentId, subjectId, topicIds?, subTopicIds?, title?, questionCount?, mode?, timeLimitMinutes?, passMarkPercent? }` — only the first two are required, the rest fall back to the saved settings (`timeLimitMinutes: 0` = no limit this time). Returns `{ quiz, notice? }`. `subTopicIds` picks sub-topics straight from the syllabus (no lessons needed); sent with `topicIds`, questions from either qualify; a sub-topic outside the subject → 400 |
+| GET | `/api/parent-quiz?studentId=` | Parent | The parent's quizzes (cancelled hidden), newest first, with status and score |
+| GET | `/api/parent-quiz/{quizId}/result` | Parent | Question-by-question review with the correct answers; only once the child has finished (else 400) |
+| DELETE | `/api/parent-quiz/{quizId}` | Parent | Cancel a quiz the child hasn't started |
+| GET | `/api/student/parent-quiz` | Student | "From your parent" list |
+| POST | `/api/student/parent-quiz/{quizId}/start` | Student | Start or resume; returns questions with options and **no** correct flags |
+| POST | `/api/student/parent-quiz/{quizId}/submit` | Student | `{ answers: [{ questionId, selectedOptionId? }] }` — marks, closes, returns the result; a second submit is 409 |
+| GET | `/api/student/parent-quiz/{quizId}/result` | Student | Own result with correct answers (only after finishing) |
+
+### Live Classes
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/live-class` | SubjectTeacher/HeadTeacher/ClassTeacher | `{ lessonId, studentIds[1..3], title? }` — creates a `Scheduled` class from an Approved lesson; students must be active students of the lesson's classroom; one open class per lesson (409) |
+| POST | `/api/live-class/{id}/start` | owner teacher | Goes `Live`: starts the clock (`endsAt`), opens the LiveKit room (max 4), notifies the picked students. 409 if already started, the teacher/a student is in another live class, or the platform cap is reached |
+| POST | `/api/live-class/{id}/join` | owner teacher or picked student | Returns `{ role, audio{url,token,roomName}, board{hubPath,group}, boardSessionId, lessonId, endsAt, secondsRemaining, serverTime, canSpeak }`. Anyone else gets 404; 400 if not live / over |
+| POST | `/api/live-class/{id}/end` | owner teacher | Ends it (idempotent), closes the audio room, tells the board group |
+| DELETE | `/api/live-class/{id}` | owner teacher | Cancels a class that has not started (409 otherwise) |
+| PUT | `/api/live-class/{id}/schedule` | owner teacher | `{ scheduledStart, durationMinutes? }` — moves a scheduled class that has not started; the picked students are told again. 409 once it is live/finished |
+| POST | `/api/live-class/{id}/students/{studentId}/speak` | owner teacher | `{ allow }` lets a student speak or mutes them again |
+| GET | `/api/live-class/mine` | teacher or student | Scheduled/live classes plus those finished in the last 7 days |
+| GET | `/api/live-class/{id}` | owner teacher or picked student | One class with its students (404 for anyone else) |
+
+**Board hub `/hubs/live-board`** (SignalR, JWT in `?access_token=`). Invoke: `JoinClass(liveClassId)` → snapshot `{ currentBoard, boards[], strokes[], seq, secondsRemaining }` (`strokes[]` = every stroke on **every** board in drawing order, each tagged with its board number in `currentBoard`, so a late joiner rebuilds all boards at once); teacher only: `SendStroke(liveClassId, stroke)`, `RemoveStroke(liveClassId, strokeId)`, `ClearBoard(liveClassId)`, `SwitchBoard(liveClassId, boardIndex 1..200)`. Server → clients: `Stroke`, `StrokeRemoved`, `BoardCleared`, `BoardChanged`, `Presence {userId, role, joined}`, `Warning {minutesLeft}`, `SpeakChanged {studentId, canSpeak}`, `ClassEnded {reason}`. Limits: 5000 points/stroke, 20000 strokes/board.
+
+**Private student boards** (same hub): each picked student has their own board (created when they first join), separate from the teacher's. Student: `SendMyStroke(liveClassId, stroke)`, `RemoveMyStroke(liveClassId, strokeId)`, `ClearMyBoard(liveClassId)`, `SwitchMyBoard(liveClassId, boardIndex)`. Teacher: `GetStudentBoard(liveClassId, studentId)`, `SendStudentBoardStroke(liveClassId, studentId, stroke)`, `RemoveStudentBoardStroke(...)`, `ClearStudentBoard(...)`, and `ShareStudentBoard(liveClassId, studentId?)` (null stops sharing; one shared board at a time, view only). Visibility is enforced on the server: a student board's events and snapshots go only to the teacher, the owner, and — while shared — the rest of the class; other students get "You can't view that board". Events (all carry `studentId`): `StudentStroke`, `StudentStrokeRemoved`, `StudentBoardCleared`, `StudentBoardChanged`, `BoardShared {studentId|null, snapshot}`. The teacher can always write on a student's board (strokes carry `author`). `JoinClass` also returns `sharedStudentId`, a student's `myBoard`, and for the teacher `studentBoards[]`. Student boards live in memory only — not saved to the replay. Messages over 256 KB (`MaximumReceiveMessageSize`) disconnect the sender; the clients should still split very long strokes.
+
 
 ### Question Bank
 
@@ -432,6 +499,7 @@ A **view-only** calendar — it does not restrict when quizzes/assessments can b
 | POST | `/api/questions/sync` | JWT | Sync offline questions |
 | POST | `/api/questionjob/submit` | JWT | Submit image for AI extraction — multipart/form-data; `image` file **or** pre-uploaded reference (`FileUrl` + `FilePublicId` + `FileType`), plus `SubTopicId` + `QuestionType` (Objective/Theory/TrueFalse) + optional `ClassroomId`/`SubjectId`/`HasImages`/`MarksAllocation` |
 | GET | `/api/questionjob/{jobId}/status` | JWT | Poll job status |
+| GET | `/api/questionjob/{jobId}/preview` | JWT (job owner) | Extracted questions for review (job must be `Completed`). Also returns where the job was filed: `classroomId/Name`, `subjectId/Name`, `topicId/Name`, `subTopicId/Name` at the top level and `classroomId/subjectId/topicId/subTopicId` on each question — the review/save screen must reuse these instead of asking again, so a question cannot be saved under a different sub-topic than the one it was extracted for |
 
 ### AI Image Generation
 

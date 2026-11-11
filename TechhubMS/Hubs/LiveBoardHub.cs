@@ -23,12 +23,18 @@ namespace TechhubMS.Hubs
 		private readonly ILiveClassService _service;
 		private readonly LiveBoardState _state;
 		private readonly Serilog.ILogger _logger;
+		/// <summary>When on (LiveClass:LogBoardUpdates), every board update the teacher sends is logged — after it has been broadcast, so it never delays the class.</summary>
+		private readonly bool _logBoard;
+		private readonly bool _showDetail;
 
-		public LiveBoardHub(ILiveClassService service, LiveBoardState state, Serilog.ILogger logger)
+		public LiveBoardHub(ILiveClassService service, LiveBoardState state, Serilog.ILogger logger, Microsoft.Extensions.Configuration.IConfiguration config)
 		{
 			_service = service;
 			_state = state;
 			_logger = logger;
+			_logBoard = config.GetValue<bool>("LiveClass:LogBoardUpdates");
+			_showDetail = !string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"), "Production", StringComparison.OrdinalIgnoreCase)
+				|| config.GetValue<bool>("LiveClass:ShowErrorDetails");
 		}
 
 		public static string GroupName(Guid liveClassId) => $"live:{liveClassId}";
@@ -54,7 +60,7 @@ namespace TechhubMS.Hubs
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "LiveBoardHub: could not check access to {LiveClassId}", liveClassId);
-				throw new HubException("Could not join the class. Please try again.");
+				throw new HubException("Could not join the class. Please try again." + (_showDetail ? " [" + ex.GetType().Name + ": " + ex.Message + "]" : ""));
 			}
 
 			if (access is null
@@ -106,6 +112,9 @@ namespace TechhubMS.Hubs
 			var (room, member) = RequireTeacher(liveClassId);
 			AddStroke(room, room.Main, stroke, member.UserId);
 			await Clients.OthersInGroup(GroupName(liveClassId)).SendAsync("Stroke", stroke);
+			if (_logBoard)
+				_logger.Information("LiveBoard {LiveClassId}: teacher stroke {StrokeId} board {Board} seq {Seq} points {Points} ts {Ts}ms colour {Colour} width {Width} type {Type}",
+					liveClassId, stroke.Id, stroke.CurrentBoard, stroke.Seq, stroke.Pts.Count, stroke.Ts, stroke.C, stroke.W, stroke.StrokeType ?? "stroke");
 		}
 
 		/// <summary>Teacher only. Removes a stroke (undo / erase) on the current board.</summary>
@@ -119,6 +128,8 @@ namespace TechhubMS.Hubs
 				seq = ++room.Seq;
 			}
 			await Clients.OthersInGroup(GroupName(liveClassId)).SendAsync("StrokeRemoved", new { strokeId, seq });
+			if (_logBoard)
+				_logger.Information("LiveBoard {LiveClassId}: teacher removed stroke {StrokeId} seq {Seq}", liveClassId, strokeId, seq);
 		}
 
 		/// <summary>Teacher only. Wipes the current board.</summary>
@@ -134,6 +145,8 @@ namespace TechhubMS.Hubs
 				seq = ++room.Seq;
 			}
 			await Clients.OthersInGroup(GroupName(liveClassId)).SendAsync("BoardCleared", new { board, seq });
+			if (_logBoard)
+				_logger.Information("LiveBoard {LiveClassId}: teacher cleared board {Board} seq {Seq}", liveClassId, board, seq);
 		}
 
 		/// <summary>Teacher only. Moves to another board (creating it if new).</summary>
@@ -142,6 +155,8 @@ namespace TechhubMS.Hubs
 			var (room, _) = RequireTeacher(liveClassId);
 			long seq = SwitchSet(room, room.Main, boardIndex);
 			await Clients.OthersInGroup(GroupName(liveClassId)).SendAsync("BoardChanged", new { board = boardIndex, seq });
+			if (_logBoard)
+				_logger.Information("LiveBoard {LiveClassId}: teacher switched to board {Board} seq {Seq}", liveClassId, boardIndex, seq);
 		}
 
 		// ── A student's own private board (student draws, teacher watches) ────
@@ -315,6 +330,9 @@ namespace TechhubMS.Hubs
 				|| stroke.Pts.Any(p => p is null || p.Count != 2)
 				|| (stroke.C?.Length ?? 0) > 32 || stroke.W < 0 || stroke.W > 200)
 				throw new HubException("Invalid stroke");
+
+			// Only "eraser" means anything; anything else is a normal stroke.
+			stroke.StrokeType = string.Equals(stroke.StrokeType, "eraser", StringComparison.OrdinalIgnoreCase) ? "eraser" : null;
 
 			lock (room.Lock)
 			{

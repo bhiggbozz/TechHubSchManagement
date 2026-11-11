@@ -14,6 +14,8 @@ namespace TechhubMS.Hubs
 		/// <summary>Milliseconds since the class started; students use it to line pen and voice up.</summary>
 		public long Ts { get; set; }
 		public int CurrentBoard { get; set; } = 1;
+		/// <summary>"stroke" (a normal pen mark) or "eraser" (drawn with destination-out so it wipes what is under it). Absent = stroke. Kept so a late joiner's board shows the erasing, not thick black lines.</summary>
+		public string? StrokeType { get; set; }
 		/// <summary>Set by the server, strictly increasing within a class. Clients use it to spot gaps after a reconnect.</summary>
 		public long Seq { get; set; }
 		/// <summary>Set by the server: the user who drew it (a student's id, or the teacher's on a student's board).</summary>
@@ -31,6 +33,7 @@ namespace TechhubMS.Hubs
 	{
 		public int CurrentBoard { get; set; }
 		public List<int> Boards { get; set; } = new();
+		/// <summary>All strokes on all boards, in drawing order; each has its board number in <c>currentBoard</c>.</summary>
 		public List<LiveStrokeDto> Strokes { get; set; } = new();
 		public long Seq { get; set; }
 		public int SecondsRemaining { get; set; }
@@ -106,7 +109,9 @@ namespace TechhubMS.Hubs
 			{
 				CurrentBoard = set.CurrentBoard,
 				Boards = set.Boards.Keys.OrderBy(k => k).ToList(),
-				Strokes = set.Boards.TryGetValue(set.CurrentBoard, out var s) ? s.ToList() : new(),
+				// Every stroke on every board, in the order drawn. Each carries its board number
+				// (CurrentBoard), so a late joiner can rebuild all the boards, not just the one showing.
+				Strokes = set.Boards.Values.SelectMany(b => b).OrderBy(x => x.Seq).ToList(),
 				Seq = seq,
 				SecondsRemaining = secondsRemaining
 			};

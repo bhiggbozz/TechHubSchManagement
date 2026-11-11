@@ -32,6 +32,9 @@ public class LessonContent
 	public DateTime? AccessEndsAt { get; set; }
 	public Guid? AssessmentSetId { get; set; }
 
+	/// <summary>"Recorded" (default) or "Live" — set by the teacher at submit time.</summary>
+	public string DeliveryMode { get; set; } = "Recorded";
+
 	/// <summary>
 	/// Whether the system should auto-generate an AI image for this lesson
 	/// once it is approved. Set by the teacher at submit time.

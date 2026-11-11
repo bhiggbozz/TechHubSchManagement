@@ -29,6 +29,8 @@ namespace TechHub.Service.Interface
 		Task<BaseResponse> StartAsync(Guid liveClassId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> EndAsync(Guid liveClassId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> CancelAsync(Guid liveClassId, AuthenticatedUserClaims claims);
+		/// <summary>Move a scheduled class that has not started to a new slot; the students are told again.</summary>
+		Task<BaseResponse> RescheduleAsync(Guid liveClassId, RescheduleLiveClassViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> SetStudentSpeakAsync(Guid liveClassId, Guid studentId, bool allow, AuthenticatedUserClaims claims);
 
 		// ── Teacher or picked student ─────────────────────────────────────────

@@ -257,6 +257,22 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		public async Task NotifyLiveClassScheduledAsync(Guid liveClassId, List<Guid> studentIds, Guid schoolId, string teacherName, string title, string whenText, bool rescheduled)
+		{
+			try
+			{
+				await FanOutAsync(
+					studentIds, schoolId, NotificationTypes.LiveClassScheduled,
+					rescheduled ? "Live class rescheduled" : "Live class scheduled",
+					$"{teacherName} has {(rescheduled ? "moved" : "scheduled")} a live class: \"{title}\" - {whenText}.",
+					"LiveClass", liveClassId);
+			}
+			catch (Exception ex)
+			{
+				_logger.Error(ex, "Failed to notify live class scheduled - LiveClassId: {LiveClassId}", liveClassId);
+			}
+		}
+
 		public async Task NotifyGroupContentSubmittedAsync(Guid contentId, Guid approverId, Guid schoolId, string aim, string groupName)
 		{
 			try

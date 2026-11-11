@@ -79,6 +79,12 @@ namespace TechhubMS.Controllers
 		public async Task<IActionResult> Cancel(Guid id)
 			=> Map(await _service.CancelAsync(id, User.GetAuthenticatedUserClaims()));
 
+		/// <summary>Move a scheduled class (that has not started) to a new time. The picked students are told again.</summary>
+		[HttpPut("{id:guid}/schedule")]
+		[Authorize(Roles = TeacherRoles)]
+		public async Task<IActionResult> Reschedule(Guid id, [FromBody] RescheduleLiveClassViewModel model)
+			=> Map(await _service.RescheduleAsync(id, model, User.GetAuthenticatedUserClaims()));
+
 		/// <summary>Let a student speak (or mute them again). Students listen only until the teacher allows it.</summary>
 		[HttpPost("{id:guid}/students/{studentId:guid}/speak")]
 		[Authorize(Roles = TeacherRoles)]

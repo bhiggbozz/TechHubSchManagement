@@ -93,11 +93,27 @@ namespace TechHub.Service.Service
 						new Dictionary<string, object> { { "Id", model.LessonId }, { "SchoolId", schoolId } })).FirstOrDefault();
 					if (lesson is null)
 						return Fail(ResponseCode.NotFound, "Lesson not found");
-					if (!string.Equals(lesson.Status, "Approved", StringComparison.OrdinalIgnoreCase))
+						// A scheduled class may be set up while the lesson still waits for approval; the students only see it once approved.
+					var scheduled = model.ScheduledStart.HasValue;
+					if (scheduled
+						&& !string.Equals(lesson.Status, "Approved", StringComparison.OrdinalIgnoreCase)
+						&& !string.Equals(lesson.Status, "PendingApproval", StringComparison.OrdinalIgnoreCase))
+						return Fail(ResponseCode.BadRequest, "A live class can only be scheduled from a lesson that is waiting for approval or approved, and has not been published yet");
+					if (!scheduled && !string.Equals(lesson.Status, "Approved", StringComparison.OrdinalIgnoreCase))
 						return Fail(ResponseCode.BadRequest, "A live class can only be started from an approved lesson that has not been published yet");
 					if (role != "HeadTeacher" && lesson.CreatedBy != userId)
 						return Fail(ResponseCode.Forbidden, "You can only run a live class for your own lesson");
 
+					DateTime? slotStart = null, slotEnd = null;
+					var minutes = ClassMinutes;
+					if (scheduled)
+					{
+						var slotError = ResolveSlot(model.ScheduledStart!.Value, model.DurationMinutes, ClassMinutes, out var slotS, out var slotE, out minutes);
+						if (slotError != null)
+							return Fail(ResponseCode.BadRequest, slotError);
+						slotStart = slotS;
+						slotEnd = slotE;
+					}
 					var valid = (await _query.QueryAsync<int>(
 						$@"SELECT COUNT(*) FROM Users u
 						   WHERE u.SchoolId = @SchoolId AND u.IsActive = 1 AND u.RoleId = 0 AND u.Id IN ({GuidList(studentIds)})
@@ -112,6 +128,12 @@ namespace TechHub.Service.Service
 					if (open > 0)
 						return Fail(ResponseCode.Conflict, "This lesson already has a live class waiting or running");
 
+					if (scheduled)
+					{
+						var clash = await FindClashAsync(userId, studentIds, slotStart!.Value, slotEnd!.Value, null);
+						if (clash != null)
+							return Fail(ResponseCode.Conflict, clash);
+					}
 					var id = Guid.NewGuid();
 					var title = string.IsNullOrWhiteSpace(model.Title) ? Truncate(lesson.Aim ?? "Live class", 200) : Truncate(model.Title.Trim(), 200);
 
@@ -120,12 +142,13 @@ namespace TechHub.Service.Service
 						try
 						{
 							await scope.Connection.ExecuteAsync(
-								@"INSERT INTO LiveClass (Id, SchoolId, LessonId, ClassroomId, SubjectId, TeacherId, Title, Status, DurationMinutes, MaxStudents, BoardSessionId, RoomName)
-								  VALUES (@Id, @SchoolId, @LessonId, @ClassroomId, @SubjectId, @TeacherId, @Title, 'Scheduled', @Minutes, @MaxStudents, @BoardSessionId, @RoomName)",
+								@"INSERT INTO LiveClass (Id, SchoolId, LessonId, ClassroomId, SubjectId, TeacherId, Title, Status, DurationMinutes, MaxStudents, BoardSessionId, RoomName, ScheduledStart, ScheduledEnd)
+								  VALUES (@Id, @SchoolId, @LessonId, @ClassroomId, @SubjectId, @TeacherId, @Title, 'Scheduled', @Minutes, @MaxStudents, @BoardSessionId, @RoomName, @ScheduledStart, @ScheduledEnd)",
 								new
 								{
 									Id = id, SchoolId = schoolId, LessonId = model.LessonId, lesson.ClassroomId, lesson.SubjectId,
-									TeacherId = userId, Title = title, Minutes = ClassMinutes, MaxStudents = LiveClassSettings.AbsoluteMaxStudents,
+									TeacherId = userId, Title = title, Minutes = minutes, MaxStudents = LiveClassSettings.AbsoluteMaxStudents,
+									ScheduledStart = slotStart, ScheduledEnd = slotEnd,
 									BoardSessionId = Guid.NewGuid(), RoomName = $"lc-{id:N}"
 								}, scope.Transaction);
 
@@ -145,12 +168,15 @@ namespace TechHub.Service.Service
 					_logger.Information("LiveClass: {LiveClassId} created by {TeacherId} for lesson {LessonId} with {Count} student(s)",
 						id, userId, model.LessonId, studentIds.Count);
 
-					return Ok("Live class created", await LoadOneAsync(id, schoolId));
+					if (scheduled)
+						await SendScheduleNotificationsAsync(id, rescheduled: false);
+
+						return Ok("Live class created", await LoadOneAsync(id, schoolId));
 				}
 				catch (Exception ex)
 				{
 					_logger.Error(ex, "LiveClass: error creating a live class");
-					return Fail(ResponseCode.ErrorOccured, "An error occurred while creating the live class");
+					return ErrorFail(ex, "An error occurred while creating the live class");
 				}
 			}
 		}
@@ -177,6 +203,26 @@ namespace TechHub.Service.Service
 					if (lc.Status != LiveClassStatus.Scheduled)
 						return Fail(ResponseCode.Conflict, "This class has already been started or has finished");
 
+					if (lc.ScheduledStart.HasValue && lc.ScheduledEnd.HasValue)
+					{
+						// A scheduled class can only be started inside its slot - the students were told that time.
+						var slotBegins = Utc(lc.ScheduledStart.Value);
+						var slotEnds = Utc(lc.ScheduledEnd.Value);
+						var checkedAt = DateTime.UtcNow;
+						var lessonState = (await _query.QueryAsync<string>(
+							"SELECT Status FROM LessonContent WHERE Id = @Id",
+							new Dictionary<string, object> { { "Id", lc.LessonId } })).FirstOrDefault();
+
+						if (checkedAt >= slotEnds)
+						{
+							await ExpireSlotAsync(lc.Id);
+							return Fail(ResponseCode.Conflict, "The scheduled time for this class has passed");
+						}
+						if (!string.Equals(lessonState, "Approved", StringComparison.OrdinalIgnoreCase))
+							return Fail(ResponseCode.Conflict, "Your lesson has not been approved yet. You can start this class once it is approved.");
+						if (checkedAt < slotBegins)
+							return Fail(ResponseCode.BadRequest, $"This class is scheduled for {FormatWat(slotBegins)}. You can start it then.");
+					}
 					var teacherBusy = (await _query.QueryAsync<int>(
 						"SELECT COUNT(*) FROM LiveClass WHERE TeacherId = @TeacherId AND Status = 'Live' AND Id <> @Id",
 						new Dictionary<string, object> { { "TeacherId", userId }, { "Id", liveClassId } })).FirstOrDefault();
@@ -193,13 +239,16 @@ namespace TechHub.Service.Service
 						return Fail(ResponseCode.Conflict, "One of the picked students is already in another live class right now");
 
 					var now = DateTime.UtcNow;
-					var ends = now.AddMinutes(lc.DurationMinutes > 0 ? Math.Min(lc.DurationMinutes, LiveClassSettings.AbsoluteMaxMinutes) : ClassMinutes);
+					var ends = lc.ScheduledEnd.HasValue
+						? Utc(lc.ScheduledEnd.Value)
+						: now.AddMinutes(lc.DurationMinutes > 0 ? Math.Min(lc.DurationMinutes, LiveClassSettings.AbsoluteMaxMinutes) : ClassMinutes);
 
 					// One statement checks the status and the platform-wide cap together, so two teachers
 					// starting at the same moment cannot both squeeze past the limit.
 					var started = (await _query.QueryAsync<int>(
 						@"UPDATE LiveClass SET Status = 'Live', StartedAt = @Now, EndsAt = @Ends, Warned5 = 0, Warned2 = 0
 						  WHERE Id = @Id AND SchoolId = @SchoolId AND Status = 'Scheduled'
+						  AND (ScheduledStart IS NULL OR (ScheduledStart <= @Now AND ScheduledEnd > @Now))
 						  AND (SELECT COUNT(*) FROM LiveClass WHERE Status = 'Live') < @Max;
 						  SELECT @@ROWCOUNT;",
 						new Dictionary<string, object> { { "Now", now }, { "Ends", ends }, { "Id", liveClassId }, { "SchoolId", schoolId }, { "Max", _settings.MaxConcurrent } })).FirstOrDefault();
@@ -218,7 +267,8 @@ namespace TechHub.Service.Service
 						await _query.QueryAsync<int>(
 							"UPDATE LiveClass SET Status = 'Scheduled', StartedAt = NULL, EndsAt = NULL WHERE Id = @Id AND Status = 'Live'; SELECT @@ROWCOUNT;",
 							new Dictionary<string, object> { { "Id", liveClassId } });
-						return Fail(ResponseCode.ErrorOccured, "Could not open the audio room. Please try again in a moment.");
+						return Fail(ResponseCode.ErrorOccured, "Could not open the audio room. Please try again in a moment."
+							+ (ShowErrorDetails && _liveKit.LastError != null ? " [" + _liveKit.LastError + "]" : ""));
 					}
 
 					_logger.Information("LiveClass: {LiveClassId} started by {TeacherId}, ends {EndsAt:o}", liveClassId, userId, ends);
@@ -234,7 +284,7 @@ namespace TechHub.Service.Service
 				catch (Exception ex)
 				{
 					_logger.Error(ex, "LiveClass: error starting {LiveClassId}", liveClassId);
-					return Fail(ResponseCode.ErrorOccured, "An error occurred while starting the live class");
+					return ErrorFail(ex, "An error occurred while starting the live class");
 				}
 			}
 		}
@@ -263,7 +313,7 @@ namespace TechHub.Service.Service
 				catch (Exception ex)
 				{
 					_logger.Error(ex, "LiveClass: error ending {LiveClassId}", liveClassId);
-					return Fail(ResponseCode.ErrorOccured, "An error occurred while ending the live class");
+					return ErrorFail(ex, "An error occurred while ending the live class");
 				}
 			}
 		}
@@ -293,11 +343,59 @@ namespace TechHub.Service.Service
 				catch (Exception ex)
 				{
 					_logger.Error(ex, "LiveClass: error cancelling {LiveClassId}", liveClassId);
-					return Fail(ResponseCode.ErrorOccured, "An error occurred while cancelling the live class");
+					return ErrorFail(ex, "An error occurred while cancelling the live class");
 				}
 			}
 		}
 
+		public async Task<BaseResponse> RescheduleAsync(Guid liveClassId, RescheduleLiveClassViewModel model, AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims?.UserId))
+			{
+				try
+				{
+					if (!TryCaller(claims, out var userId, out var schoolId, out var role))
+						return Fail(ResponseCode.Unauthorized, "Invalid user context");
+
+					var lc = await GetRawAsync(liveClassId, schoolId);
+					if (lc is null || lc.TeacherId != userId || !TeacherRoles.Contains(role))
+						return Fail(ResponseCode.NotFound, "Live class not found");
+					if (model is null)
+						return Fail(ResponseCode.BadRequest, "A start time is required");
+					if (lc.Status != LiveClassStatus.Scheduled || !lc.ScheduledStart.HasValue)
+						return Fail(ResponseCode.Conflict, "Only a scheduled class that has not started can be rescheduled");
+
+					var slotError = ResolveSlot(model.ScheduledStart, model.DurationMinutes,
+						lc.DurationMinutes > 0 ? lc.DurationMinutes : ClassMinutes, out var slotS, out var slotE, out var length);
+					if (slotError != null)
+						return Fail(ResponseCode.BadRequest, slotError);
+
+					var studentIds = (await _query.QueryAsync<Guid>(
+						"SELECT StudentId FROM LiveClassStudent WHERE LiveClassId = @Id",
+						new Dictionary<string, object> { { "Id", liveClassId } })).ToList();
+
+					var clash = await FindClashAsync(userId, studentIds, slotS, slotE, liveClassId);
+					if (clash != null)
+						return Fail(ResponseCode.Conflict, clash);
+
+					var wasNotified = lc.ScheduleNotifiedAt.HasValue;
+					var updated = (await _query.QueryAsync<int>(
+						@"UPDATE LiveClass SET ScheduledStart = @Start, ScheduledEnd = @End, DurationMinutes = @Minutes, ScheduleNotifiedAt = NULL
+						  WHERE Id = @Id AND SchoolId = @SchoolId AND Status = 'Scheduled'; SELECT @@ROWCOUNT;",
+						new Dictionary<string, object> { { "Start", slotS }, { "End", slotE }, { "Minutes", length }, { "Id", liveClassId }, { "SchoolId", schoolId } })).FirstOrDefault();
+					if (updated == 0)
+						return Fail(ResponseCode.Conflict, "Only a scheduled class that has not started can be rescheduled");
+
+					await SendScheduleNotificationsAsync(liveClassId, rescheduled: wasNotified);
+					return Ok("Live class rescheduled", await LoadOneAsync(liveClassId, schoolId));
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "LiveClass: error rescheduling {LiveClassId}", liveClassId);
+					return ErrorFail(ex, "An error occurred while rescheduling the live class");
+				}
+			}
+		}
 		public async Task<BaseResponse> SetStudentSpeakAsync(Guid liveClassId, Guid studentId, bool allow, AuthenticatedUserClaims claims)
 		{
 			using (LogContext.PushProperty("RequestedBy", claims?.UserId))
@@ -330,7 +428,7 @@ namespace TechHub.Service.Service
 				catch (Exception ex)
 				{
 					_logger.Error(ex, "LiveClass: error changing speak permission in {LiveClassId}", liveClassId);
-					return Fail(ResponseCode.ErrorOccured, "An error occurred while changing the student's permission");
+					return ErrorFail(ex, "An error occurred while changing the student's permission");
 				}
 			}
 		}
@@ -350,12 +448,19 @@ namespace TechHub.Service.Service
 				if (access is null)
 					return Fail(ResponseCode.NotFound, "Live class not found");
 
-				return Ok("Live class retrieved", await LoadOneAsync(liveClassId, schoolId));
+				if (!access.IsTeacher && !await StudentMaySeeAsync(liveClassId))
+						return Fail(ResponseCode.NotFound, "Live class not found");
+
+					var detail = await LoadOneAsync(liveClassId, schoolId);
+					if (detail != null)
+						detail.Media = await LoadMediaAsync(detail.LessonId, schoolId);
+
+					return Ok("Live class retrieved", detail);
 			}
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "LiveClass: error loading {LiveClassId}", liveClassId);
-				return Fail(ResponseCode.ErrorOccured, "An error occurred while loading the live class");
+				return ErrorFail(ex, "An error occurred while loading the live class");
 			}
 		}
 
@@ -370,7 +475,7 @@ namespace TechHub.Service.Service
 				var recent = "(lc.Status IN ('Scheduled','Live') OR lc.EndedAt > @Since)";
 
 				var list = role == "Student"
-					? await LoadAsync($"lc.SchoolId = @SchoolId AND lc.Id IN (SELECT LiveClassId FROM LiveClassStudent WHERE StudentId = @UserId) AND lc.Status <> 'Cancelled' AND {recent}", p)
+					? await LoadAsync($"lc.SchoolId = @SchoolId AND lc.Id IN (SELECT LiveClassId FROM LiveClassStudent WHERE StudentId = @UserId) AND (lc.Status <> 'Cancelled' OR (lc.EndReason = 'Expired' AND lc.ScheduledStart IS NOT NULL)) AND {StudentVisible} AND {recent}", p)
 					: await LoadAsync($"lc.SchoolId = @SchoolId AND lc.TeacherId = @UserId AND {recent}", p);
 
 				return Ok(list.Count == 0 ? "No live classes" : $"{list.Count} live class(es)", list);
@@ -378,7 +483,7 @@ namespace TechHub.Service.Service
 			catch (Exception ex)
 			{
 				_logger.Error(ex, "LiveClass: error listing classes");
-				return Fail(ResponseCode.ErrorOccured, "An error occurred while loading your live classes");
+				return ErrorFail(ex, "An error occurred while loading your live classes");
 			}
 		}
 
@@ -444,6 +549,7 @@ namespace TechHub.Service.Service
 						Board = new LiveClassBoardDto { Group = $"live:{liveClassId}" },
 						EndsAt = endsAt,
 						SecondsRemaining = (int)Math.Max(0, remaining.TotalSeconds),
+						Media = await LoadMediaAsync(lc.LessonId, schoolId),
 						ServerTime = now,
 						CanSpeak = canSpeak
 					});
@@ -451,7 +557,7 @@ namespace TechHub.Service.Service
 				catch (Exception ex)
 				{
 					_logger.Error(ex, "LiveClass: error joining {LiveClassId}", liveClassId);
-					return Fail(ResponseCode.ErrorOccured, "An error occurred while joining the live class");
+					return ErrorFail(ex, "An error occurred while joining the live class");
 				}
 			}
 		}
@@ -534,8 +640,22 @@ namespace TechHub.Service.Service
 
 			await _query.QueryAsync<int>(
 				@"UPDATE LiveClass SET Status = 'Cancelled', EndedAt = @Now, EndReason = 'Expired'
-				  WHERE Status = 'Scheduled' AND CreatedAt < @Cutoff; SELECT @@ROWCOUNT;",
+				  WHERE Status = 'Scheduled' AND ScheduledStart IS NULL AND CreatedAt < @Cutoff; SELECT @@ROWCOUNT;",
 				new Dictionary<string, object> { { "Now", now }, { "Cutoff", now - ScheduledLifetime } });
+
+			// Scheduled classes: the slot passed without the teacher starting it, or the lesson was rejected.
+			await _query.QueryAsync<int>(
+				@"UPDATE LiveClass SET Status = 'Cancelled', EndedAt = @Now, EndReason = 'Expired'
+				  WHERE Status = 'Scheduled' AND ScheduledEnd IS NOT NULL AND ScheduledEnd <= @Now; SELECT @@ROWCOUNT;",
+				new Dictionary<string, object> { { "Now", now } });
+
+			await _query.QueryAsync<int>(
+				@"UPDATE LiveClass SET Status = 'Cancelled', EndedAt = @Now, EndReason = 'Cancelled'
+				  WHERE Status = 'Scheduled' AND ScheduledStart IS NOT NULL
+				  AND EXISTS (SELECT 1 FROM LessonContent l WHERE l.Id = LiveClass.LessonId AND l.Status = 'Rejected'); SELECT @@ROWCOUNT;",
+				new Dictionary<string, object> { { "Now", now } });
+
+			await SendScheduleNotificationsAsync(null, rescheduled: false);
 		}
 
 		#endregion
@@ -556,6 +676,126 @@ namespace TechHub.Service.Service
 			await _broadcaster.ClassEndedAsync(id, reason);
 			await _liveKit.DeleteRoomAsync(roomName);
 		}
+
+		/// <summary>A student may only see a scheduled class once its lesson has been approved.</summary>
+		private const string StudentVisible =
+			"(lc.ScheduledStart IS NULL OR EXISTS (SELECT 1 FROM LessonContent l2 WHERE l2.Id = lc.LessonId AND l2.Status IN ('Approved','Published')))";
+
+		private const int MinScheduledMinutes = 5;
+		private const int MaxDaysAhead = 90;
+		/// <summary>School time (WAT) is UTC+1 all year, same convention as the rest of the API.</summary>
+		private const int WatOffsetHours = 1;
+
+		/// <summary>Turns the requested start into a UTC slot. No offset sent = school time (WAT).</summary>
+		private static string? ResolveSlot(DateTime requested, int? minutes, int defaultMinutes, out DateTime startUtc, out DateTime endUtc, out int length)
+		{
+			length = minutes ?? defaultMinutes;
+			startUtc = requested.Kind switch
+			{
+				DateTimeKind.Utc => requested,
+				DateTimeKind.Local => requested.ToUniversalTime(),
+				_ => DateTime.SpecifyKind(requested.AddHours(-WatOffsetHours), DateTimeKind.Utc)
+			};
+			endUtc = startUtc.AddMinutes(length);
+
+			if (length < MinScheduledMinutes || length > LiveClassSettings.AbsoluteMaxMinutes)
+				return $"A live class must be between {MinScheduledMinutes} and {LiveClassSettings.AbsoluteMaxMinutes} minutes long";
+
+			var now = DateTime.UtcNow;
+			if (startUtc < now.AddMinutes(-1))
+				return "The start time must be in the future";
+			if (startUtc > now.AddDays(MaxDaysAhead))
+				return $"A live class can be scheduled up to {MaxDaysAhead} days ahead";
+			return null;
+		}
+
+		private static string FormatWat(DateTime utc)
+			=> utc.AddHours(WatOffsetHours).ToString("ddd d MMM, HH:mm", System.Globalization.CultureInfo.InvariantCulture) + " (WAT)";
+
+		/// <summary>Null when the slot is free for the teacher and every picked student; otherwise the message to show.</summary>
+		private async Task<string?> FindClashAsync(Guid teacherId, List<Guid> studentIds, DateTime start, DateTime end, Guid? excludeId)
+		{
+			var p = new Dictionary<string, object>
+			{
+				{ "TeacherId", teacherId }, { "Start", start }, { "End", end }, { "Exclude", excludeId ?? Guid.Empty }
+			};
+			const string overlap = "l.IsActive = 1 AND l.Status IN ('Scheduled','Live') AND l.ScheduledStart IS NOT NULL AND l.ScheduledStart < @End AND l.ScheduledEnd > @Start AND l.Id <> @Exclude";
+
+			var mine = (await _query.QueryAsync<int>(
+				$"SELECT COUNT(*) FROM LiveClass l WHERE {overlap} AND l.TeacherId = @TeacherId", p)).FirstOrDefault();
+			if (mine > 0)
+				return "You already have a live class scheduled at that time";
+
+			var theirs = (await _query.QueryAsync<int>(
+				$@"SELECT COUNT(DISTINCT ls.StudentId) FROM LiveClassStudent ls JOIN LiveClass l ON l.Id = ls.LiveClassId
+				   WHERE {overlap} AND ls.StudentId IN ({GuidList(studentIds)})", p)).FirstOrDefault();
+			return theirs > 0 ? "One of the picked students already has a live class at that time" : null;
+		}
+
+		private async Task ExpireSlotAsync(Guid id)
+			=> await _query.QueryAsync<int>(
+				"UPDATE LiveClass SET Status = 'Cancelled', EndedAt = @Now, EndReason = 'Expired' WHERE Id = @Id AND Status = 'Scheduled'; SELECT @@ROWCOUNT;",
+				new Dictionary<string, object> { { "Now", DateTime.UtcNow }, { "Id", id } });
+
+		private async Task<bool> StudentMaySeeAsync(Guid liveClassId)
+			=> (await _query.QueryAsync<int>(
+				$"SELECT COUNT(*) FROM LiveClass lc WHERE lc.Id = @Id AND {StudentVisible}",
+				new Dictionary<string, object> { { "Id", liveClassId } })).FirstOrDefault() > 0;
+
+		/// <summary>
+		/// Tells the picked students about a scheduled class once its lesson is approved (once per slot; moving the slot
+		/// tells them again). Safe to call from several places - the claim below makes sure only one caller sends.
+		/// </summary>
+		private async Task SendScheduleNotificationsAsync(Guid? onlyId, bool rescheduled)
+		{
+			try
+			{
+				var now = DateTime.UtcNow;
+				var p = new Dictionary<string, object> { { "Now", now } };
+				var only = "";
+				if (onlyId.HasValue)
+				{
+					only = "AND lc.Id = @Only";
+					p["Only"] = onlyId.Value;
+				}
+
+				var due = (await _query.QueryAsync<ScheduleNoticeRow>(
+					$@"SELECT lc.Id, lc.SchoolId, lc.Title, lc.ScheduledStart, (u.FirstName + ' ' + u.LastName) AS TeacherName
+					   FROM LiveClass lc
+					   JOIN LessonContent l ON l.Id = lc.LessonId
+					   LEFT JOIN Users u ON u.Id = lc.TeacherId
+					   WHERE lc.IsActive = 1 AND lc.Status = 'Scheduled' AND lc.ScheduledStart IS NOT NULL AND lc.ScheduledEnd > @Now
+					   AND lc.ScheduleNotifiedAt IS NULL AND l.Status IN ('Approved','Published') {only}", p)).ToList();
+
+				foreach (var c in due)
+				{
+					var claimed = (await _query.QueryAsync<int>(
+						"UPDATE LiveClass SET ScheduleNotifiedAt = @Now WHERE Id = @Id AND ScheduleNotifiedAt IS NULL; SELECT @@ROWCOUNT;",
+						new Dictionary<string, object> { { "Now", now }, { "Id", c.Id } })).FirstOrDefault();
+					if (claimed == 0)
+						continue;
+
+					var students = (await _query.QueryAsync<Guid>(
+						"SELECT StudentId FROM LiveClassStudent WHERE LiveClassId = @Id",
+						new Dictionary<string, object> { { "Id", c.Id } })).ToList();
+
+					await _notifications.NotifyLiveClassScheduledAsync(c.Id, students, c.SchoolId, c.TeacherName ?? "Your teacher",
+						c.Title, FormatWat(Utc(c.ScheduledStart)), rescheduled);
+				}
+			}
+			catch (Exception ex)
+			{
+				_logger.Warning(ex, "LiveClass: could not send schedule notifications");
+			}
+		}
+		/// <summary>The lesson's media details (same source as the lesson-for-class endpoint). Never the files themselves.</summary>
+		private async Task<List<LiveClassMediaDto>> LoadMediaAsync(Guid lessonId, Guid schoolId)
+			=> (await _query.QueryAsync<LiveClassMediaDto>(
+				@"SELECT Id, OriginalFileName AS Name, MediaType, FileExtension, CloudinaryUrl AS Url, FileSizeBytes AS SizeBytes, Duration, DisplayOrder, MetaData
+				  FROM LessonMedia
+				  WHERE LessonContentId = @LessonId AND SchoolId = @SchoolId AND IsActive = 1
+				  ORDER BY DisplayOrder ASC",
+				new Dictionary<string, object> { { "LessonId", lessonId }, { "SchoolId", schoolId } })).ToList();
 
 		private async Task<BaseResponse?> CheckFeatureAsync(Guid schoolId)
 		{
@@ -580,11 +820,13 @@ namespace TechHub.Service.Service
 			var classes = (await _query.QueryAsync<LiveClassDto>(
 				$@"SELECT lc.Id, lc.LessonId, lc.Title, lc.ClassroomId, c.Name AS ClassroomName, lc.SubjectId, s.Subject AS SubjectName,
 				          lc.TeacherId, (u.FirstName + ' ' + u.LastName) AS TeacherName, lc.Status, lc.DurationMinutes, lc.MaxStudents,
-				          lc.BoardSessionId, lc.CreatedAt, lc.StartedAt, lc.EndsAt, lc.EndedAt, lc.EndReason
+				          lc.BoardSessionId, lc.CreatedAt, lc.StartedAt, lc.EndsAt, lc.EndedAt, lc.EndReason,
+					          lc.ScheduledStart, lc.ScheduledEnd, l.Status AS LessonStatus
 				   FROM LiveClass lc
 				   LEFT JOIN Classroom c ON c.Id = lc.ClassroomId
 				   LEFT JOIN Subjects  s ON s.Id = lc.SubjectId
 				   LEFT JOIN Users     u ON u.Id = lc.TeacherId
+					   LEFT JOIN LessonContent l ON l.Id = lc.LessonId
 				   WHERE lc.IsActive = 1 AND {where}
 				   ORDER BY lc.CreatedAt DESC", parameters)).ToList();
 
@@ -597,12 +839,20 @@ namespace TechHub.Service.Service
 				   WHERE ls.LiveClassId IN ({GuidList(classes.Select(c => c.Id))})
 				   ORDER BY u.FirstName", new Dictionary<string, object>())).ToList();
 
+			var serverNow = DateTime.UtcNow;
 			foreach (var c in classes)
 			{
 				c.CreatedAt = Utc(c.CreatedAt);
 				c.StartedAt = c.StartedAt.HasValue ? Utc(c.StartedAt.Value) : null;
 				c.EndsAt = c.EndsAt.HasValue ? Utc(c.EndsAt.Value) : null;
 				c.EndedAt = c.EndedAt.HasValue ? Utc(c.EndedAt.Value) : null;
+				c.ScheduledStart = c.ScheduledStart.HasValue ? Utc(c.ScheduledStart.Value) : null;
+				c.ScheduledEnd = c.ScheduledEnd.HasValue ? Utc(c.ScheduledEnd.Value) : null;
+				c.ServerTime = serverNow;
+				c.CanStartNow = c.Status == LiveClassStatus.Scheduled
+					&& (!c.ScheduledStart.HasValue
+						|| (string.Equals(c.LessonStatus, "Approved", StringComparison.OrdinalIgnoreCase)
+							&& serverNow >= c.ScheduledStart && serverNow < c.ScheduledEnd));
 				c.Students = students.Where(s => s.LiveClassId == c.Id)
 					.Select(s => new LiveClassStudentDto
 					{
@@ -636,6 +886,15 @@ namespace TechHub.Service.Service
 		private static BaseResponse Ok(string message, object? data)
 			=> new BaseResponse { ResponseCode = ResponseCode.successful, ResponseMessage = message, Status = "successful", Data = data! };
 
+		/// <summary>Show the real exception text in error responses: on whenever the app is not Production, or when LiveClass__ShowErrorDetails=true.</summary>
+		private static readonly bool ShowErrorDetails =
+			!string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"), "Production", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(Environment.GetEnvironmentVariable("LiveClass__ShowErrorDetails"), "true", StringComparison.OrdinalIgnoreCase);
+
+		/// <summary>An unexpected failure: already logged by the caller; the response carries the real exception when details are on.</summary>
+		private static BaseResponse ErrorFail(Exception ex, string message)
+			=> Fail(ResponseCode.ErrorOccured, ShowErrorDetails ? message + " [" + ex.GetType().Name + ": " + ex.Message + "]" : message);
+
 		private static BaseResponse Fail(string code, string message)
 			=> new BaseResponse { ResponseCode = code, ResponseMessage = message, Status = "failed" };
 
@@ -667,6 +926,14 @@ namespace TechHub.Service.Service
 			public bool Warned2 { get; set; }
 		}
 
+		public class ScheduleNoticeRow
+		{
+			public Guid Id { get; set; }
+			public Guid SchoolId { get; set; }
+			public string Title { get; set; } = string.Empty;
+			public DateTime ScheduledStart { get; set; }
+			public string? TeacherName { get; set; }
+		}
 		public class StudentRow
 		{
 			public Guid LiveClassId { get; set; }

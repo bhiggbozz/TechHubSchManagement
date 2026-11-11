@@ -31,6 +31,11 @@ namespace TechHub.Core.Entities
 		public bool Warned5 { get; set; }
 		public bool Warned2 { get; set; }
 		public bool IsActive { get; set; } = true;
+		/// <summary>Scheduled classes only: the slot the students were told. It can only be started inside it, and ends at <see cref="ScheduledEnd"/>.</summary>
+		public DateTime? ScheduledStart { get; set; }
+		public DateTime? ScheduledEnd { get; set; }
+		/// <summary>When the picked students were told about the slot (after the lesson was approved). Null = not yet.</summary>
+		public DateTime? ScheduleNotifiedAt { get; set; }
 	}
 
 	/// <summary>One of the (at most three) students the teacher picked. Only these students can ever join.</summary>

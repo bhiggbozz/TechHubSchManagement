@@ -125,6 +125,10 @@ public class LessonService : ILessonService
 			//		return Forbidden("Quiz does not belong to your school");
 			//}
 
+			var deliveryMode = LessonDeliveryMode.Normalize(model.DeliveryMode);
+			if (deliveryMode is null)
+				return BadRequest("deliveryMode must be \"Recorded\" or \"Live\"");
+
 			// Validate media files (optional — lesson can be submitted without media)
 			foreach (var file in model.MediaFiles)
 			{
@@ -176,7 +180,8 @@ public class LessonService : ILessonService
 				{ "ImageMaterialWords", string.IsNullOrWhiteSpace(model.ImageMaterialWords)
 											  ? (object)DBNull.Value
 											  : model.ImageMaterialWords.Trim() },
-				{ "ImageCount", model.ImageCount }
+				{ "ImageCount", model.ImageCount },
+				{ "DeliveryMode", deliveryMode }
 			};
 
 			// ===== BUILD MEDIA DICTS =====
@@ -394,6 +399,7 @@ public class LessonService : ILessonService
 						? LessonStatus.Approved
 						: LessonStatus.PendingApproval,
 					MediaCount = mediaDicts.Count,
+					DeliveryMode = deliveryMode,
 					ApprovalId = model.BypassApproval ? (Guid?)null : approvalId
 				}
 			};
@@ -1106,6 +1112,7 @@ public class LessonService : ILessonService
 						lc.AccessTime,
 						lc.DurationMinutes,
 						lc.AccessEndsAt,
+						lc.DeliveryMode,
 
 						s.Subject     AS SubjectName,
 						t.Name        AS TopicName,
@@ -1210,6 +1217,7 @@ public class LessonService : ILessonService
                 lc.AccessTime,
                 lc.DurationMinutes,
                 lc.AccessEndsAt,
+                lc.DeliveryMode,
 
                 CASE
                     WHEN lc.AccessDate IS NULL THEN 1

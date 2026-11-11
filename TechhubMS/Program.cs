@@ -141,7 +141,14 @@ try
 	builder.Services.AddHostedService<AdminDashboardAggregationWorker>();
 	// The default 32 KB receive limit would disconnect a student who draws one long stroke (about 1,000 points).
 	// 256 KB covers the hub's own 5,000-point stroke cap with room to spare.
-	builder.Services.AddSignalR(o => o.MaximumReceiveMessageSize = 256 * 1024);
+	builder.Services.AddSignalR(o =>
+	{
+		o.MaximumReceiveMessageSize = 256 * 1024;
+		// Unexpected hub exceptions reach the client with their real text outside Production
+		// (or when LiveClass__ShowErrorDetails=true); otherwise SignalR hides them.
+		o.EnableDetailedErrors = builder.Environment.IsDevelopment()
+			|| builder.Configuration.GetValue<bool>("LiveClass:ShowErrorDetails");
+	});
 	builder.Services.AddHostedService<TechhubMS.Hubs.LiveClassTimerService>();
 
 	// Multi-tenant services

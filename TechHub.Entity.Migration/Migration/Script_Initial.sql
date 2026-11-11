@@ -1911,6 +1911,20 @@ IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.ind
 IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LiveClass_Lesson' AND object_id = OBJECT_ID('LiveClass'))
     CREATE INDEX IX_LiveClass_Lesson ON LiveClass(LessonId, Status);
 
+-- Scheduled live classes: a fixed time slot the students can see. Null on classes started on the spot.
+IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND COL_LENGTH('LiveClass', 'ScheduledStart') IS NULL
+    ALTER TABLE LiveClass ADD ScheduledStart DATETIME2 NULL;
+
+IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND COL_LENGTH('LiveClass', 'ScheduledEnd') IS NULL
+    ALTER TABLE LiveClass ADD ScheduledEnd DATETIME2 NULL;
+
+IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND COL_LENGTH('LiveClass', 'ScheduleNotifiedAt') IS NULL
+    ALTER TABLE LiveClass ADD ScheduleNotifiedAt DATETIME2 NULL;
+
+-- Lesson delivery: Recorded (default) or Live
+IF OBJECT_ID('LessonContent', 'U') IS NOT NULL AND COL_LENGTH('LessonContent', 'DeliveryMode') IS NULL
+    ALTER TABLE LessonContent ADD DeliveryMode NVARCHAR(20) NOT NULL DEFAULT 'Recorded';
+
 IF OBJECT_ID('LiveClassStudent', 'U') IS NULL
 BEGIN
     CREATE TABLE LiveClassStudent (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), LiveClassId UNIQUEIDENTIFIER NOT NULL, StudentId UNIQUEIDENTIFIER NOT NULL, SchoolId UNIQUEIDENTIFIER NOT NULL, FirstJoinedAt DATETIME2 NULL, LastLeftAt DATETIME2 NULL, JoinCount INT NOT NULL DEFAULT 0, CanSpeak BIT NOT NULL DEFAULT 0, CONSTRAINT PK_LiveClassStudent PRIMARY KEY (Id));

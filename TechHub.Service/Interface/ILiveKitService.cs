@@ -11,6 +11,9 @@ namespace TechHub.Service.Interface
 		/// <summary>wss:// address browsers connect to.</summary>
 		string ClientUrl { get; }
 
+		/// <summary>Why the last call to LiveKit failed (exception text, or HTTP status and body). Null after a success.</summary>
+		string? LastError { get; }
+
 		/// <summary>
 		/// Short-lived token for one person to join one room. Audio only — nobody can publish video —
 		/// and a student can publish (speak) only when <paramref name="canSpeak"/> is true.
