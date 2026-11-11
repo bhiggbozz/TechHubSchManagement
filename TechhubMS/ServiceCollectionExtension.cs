@@ -63,6 +63,19 @@ namespace TechhubMS
 			services.AddScoped<IMediaService, MediaService>();
 			services.AddScoped<IClassPreparationService, ClassPreparationService>();
 			services.AddScoped<IAttendanceService, AttendanceService>();
+			services.AddMemoryCache();
+			services.AddScoped<IAcademicPeriodResolver, AcademicPeriodResolver>();
+			services.AddScoped<ICalendarService, CalendarService>();
+			services.AddScoped<ICalendarEntryService, CalendarEntryService>();
+			services.AddScoped<IParentQuizService, ParentQuizService>();
+
+			// Live classes: audio over LiveKit, board over SignalR (see Hubs/).
+			services.Configure<TechHub.Core.Configuration.LiveKitSettings>(configuration.GetSection(TechHub.Core.Configuration.LiveKitSettings.SectionName));
+			services.Configure<TechHub.Core.Configuration.LiveClassSettings>(configuration.GetSection(TechHub.Core.Configuration.LiveClassSettings.SectionName));
+			services.AddHttpClient<ILiveKitService, LiveKitService>();
+			services.AddSingleton<TechhubMS.Hubs.LiveBoardState>();
+			services.AddSingleton<ILiveClassBroadcaster, TechhubMS.Hubs.LiveClassBroadcaster>();
+			services.AddScoped<ILiveClassService, LiveClassService>();
 			services.AddScoped<IBackgroundJobService, BackgroundJobService>();
 
 			services.AddScoped<IEmailService, EmailService>();
@@ -165,6 +178,18 @@ namespace TechhubMS
             })
             .AddJwtBearer(options =>
             {
+                // Browsers cannot set an Authorization header on a WebSocket, so the live-board hub
+                // takes the same JWT from ?access_token= — accepted on /hubs paths only.
+                options.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        if (!string.IsNullOrEmpty(accessToken) && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                            context.Token = accessToken;
+                        return Task.CompletedTask;
+                    }
+                };
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuer = true,

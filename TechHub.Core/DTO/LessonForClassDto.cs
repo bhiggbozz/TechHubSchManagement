@@ -40,6 +40,7 @@ public class LessonForClassDto
 	public int? DurationMinutes { get; set; }
 	public DateTime? AccessEndsAt { get; set; }
 	public bool IsAccessOpen { get; set; }
+	public string DeliveryMode { get; set; } = "Recorded";
 }
 
 public class LessonMediaDto

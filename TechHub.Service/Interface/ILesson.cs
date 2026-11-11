@@ -23,5 +23,8 @@ public interface ILessonService
 	Task<BaseResponse> GetLessonsBySubject(Guid subjectId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetSubjectLessonCounts(Guid classroomId, AuthenticatedUserClaims claims);
 	Task<BaseResponse> GetLessonWatchStatus(Guid lessonId, AuthenticatedUserClaims claims);
+
+	/// <summary>Topics taught in a term or a whole session. With neither id, uses the school's current term.</summary>
+	Task<BaseResponse> GetTopicsTaught(Guid? termId, Guid? sessionId, Guid? classroomId, Guid? studentId, Guid? subjectId, AuthenticatedUserClaims claims);
 }
 

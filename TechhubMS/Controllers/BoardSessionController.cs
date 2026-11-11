@@ -25,7 +25,7 @@ public class BoardSessionController : ControllerBase
     /// Publishes to RabbitMQ queue and returns immediately.
     /// </summary>
     [HttpPost("session/{sessionId}/batch")]
-    [Authorize(Roles = "SubjectTeacher,HeadTeacher")]
+    [Authorize(Roles = "SubjectTeacher,HeadTeacher,ClassTeacher")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

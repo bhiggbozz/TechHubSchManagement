@@ -25,4 +25,5 @@ public class TeacherLessonRow
 	public string SubTopicName { get; set; }
 	public string ClassName { get; set; }
 	public string? ApprovedByName { get; set; }
+	public string DeliveryMode { get; set; } = "Recorded";
 }

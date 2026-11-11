@@ -32,6 +32,10 @@ Log.Logger = new LoggerConfiguration()
 	.MinimumLevel.Debug()
 	.MinimumLevel.Override("Microsoft", LogEventLevel.Information)
 	.MinimumLevel.Override("System", LogEventLevel.Information)
+	// The live board rejects bad input by throwing HubException on purpose (a student trying to draw,
+	// an oversized stroke...). SignalR logs those at Error, which would flood ApplicationLogs; the hub
+	// logs its own unexpected failures itself.
+	.MinimumLevel.Override("Microsoft.AspNetCore.SignalR.Internal.DefaultHubDispatcher", LogEventLevel.Fatal)
 	.Enrich.FromLogContext()
 	.WriteTo.Console(
 		outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}"
@@ -48,6 +52,11 @@ try
 	Log.Information("?? Starting TechHub application");
 
 	var builder = WebApplication.CreateBuilder(args);
+
+	// GenerateAssemblyInfo is off in this project, so the UserSecretsId attribute is never
+	// emitted and the default secrets provider finds nothing — register it by id instead.
+	if (builder.Environment.IsDevelopment())
+		builder.Configuration.AddUserSecrets("803fb1d4-4972-4fcc-9c84-a09fd0487722");
 
 	builder.Services.Configure<HostOptions>(options =>
 	{
@@ -130,6 +139,17 @@ try
 	builder.Services.AddHostedService<QuestionJobWorker>();
 	builder.Services.AddHostedService<PerformanceAggregationWorker>();
 	builder.Services.AddHostedService<AdminDashboardAggregationWorker>();
+	// The default 32 KB receive limit would disconnect a student who draws one long stroke (about 1,000 points).
+	// 256 KB covers the hub's own 5,000-point stroke cap with room to spare.
+	builder.Services.AddSignalR(o =>
+	{
+		o.MaximumReceiveMessageSize = 256 * 1024;
+		// Unexpected hub exceptions reach the client with their real text outside Production
+		// (or when LiveClass__ShowErrorDetails=true); otherwise SignalR hides them.
+		o.EnableDetailedErrors = builder.Environment.IsDevelopment()
+			|| builder.Configuration.GetValue<bool>("LiveClass:ShowErrorDetails");
+	});
+	builder.Services.AddHostedService<TechhubMS.Hubs.LiveClassTimerService>();
 
 	// Multi-tenant services
 	builder.Services.AddMultiTenantServices(builder.Configuration, builder.Environment);
@@ -194,6 +214,7 @@ var app = builder.Build();
 	app.UseMiddleware<ResponseCodeMiddleware>();
 
 	app.MapControllers();
+	app.MapHub<TechhubMS.Hubs.LiveBoardHub>("/hubs/live-board");
 
 	Log.Information("? Application started successfully");
 

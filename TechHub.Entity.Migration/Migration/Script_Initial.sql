@@ -1636,6 +1636,115 @@ BEGIN
 END;
 
 -- ========================================================================
+-- School calendar: AcademicSession -> AcademicTerm
+-- The admin defines the academic year and its terms (names/count are free
+-- text: "First Term", "Autumn Term", "Semester 1" ...). Dates are SQL DATE,
+-- inclusive on both ends, so there is no time/timezone component. Term
+-- Sequence is derived from start-date order by the service, never supplied
+-- by the client. Calendar entries (assessment weeks, exams, holidays ...)
+-- are a later addition that will reference these two tables.
+-- ========================================================================
+
+IF OBJECT_ID('AcademicSession', 'U') IS NULL
+BEGIN
+    CREATE TABLE AcademicSession (
+        Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        SchoolId     UNIQUEIDENTIFIER NOT NULL,
+        Name         NVARCHAR(100)    NOT NULL,
+        StartDate    DATE             NOT NULL,
+        EndDate      DATE             NOT NULL,
+        CreatedBy    UNIQUEIDENTIFIER NOT NULL,
+        CreatedAt    DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        ModifiedAt   DATETIME2        NULL,
+        IsActive     BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_AcademicSession PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_AcademicSession_School_Dates
+        ON AcademicSession(SchoolId, StartDate, EndDate) WHERE IsActive = 1;
+END;
+
+IF OBJECT_ID('AcademicTerm', 'U') IS NULL
+BEGIN
+    CREATE TABLE AcademicTerm (
+        Id           UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        SessionId    UNIQUEIDENTIFIER NOT NULL,
+        SchoolId     UNIQUEIDENTIFIER NOT NULL,
+        Name         NVARCHAR(100)    NOT NULL,
+        Sequence     INT              NOT NULL DEFAULT 0,
+        StartDate    DATE             NOT NULL,
+        EndDate      DATE             NOT NULL,
+        CreatedBy    UNIQUEIDENTIFIER NOT NULL,
+        CreatedAt    DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        IsActive     BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_AcademicTerm PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_AcademicTerm_SessionId
+        ON AcademicTerm(SessionId, Sequence) WHERE IsActive = 1;
+END;
+
+-- Calendar entries: assessment/quiz periods, mid-term, exams, holidays.
+-- Scope is School | Classroom | Subject. SupersededLevel = highest authority level
+-- (1 teacher, 2 head teacher, 3 admin) that has changed someone else's entry; anyone
+-- below that level can no longer edit it.
+IF OBJECT_ID('CalendarEntry', 'U') IS NULL
+BEGIN
+    CREATE TABLE CalendarEntry (
+        Id              UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        SchoolId        UNIQUEIDENTIFIER NOT NULL,
+        SessionId       UNIQUEIDENTIFIER NOT NULL,
+        TermId          UNIQUEIDENTIFIER NULL,
+        Title           NVARCHAR(100)    NOT NULL,
+        EntryType       NVARCHAR(30)     NOT NULL,
+        Description     NVARCHAR(500)    NULL,
+        StartDate       DATE             NOT NULL,
+        EndDate         DATE             NOT NULL,
+        ScopeType       NVARCHAR(20)     NOT NULL,
+        ClassroomId     UNIQUEIDENTIFIER NULL,
+        SubjectId       UNIQUEIDENTIFIER NULL,
+        CreatedBy       UNIQUEIDENTIFIER NOT NULL,
+        CreatedByRole   NVARCHAR(30)     NOT NULL,
+        CreatedAt       DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        ModifiedAt      DATETIME2        NULL,
+        SupersededLevel INT              NOT NULL DEFAULT 0,
+        IsActive        BIT              NOT NULL DEFAULT 1,
+        CONSTRAINT PK_CalendarEntry PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_CalendarEntry_School_Dates
+        ON CalendarEntry(SchoolId, StartDate, EndDate) WHERE IsActive = 1;
+END;
+
+-- Before/after record of every edit or delete of a calendar entry. OnOthersEntry = 1 when
+-- the person changing it is not its creator — those are the changes shown to viewers.
+IF OBJECT_ID('CalendarEntryChange', 'U') IS NULL
+BEGIN
+    CREATE TABLE CalendarEntryChange (
+        Id             UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(),
+        EntryId        UNIQUEIDENTIFIER NOT NULL,
+        SchoolId       UNIQUEIDENTIFIER NOT NULL,
+        ChangedBy      UNIQUEIDENTIFIER NOT NULL,
+        ChangedByRole  NVARCHAR(30)     NOT NULL,
+        ChangedAt      DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
+        Action         NVARCHAR(20)     NOT NULL,
+        OldTitle       NVARCHAR(100)    NULL,
+        NewTitle       NVARCHAR(100)    NULL,
+        OldEntryType   NVARCHAR(30)     NULL,
+        NewEntryType   NVARCHAR(30)     NULL,
+        OldStartDate   DATE             NULL,
+        OldEndDate     DATE             NULL,
+        NewStartDate   DATE             NULL,
+        NewEndDate     DATE             NULL,
+        OnOthersEntry  BIT              NOT NULL DEFAULT 0,
+        CONSTRAINT PK_CalendarEntryChange PRIMARY KEY (Id)
+    );
+
+    CREATE INDEX IX_CalendarEntryChange_EntryId
+        ON CalendarEntryChange(EntryId, ChangedAt);
+END;
+
+-- ========================================================================
 -- ApplicationLogs (database error logging)
 -- Fire-and-forget, channel-based error logging written by IDbLogger /
 -- GlobalExceptionMiddleware, flushed in batches by the LogWriterService
@@ -1687,6 +1796,145 @@ IF COL_LENGTH('School', 'ModifiedBy') IS NULL
 BEGIN
     ALTER TABLE School ADD ModifiedBy UNIQUEIDENTIFIER NULL;
 END;
+
+-- ========================================================================
+-- Academic session/term stamped on quizzes, assessments and their attempts
+-- (nullable; set at creation time from the school calendar, never joined at read time)
+-- ========================================================================
+
+IF OBJECT_ID('Quiz', 'U') IS NOT NULL AND COL_LENGTH('Quiz', 'SessionId') IS NULL
+BEGIN
+    ALTER TABLE Quiz ADD SessionId UNIQUEIDENTIFIER NULL, TermId UNIQUEIDENTIFIER NULL;
+END;
+
+IF OBJECT_ID('Quiz', 'U') IS NOT NULL AND COL_LENGTH('Quiz', 'TermId') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Quiz_School_Term' AND object_id = OBJECT_ID('Quiz'))
+BEGIN
+    EXEC('CREATE INDEX IX_Quiz_School_Term ON Quiz(SchoolId, TermId)');
+END;
+
+IF OBJECT_ID('QuizAttempt', 'U') IS NOT NULL AND COL_LENGTH('QuizAttempt', 'SessionId') IS NULL
+BEGIN
+    ALTER TABLE QuizAttempt ADD SessionId UNIQUEIDENTIFIER NULL, TermId UNIQUEIDENTIFIER NULL;
+END;
+
+IF OBJECT_ID('QuizAttempt', 'U') IS NOT NULL AND COL_LENGTH('QuizAttempt', 'TermId') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_QuizAttempt_School_Term' AND object_id = OBJECT_ID('QuizAttempt'))
+BEGIN
+    EXEC('CREATE INDEX IX_QuizAttempt_School_Term ON QuizAttempt(SchoolId, TermId) INCLUDE (Status)');
+END;
+
+IF OBJECT_ID('Assessments', 'U') IS NOT NULL AND COL_LENGTH('Assessments', 'SessionId') IS NULL
+BEGIN
+    ALTER TABLE Assessments ADD SessionId UNIQUEIDENTIFIER NULL, TermId UNIQUEIDENTIFIER NULL;
+END;
+
+IF OBJECT_ID('Assessments', 'U') IS NOT NULL AND COL_LENGTH('Assessments', 'TermId') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Assessments_School_Term' AND object_id = OBJECT_ID('Assessments'))
+BEGIN
+    EXEC('CREATE INDEX IX_Assessments_School_Term ON Assessments(SchoolId, TermId)');
+END;
+
+IF OBJECT_ID('AssessmentAttempt', 'U') IS NOT NULL AND COL_LENGTH('AssessmentAttempt', 'SessionId') IS NULL
+BEGIN
+    ALTER TABLE AssessmentAttempt ADD SessionId UNIQUEIDENTIFIER NULL, TermId UNIQUEIDENTIFIER NULL;
+END;
+
+IF OBJECT_ID('AssessmentAttempt', 'U') IS NOT NULL AND COL_LENGTH('AssessmentAttempt', 'TermId') IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_AssessmentAttempt_School_Term' AND object_id = OBJECT_ID('AssessmentAttempt'))
+BEGIN
+    EXEC('CREATE INDEX IX_AssessmentAttempt_School_Term ON AssessmentAttempt(SchoolId, TermId) INCLUDE (Status)');
+END;
+
+-- ========================================================================
+-- Parent-set practice quizzes (separate from teacher Assessments/Quiz)
+-- ========================================================================
+
+IF OBJECT_ID('ParentQuizConfig', 'U') IS NULL
+BEGIN
+    CREATE TABLE ParentQuizConfig (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), SchoolId UNIQUEIDENTIFIER NOT NULL, ParentId UNIQUEIDENTIFIER NOT NULL, QuestionCount INT NOT NULL DEFAULT 10, Mode NVARCHAR(20) NOT NULL DEFAULT 'Mix', TimeLimitMinutes INT NULL, PassMarkPercent INT NOT NULL DEFAULT 50, ShuffleQuestions BIT NOT NULL DEFAULT 1, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), UpdatedAt DATETIME2 NULL, CONSTRAINT PK_ParentQuizConfig PRIMARY KEY (Id));
+END;
+
+IF OBJECT_ID('ParentQuizConfig', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_ParentQuizConfig_Parent' AND object_id = OBJECT_ID('ParentQuizConfig'))
+    CREATE UNIQUE INDEX UQ_ParentQuizConfig_Parent ON ParentQuizConfig(ParentId, SchoolId);
+
+IF OBJECT_ID('ParentQuiz', 'U') IS NULL
+BEGIN
+    CREATE TABLE ParentQuiz (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), SchoolId UNIQUEIDENTIFIER NOT NULL, ParentId UNIQUEIDENTIFIER NOT NULL, StudentId UNIQUEIDENTIFIER NOT NULL, SubjectId UNIQUEIDENTIFIER NOT NULL, SubjectName NVARCHAR(200) NOT NULL, TopicNames NVARCHAR(1000) NULL, Title NVARCHAR(200) NOT NULL, Mode NVARCHAR(20) NOT NULL DEFAULT 'Mix', QuestionCount INT NOT NULL, TimeLimitMinutes INT NULL, PassMarkPercent INT NOT NULL DEFAULT 50, Status NVARCHAR(20) NOT NULL DEFAULT 'Pending', SessionId UNIQUEIDENTIFIER NULL, TermId UNIQUEIDENTIFIER NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), CompletedAt DATETIME2 NULL, IsActive BIT NOT NULL DEFAULT 1, CONSTRAINT PK_ParentQuiz PRIMARY KEY (Id));
+END;
+
+IF OBJECT_ID('ParentQuiz', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ParentQuiz_Parent' AND object_id = OBJECT_ID('ParentQuiz'))
+    CREATE INDEX IX_ParentQuiz_Parent ON ParentQuiz(ParentId, StudentId, CreatedAt DESC);
+
+IF OBJECT_ID('ParentQuiz', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ParentQuiz_Student' AND object_id = OBJECT_ID('ParentQuiz'))
+    CREATE INDEX IX_ParentQuiz_Student ON ParentQuiz(StudentId, Status) INCLUDE (ParentId, CreatedAt);
+
+IF OBJECT_ID('ParentQuizQuestion', 'U') IS NULL
+BEGIN
+    CREATE TABLE ParentQuizQuestion (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), QuizId UNIQUEIDENTIFIER NOT NULL, QuestionId UNIQUEIDENTIFIER NOT NULL, DisplayOrder INT NOT NULL DEFAULT 0, DifficultyLevel INT NOT NULL DEFAULT 0, CONSTRAINT PK_ParentQuizQuestion PRIMARY KEY (Id));
+END;
+
+IF OBJECT_ID('ParentQuizQuestion', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ParentQuizQuestion_Quiz' AND object_id = OBJECT_ID('ParentQuizQuestion'))
+    CREATE INDEX IX_ParentQuizQuestion_Quiz ON ParentQuizQuestion(QuizId, DisplayOrder);
+
+IF OBJECT_ID('ParentQuizQuestion', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ParentQuizQuestion_Question' AND object_id = OBJECT_ID('ParentQuizQuestion'))
+    CREATE INDEX IX_ParentQuizQuestion_Question ON ParentQuizQuestion(QuestionId);
+
+IF OBJECT_ID('ParentQuizAttempt', 'U') IS NULL
+BEGIN
+    CREATE TABLE ParentQuizAttempt (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), QuizId UNIQUEIDENTIFIER NOT NULL, StudentId UNIQUEIDENTIFIER NOT NULL, SchoolId UNIQUEIDENTIFIER NOT NULL, Status NVARCHAR(20) NOT NULL DEFAULT 'InProgress', StartedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), SubmittedAt DATETIME2 NULL, TimeTakenSeconds INT NULL, TotalQuestions INT NOT NULL DEFAULT 0, TotalCorrect INT NOT NULL DEFAULT 0, TotalWrong INT NOT NULL DEFAULT 0, TotalSkipped INT NOT NULL DEFAULT 0, ScorePercent DECIMAL(5,2) NULL, IsPassed BIT NULL, CONSTRAINT PK_ParentQuizAttempt PRIMARY KEY (Id));
+END;
+
+IF OBJECT_ID('ParentQuizAttempt', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_ParentQuizAttempt_Quiz' AND object_id = OBJECT_ID('ParentQuizAttempt'))
+    CREATE UNIQUE INDEX UQ_ParentQuizAttempt_Quiz ON ParentQuizAttempt(QuizId);
+
+IF OBJECT_ID('ParentQuizAnswer', 'U') IS NULL
+BEGIN
+    CREATE TABLE ParentQuizAnswer (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), AttemptId UNIQUEIDENTIFIER NOT NULL, QuestionId UNIQUEIDENTIFIER NOT NULL, SelectedOptionId UNIQUEIDENTIFIER NULL, IsCorrect BIT NOT NULL DEFAULT 0, IsSkipped BIT NOT NULL DEFAULT 0, CONSTRAINT PK_ParentQuizAnswer PRIMARY KEY (Id));
+END;
+
+IF OBJECT_ID('ParentQuizAnswer', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ParentQuizAnswer_Attempt' AND object_id = OBJECT_ID('ParentQuizAnswer'))
+    CREATE INDEX IX_ParentQuizAnswer_Attempt ON ParentQuizAnswer(AttemptId);
+
+-- Live classes: a teacher plus up to three picked students (audio via LiveKit, board via SignalR).
+IF OBJECT_ID('LiveClass', 'U') IS NULL
+BEGIN
+    CREATE TABLE LiveClass (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), SchoolId UNIQUEIDENTIFIER NOT NULL, LessonId UNIQUEIDENTIFIER NOT NULL, ClassroomId UNIQUEIDENTIFIER NOT NULL, SubjectId UNIQUEIDENTIFIER NULL, TeacherId UNIQUEIDENTIFIER NOT NULL, Title NVARCHAR(200) NOT NULL, Status NVARCHAR(20) NOT NULL DEFAULT 'Scheduled', DurationMinutes INT NOT NULL DEFAULT 40, MaxStudents INT NOT NULL DEFAULT 3, BoardSessionId UNIQUEIDENTIFIER NOT NULL, RoomName NVARCHAR(100) NOT NULL, CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(), StartedAt DATETIME2 NULL, EndsAt DATETIME2 NULL, EndedAt DATETIME2 NULL, EndReason NVARCHAR(30) NULL, Warned5 BIT NOT NULL DEFAULT 0, Warned2 BIT NOT NULL DEFAULT 0, IsActive BIT NOT NULL DEFAULT 1, CONSTRAINT PK_LiveClass PRIMARY KEY (Id));
+END;
+
+IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LiveClass_Status' AND object_id = OBJECT_ID('LiveClass'))
+    CREATE INDEX IX_LiveClass_Status ON LiveClass(Status, SchoolId);
+
+IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LiveClass_Teacher' AND object_id = OBJECT_ID('LiveClass'))
+    CREATE INDEX IX_LiveClass_Teacher ON LiveClass(TeacherId, CreatedAt DESC);
+
+IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LiveClass_Lesson' AND object_id = OBJECT_ID('LiveClass'))
+    CREATE INDEX IX_LiveClass_Lesson ON LiveClass(LessonId, Status);
+
+-- Scheduled live classes: a fixed time slot the students can see. Null on classes started on the spot.
+IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND COL_LENGTH('LiveClass', 'ScheduledStart') IS NULL
+    ALTER TABLE LiveClass ADD ScheduledStart DATETIME2 NULL;
+
+IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND COL_LENGTH('LiveClass', 'ScheduledEnd') IS NULL
+    ALTER TABLE LiveClass ADD ScheduledEnd DATETIME2 NULL;
+
+IF OBJECT_ID('LiveClass', 'U') IS NOT NULL AND COL_LENGTH('LiveClass', 'ScheduleNotifiedAt') IS NULL
+    ALTER TABLE LiveClass ADD ScheduleNotifiedAt DATETIME2 NULL;
+
+-- Lesson delivery: Recorded (default) or Live
+IF OBJECT_ID('LessonContent', 'U') IS NOT NULL AND COL_LENGTH('LessonContent', 'DeliveryMode') IS NULL
+    ALTER TABLE LessonContent ADD DeliveryMode NVARCHAR(20) NOT NULL DEFAULT 'Recorded';
+
+IF OBJECT_ID('LiveClassStudent', 'U') IS NULL
+BEGIN
+    CREATE TABLE LiveClassStudent (Id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID(), LiveClassId UNIQUEIDENTIFIER NOT NULL, StudentId UNIQUEIDENTIFIER NOT NULL, SchoolId UNIQUEIDENTIFIER NOT NULL, FirstJoinedAt DATETIME2 NULL, LastLeftAt DATETIME2 NULL, JoinCount INT NOT NULL DEFAULT 0, CanSpeak BIT NOT NULL DEFAULT 0, CONSTRAINT PK_LiveClassStudent PRIMARY KEY (Id));
+END;
+
+IF OBJECT_ID('LiveClassStudent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_LiveClassStudent' AND object_id = OBJECT_ID('LiveClassStudent'))
+    CREATE UNIQUE INDEX UQ_LiveClassStudent ON LiveClassStudent(LiveClassId, StudentId);
+
+IF OBJECT_ID('LiveClassStudent', 'U') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LiveClassStudent_Student' AND object_id = OBJECT_ID('LiveClassStudent'))
+    CREATE INDEX IX_LiveClassStudent_Student ON LiveClassStudent(StudentId, LiveClassId);
 
 -- ========================================================================
 -- MIGRATION COMPLETE

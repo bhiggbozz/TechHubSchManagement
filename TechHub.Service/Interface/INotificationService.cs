@@ -21,5 +21,9 @@ namespace TechHub.Service.Interface
 		Task NotifyAssessmentAssignedAsync(Guid assessmentId, string targetType, List<Guid> targetIds, Guid schoolId);
 		Task NotifyGroupContentSubmittedAsync(Guid contentId, Guid approverId, Guid schoolId, string aim, string groupName);
 		Task NotifyGroupContentApprovedAsync(Guid contentId, Guid schoolId);
+		Task NotifyParentQuizAssignedAsync(Guid quizId, Guid studentId, Guid schoolId, string title);
+		Task NotifyParentQuizCompletedAsync(Guid quizId, Guid parentId, Guid schoolId, string studentName, string title, decimal scorePercent);
+		Task NotifyLiveClassStartedAsync(Guid liveClassId, List<Guid> studentIds, Guid schoolId, string teacherName, string title);
+		Task NotifyLiveClassScheduledAsync(Guid liveClassId, List<Guid> studentIds, Guid schoolId, string teacherName, string title, string whenText, bool rescheduled);
 	}
 }

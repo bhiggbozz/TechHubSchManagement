@@ -105,6 +105,19 @@ public class QuestionPreviewResponse : BaseResponse
 {
 	public Guid JobId { get; set; }
 	public int TotalExtracted { get; set; }
+
+	// Where the extraction was filed (what the teacher chose at submit time). The review/save
+	// screen should use these instead of asking again, so a question can't end up under a
+	// different class/subject/topic/sub-topic than the one it was extracted for.
+	public Guid? ClassroomId { get; set; }
+	public string? ClassroomName { get; set; }
+	public Guid? SubjectId { get; set; }
+	public string? SubjectName { get; set; }
+	public Guid? TopicId { get; set; }
+	public string? TopicName { get; set; }
+	public Guid? SubTopicId { get; set; }
+	public string? SubTopicName { get; set; }
+
 	public List<QuestionPreviewItem> Questions { get; set; } = new();
 }
 
@@ -113,6 +126,13 @@ public class QuestionPreviewItem
 	public Guid QuestionId { get; set; }
 	public int? QuestionNumber { get; set; }
 	public string QuestionType { get; set; } = string.Empty;
+
+	// This question's own filing as currently saved (starts equal to the job's).
+	public Guid ClassroomId { get; set; }
+	public Guid SubjectId { get; set; }
+	public Guid? TopicId { get; set; }
+	public Guid? SubTopicId { get; set; }
+
 	public string? QuestionHtml { get; set; }
 	public string? ContentParts { get; set; }
 	public bool HasLatex { get; set; }

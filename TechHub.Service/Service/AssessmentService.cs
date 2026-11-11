@@ -37,6 +37,7 @@ public class AssessmentService : IAssessmentService
     private readonly string _connString;
     private readonly IBoardSessionRepository _boardRepo;
     private readonly INotificationService _notificationService;
+    private readonly IAcademicPeriodResolver _periods;
 
     public AssessmentService(
         ICommandRespository<Assessments> assessmentCommand,
@@ -54,7 +55,8 @@ public class AssessmentService : IAssessmentService
         IConfiguration configuration,
         ILogger logger,
         IBoardSessionRepository boardRepo,
-        INotificationService notificationService)
+        INotificationService notificationService,
+        IAcademicPeriodResolver periods)
     {
         _assessmentCommand = assessmentCommand;
         _configCommand = configCommand;
@@ -71,6 +73,7 @@ public class AssessmentService : IAssessmentService
         _configuration = configuration;
         _logger = logger;
         _notificationService = notificationService;
+        _periods = periods;
         _connString = _configuration.GetConnectionString("DbConnectionString") ?? string.Empty;
         _boardRepo = boardRepo;
     }
@@ -475,7 +478,7 @@ public class AssessmentService : IAssessmentService
                 using var scope = _dbTransactionScopeFactory.Create("DbConnectionString");
                 try
                 {
-                    await _assessmentCommand.Create(scope.Transaction, scope.Connection, new Dictionary<string, object>
+                    var assessmentDict = new Dictionary<string, object>
                     {
                         { "Id", assessmentId },
                         { "Code", code },
@@ -485,7 +488,9 @@ public class AssessmentService : IAssessmentService
                         { "CreatedByUserId", teacherId },
                         { "CreatedAt", now },
                         { "UpdatedAt", now }
-                    });
+                    };
+                    (await _periods.ResolveNowAsync(schoolId)).ApplyTo(assessmentDict);
+                    await _assessmentCommand.Create(scope.Transaction, scope.Connection, assessmentDict);
 
                     var configId = Guid.NewGuid();
                     await _configCommand.Create(scope.Transaction, scope.Connection, new Dictionary<string, object>
@@ -1026,7 +1031,7 @@ public class AssessmentService : IAssessmentService
 
                 // Create attempt
                 var attemptId = Guid.NewGuid();
-                await _attemptCommand.Create(new Dictionary<string, object>
+                var attemptDict = new Dictionary<string, object>
                 {
                     { "Id", attemptId },
                     { "AssessmentId", assessmentId },
@@ -1041,7 +1046,9 @@ public class AssessmentService : IAssessmentService
                     { "StartedAt", now },
                     { "CreationDate", now },
                     { "ModifiedDate", now }
-                });
+                };
+                (await _periods.ResolveNowAsync(schoolId)).ApplyTo(attemptDict);
+                await _attemptCommand.Create(attemptDict);
 
                 // Fetch questions
                 using var conn = new SqlConnection(_connString);

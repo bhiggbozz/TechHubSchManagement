@@ -51,6 +51,12 @@ public class SubmitLessonViewModel
 	public int? DurationMinutes { get; set; }
 
 	/// <summary>
+	/// "Recorded" (default, also when omitted) or "Live". Live marks the lesson as one the teacher
+	/// will schedule as a live class; the class itself is still created with POST /api/live-class.
+	/// </summary>
+	public string? DeliveryMode { get; set; }
+
+	/// <summary>
 	/// Whether the system should auto-generate an AI image for this lesson
 	/// once it is approved. When false, no image is generated for the lesson.
 	/// </summary>
@@ -70,6 +76,22 @@ public class SubmitLessonViewModel
 	/// </summary>
 	[Range(1, 5, ErrorMessage = "Image count must be between 1 and 5")]
 	public int ImageCount { get; set; } = 1;
+}
+
+/// <summary>How a lesson is delivered. Recorded is the default and what every lesson from before this field was.</summary>
+public static class LessonDeliveryMode
+{
+	public const string Recorded = "Recorded";
+	public const string Live = "Live";
+
+	/// <summary>Null/blank = Recorded. Case-insensitive. Returns null for anything else.</summary>
+	public static string? Normalize(string? value)
+	{
+		if (string.IsNullOrWhiteSpace(value)) return Recorded;
+		if (value.Trim().Equals(Recorded, StringComparison.OrdinalIgnoreCase)) return Recorded;
+		if (value.Trim().Equals(Live, StringComparison.OrdinalIgnoreCase)) return Live;
+		return null;
+	}
 }
 
 public class LessonMediaViewModel

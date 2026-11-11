@@ -125,6 +125,10 @@ public class LessonService : ILessonService
 			//		return Forbidden("Quiz does not belong to your school");
 			//}
 
+			var deliveryMode = LessonDeliveryMode.Normalize(model.DeliveryMode);
+			if (deliveryMode is null)
+				return BadRequest("deliveryMode must be \"Recorded\" or \"Live\"");
+
 			// Validate media files (optional — lesson can be submitted without media)
 			foreach (var file in model.MediaFiles)
 			{
@@ -176,7 +180,8 @@ public class LessonService : ILessonService
 				{ "ImageMaterialWords", string.IsNullOrWhiteSpace(model.ImageMaterialWords)
 											  ? (object)DBNull.Value
 											  : model.ImageMaterialWords.Trim() },
-				{ "ImageCount", model.ImageCount }
+				{ "ImageCount", model.ImageCount },
+				{ "DeliveryMode", deliveryMode }
 			};
 
 			// ===== BUILD MEDIA DICTS =====
@@ -394,6 +399,7 @@ public class LessonService : ILessonService
 						? LessonStatus.Approved
 						: LessonStatus.PendingApproval,
 					MediaCount = mediaDicts.Count,
+					DeliveryMode = deliveryMode,
 					ApprovalId = model.BypassApproval ? (Guid?)null : approvalId
 				}
 			};
@@ -577,6 +583,268 @@ public class LessonService : ILessonService
 		catch (Exception ex)
 		{
 			_logger.Error(ex, "Error fetching lesson watch status - LessonId: {LessonId}", lessonId);
+			return ServerError();
+		}
+	}
+
+	// ── Topics taught in a term / session ─────────────────────────────────────
+	// "Taught" = an Approved lesson dated inside the period. A lesson's date is its scheduled
+	// AccessDate, else the day it was approved (WAT). Computed from dates, so no stamping or
+	// extra tables: SchoolId + classroom narrow it first, the date test runs on that small set.
+
+	private sealed class PeriodTerm
+	{
+		public Guid Id { get; set; }
+		public string Name { get; set; } = "";
+		public DateTime StartDate { get; set; }
+		public DateTime EndDate { get; set; }
+	}
+
+	private sealed class PeriodSession
+	{
+		public Guid Id { get; set; }
+		public string Name { get; set; } = "";
+		public DateTime StartDate { get; set; }
+		public DateTime EndDate { get; set; }
+	}
+
+	public async Task<BaseResponse> GetTopicsTaught(Guid? termId, Guid? sessionId, Guid? classroomId, Guid? studentId, Guid? subjectId, AuthenticatedUserClaims claims)
+	{
+		try
+		{
+			if (!Guid.TryParse(claims.SchoolId, out var schoolId) || !Guid.TryParse(claims.UserId, out var callerId))
+				return Unauthorized();
+
+			var role = claims.Role ?? "";
+			var isStudent = role == "Student";
+			var isParent = role == "Parent";
+
+			// ── Who is the report about, and which classrooms ──
+			Guid? subject = null;
+			string? studentName = null;
+			if (isStudent) subject = callerId;
+			else if (studentId.HasValue) subject = studentId;
+
+			if (isParent)
+			{
+				if (!studentId.HasValue)
+					return BadRequest("studentId is required");
+				var linked = await _lessonQuery.QueryAsync<int>(
+					"SELECT COUNT(*) FROM StudentParent WHERE ParentId = @P AND StudentId = @S AND SchoolId = @Sc AND IsActive = 1",
+					new Dictionary<string, object> { { "P", callerId }, { "S", studentId.Value }, { "Sc", schoolId } });
+				if (linked.FirstOrDefault() == 0)
+					return Forbidden("You can only view topics for your own children");
+			}
+
+			List<TopicsTaughtClassroomDto> classrooms;
+			if (subject.HasValue)
+			{
+				var names = (await _lessonQuery.QueryAsync<string>(
+					"SELECT FirstName + ' ' + LastName FROM Users WHERE Id = @S AND SchoolId = @Sc AND RoleId = 0",
+					new Dictionary<string, object> { { "S", subject.Value }, { "Sc", schoolId } })).ToList();
+				if (names.Count == 0)
+					return NotFound("Student not found");
+				studentName = names[0];
+
+				classrooms = (await _lessonQuery.QueryAsync<TopicsTaughtClassroomDto>(
+					@"SELECT c.Id AS ClassroomId, c.Name AS ClassroomName
+					  FROM StudentClassroom sc JOIN Classroom c ON c.Id = sc.ClassroomId
+					  WHERE sc.StudentId = @S AND sc.SchoolId = @Sc AND sc.IsActive = 1",
+					new Dictionary<string, object> { { "S", subject.Value }, { "Sc", schoolId } })).ToList();
+				if (classroomId.HasValue)
+					classrooms = classrooms.Where(c => c.ClassroomId == classroomId.Value).ToList();
+				if (classrooms.Count == 0)
+					return NotFound("No classroom found for this student");
+			}
+			else
+			{
+				if (!classroomId.HasValue)
+					return BadRequest("classroomId or studentId is required");
+				classrooms = (await _lessonQuery.QueryAsync<TopicsTaughtClassroomDto>(
+					"SELECT Id AS ClassroomId, Name AS ClassroomName FROM Classroom WHERE Id = @C AND SchoolId = @Sc",
+					new Dictionary<string, object> { { "C", classroomId.Value }, { "Sc", schoolId } })).ToList();
+				if (classrooms.Count == 0)
+					return NotFound("Classroom not found");
+			}
+
+			// ── Resolve the period ──
+			PeriodSession? session = null;
+			PeriodTerm? onlyTerm = null;
+			var today = DateTime.UtcNow.AddHours(1).Date; // WAT
+
+			async Task<PeriodSession?> LoadSession(string where, Dictionary<string, object> p)
+			{
+				p["Sc"] = schoolId;
+				return (await _lessonQuery.QueryAsync<PeriodSession>(
+					$"SELECT TOP 1 Id, Name, StartDate, EndDate FROM AcademicSession WHERE SchoolId = @Sc AND IsActive = 1 AND {where}", p))
+					.FirstOrDefault();
+			}
+
+			if (termId.HasValue)
+			{
+				onlyTerm = (await _lessonQuery.QueryAsync<PeriodTerm>(
+					"SELECT Id, Name, StartDate, EndDate FROM AcademicTerm WHERE Id = @T AND SchoolId = @Sc AND IsActive = 1",
+					new Dictionary<string, object> { { "T", termId.Value }, { "Sc", schoolId } })).FirstOrDefault();
+				if (onlyTerm is null)
+					return NotFound("Term not found");
+				session = await LoadSession("Id = (SELECT SessionId FROM AcademicTerm WHERE Id = @T)", new Dictionary<string, object> { { "T", termId.Value } });
+			}
+			else if (sessionId.HasValue)
+			{
+				session = await LoadSession("Id = @S", new Dictionary<string, object> { { "S", sessionId.Value } });
+				if (session is null)
+					return NotFound("Session not found");
+			}
+			else
+			{
+				// Nothing asked for: the term containing today, else the session containing today,
+				// else the most recent session.
+				onlyTerm = (await _lessonQuery.QueryAsync<PeriodTerm>(
+					"SELECT TOP 1 Id, Name, StartDate, EndDate FROM AcademicTerm WHERE SchoolId = @Sc AND IsActive = 1 AND StartDate <= @D AND EndDate >= @D",
+					new Dictionary<string, object> { { "Sc", schoolId }, { "D", today } })).FirstOrDefault();
+				session = onlyTerm is not null
+					? await LoadSession("Id = (SELECT SessionId FROM AcademicTerm WHERE Id = @T)", new Dictionary<string, object> { { "T", onlyTerm.Id } })
+					: await LoadSession("StartDate <= @D AND EndDate >= @D", new Dictionary<string, object> { { "D", today } })
+					  ?? await LoadSession("1 = 1 ORDER BY EndDate DESC --", new Dictionary<string, object>());
+			}
+
+			if (session is null)
+				return NotFound("No academic calendar has been set up for this school yet");
+
+			var terms = (await _lessonQuery.QueryAsync<PeriodTerm>(
+				"SELECT Id, Name, StartDate, EndDate FROM AcademicTerm WHERE SessionId = @S AND SchoolId = @Sc AND IsActive = 1 ORDER BY StartDate",
+				new Dictionary<string, object> { { "S", session.Id }, { "Sc", schoolId } })).ToList();
+
+			var from = (onlyTerm?.StartDate ?? session.StartDate).Date;
+			var to = (onlyTerm?.EndDate ?? session.EndDate).Date;
+
+			// ── Lessons ──
+			var classroomList = string.Join(",", classrooms.Select(c => $"'{c.ClassroomId}'"));
+			var p2 = new Dictionary<string, object> { { "Sc", schoolId }, { "From", from }, { "To", to } };
+			var subjectFilter = "";
+			if (subjectId.HasValue)
+			{
+				subjectFilter = "AND lc.SubjectId = @Subj";
+				p2["Subj"] = subjectId.Value;
+			}
+			var watchedSelect = "CAST(0 AS BIT)";
+			var watchedJoin = "";
+			if (subject.HasValue)
+			{
+				watchedSelect = "CAST(CASE WHEN slp.Id IS NOT NULL THEN 1 ELSE 0 END AS BIT)";
+				watchedJoin = "LEFT JOIN StudentLessonProgress slp ON slp.LessonId = lc.Id AND slp.StudentId = @Stu AND slp.SchoolId = @Sc";
+				p2["Stu"] = subject.Value;
+			}
+
+			var rows = (await _lessonQuery.QueryAsync<TopicsTaughtRow>($@"
+				SELECT lc.Id AS LessonId, lc.Aim,
+				       c.Id AS ClassroomId, c.Name AS ClassroomName,
+				       s.Id AS SubjectId, s.Subject AS SubjectName,
+				       t.Id AS TopicId, t.Name AS TopicName,
+				       st.Id AS SubTopicId, COALESCE(st.Name, lc.SubTopic) AS SubTopicName,
+				       u.FirstName + ' ' + u.LastName AS TeacherName,
+				       d.TaughtOn,
+				       {watchedSelect} AS Watched
+				FROM   LessonContent lc
+				CROSS APPLY (SELECT CAST(COALESCE(lc.AccessDate, DATEADD(HOUR, 1, lc.ApprovedAt), DATEADD(HOUR, 1, lc.CreatedAt)) AS DATE) AS TaughtOn) d
+				JOIN   Classroom c ON c.Id = lc.ClassroomId
+				JOIN   Subjects  s ON s.Id = lc.SubjectId
+				JOIN   Topic     t ON t.Id = lc.TopicId
+				JOIN   Users     u ON u.Id = lc.CreatedBy
+				LEFT JOIN SubTopic st ON st.Id = lc.SubTopicId
+				{watchedJoin}
+				WHERE  lc.SchoolId = @Sc AND lc.IsActive = 1
+				AND    lc.Status = '{LessonStatus.Approved}'
+				AND    lc.ClassroomId IN ({classroomList})
+				AND    d.TaughtOn BETWEEN @From AND @To
+				{subjectFilter}
+				ORDER  BY d.TaughtOn, s.Subject, t.Name", p2)).ToList();
+
+			// ── Shape: term → subject → topic → lessons ──
+			static string Day(DateTime d) => d.ToString("yyyy-MM-dd");
+
+			var buckets = new List<(PeriodTerm? Term, List<TopicsTaughtRow> Rows)>();
+			if (onlyTerm is not null)
+				buckets.Add((onlyTerm, rows));
+			else
+			{
+				foreach (var term in terms)
+					buckets.Add((term, rows.Where(r => r.TaughtOn.Date >= term.StartDate.Date && r.TaughtOn.Date <= term.EndDate.Date).ToList()));
+				var between = rows.Where(r => !terms.Any(t => r.TaughtOn.Date >= t.StartDate.Date && r.TaughtOn.Date <= t.EndDate.Date)).ToList();
+				if (between.Count > 0)
+					buckets.Add((null, between));
+			}
+
+			var termDtos = buckets.Select(b => new TopicsTaughtTermDto
+			{
+				TermId = b.Term?.Id,
+				TermName = b.Term?.Name,
+				From = b.Term is null ? null : Day(b.Term.StartDate),
+				To = b.Term is null ? null : Day(b.Term.EndDate),
+				LessonCount = b.Rows.Count,
+				TopicCount = b.Rows.Select(r => r.TopicId).Distinct().Count(),
+				Subjects = b.Rows.GroupBy(r => new { r.SubjectId, r.SubjectName })
+					.OrderBy(g => g.Key.SubjectName)
+					.Select(g => new TopicsTaughtSubjectDto
+					{
+						SubjectId = g.Key.SubjectId,
+						SubjectName = g.Key.SubjectName,
+						LessonCount = g.Count(),
+						Topics = g.GroupBy(r => new { r.TopicId, r.TopicName })
+							.Select(tg => new TopicsTaughtTopicDto
+							{
+								TopicId = tg.Key.TopicId,
+								TopicName = tg.Key.TopicName,
+								LessonCount = tg.Count(),
+								FirstTaughtOn = Day(tg.Min(r => r.TaughtOn)),
+								LastTaughtOn = Day(tg.Max(r => r.TaughtOn)),
+								Lessons = tg.OrderBy(r => r.TaughtOn).Select(r => new TopicsTaughtLessonDto
+								{
+									LessonId = r.LessonId,
+									Aim = r.Aim,
+									SubTopicId = r.SubTopicId,
+									SubTopicName = r.SubTopicName,
+									ClassroomName = r.ClassroomName,
+									TeacherName = r.TeacherName,
+									TaughtOn = Day(r.TaughtOn),
+									Watched = subject.HasValue ? r.Watched : null
+								}).ToList()
+							})
+							.OrderBy(tp => tp.FirstTaughtOn).ThenBy(tp => tp.TopicName)
+							.ToList()
+					}).ToList()
+			}).ToList();
+
+			var dto = new TopicsTaughtDto
+			{
+				Scope = onlyTerm is not null ? "Term" : "Session",
+				SessionId = session.Id,
+				SessionName = session.Name,
+				TermId = onlyTerm?.Id,
+				TermName = onlyTerm?.Name,
+				From = Day(from),
+				To = Day(to),
+				StudentId = subject,
+				StudentName = studentName,
+				Classrooms = classrooms,
+				TotalLessons = rows.Count,
+				TotalTopics = rows.Select(r => r.TopicId).Distinct().Count(),
+				Terms = termDtos
+			};
+
+			return new BaseResponse
+			{
+				ResponseCode = ResponseCode.successful,
+				ResponseMessage = rows.Count == 0
+					? "No lessons were taught in this period"
+					: $"{dto.TotalTopics} topic(s) across {dto.TotalLessons} lesson(s)",
+				Status = "successful",
+				Data = dto
+			};
+		}
+		catch (Exception ex)
+		{
+			_logger.Error(ex, "Error fetching topics taught - UserId: {UserId}", claims?.UserId);
 			return ServerError();
 		}
 	}
@@ -844,6 +1112,7 @@ public class LessonService : ILessonService
 						lc.AccessTime,
 						lc.DurationMinutes,
 						lc.AccessEndsAt,
+						lc.DeliveryMode,
 
 						s.Subject     AS SubjectName,
 						t.Name        AS TopicName,
@@ -948,6 +1217,7 @@ public class LessonService : ILessonService
                 lc.AccessTime,
                 lc.DurationMinutes,
                 lc.AccessEndsAt,
+                lc.DeliveryMode,
 
                 CASE
                     WHEN lc.AccessDate IS NULL THEN 1
