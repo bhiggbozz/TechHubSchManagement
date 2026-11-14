@@ -72,7 +72,7 @@ namespace TechhubMS.Hubs
 			if (access.Status != LiveClassStatus.Live || endsAt <= DateTime.UtcNow)
 				throw new HubException("This class is not live");
 
-			_state.AddConnection(Context.ConnectionId, new LiveBoardState.Member(liveClassId, userId, schoolId, access.IsTeacher));
+			_state.AddConnection(Context.ConnectionId, new LiveBoardState.Member(liveClassId, userId, schoolId, access.IsTeacher, access.DisplayName));
 			await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(liveClassId));
 			await Clients.OthersInGroup(GroupName(liveClassId))
 				.SendAsync("Presence", new { userId, role = access.IsTeacher ? "Teacher" : "Student", joined = true });
@@ -84,6 +84,7 @@ namespace TechhubMS.Hubs
 			{
 				var snapshot = LiveBoardState.SnapshotOf(room.Main, room.Seq, remaining);
 				snapshot.SharedStudentId = room.SharedStudentId;
+				snapshot.HandQueue = room.HandQueue.ToList();
 
 				if (access.IsTeacher)
 				{
@@ -257,6 +258,61 @@ namespace TechhubMS.Hubs
 			await Clients.OthersInGroup(GroupName(liveClassId)).SendAsync("BoardShared", new { studentId, snapshot });
 		}
 
+		// ── Raised hands (students ask to speak; everyone sees the queue) ─────
+
+		/// <summary>Student only. Joins the end of the queue; raising twice changes nothing.</summary>
+		public async Task RaiseHand(Guid liveClassId)
+		{
+			var member = RequireMember(liveClassId);
+			if (member.IsTeacher)
+				throw new HubException("Only a student can raise a hand");
+			var room = RequireRoom(liveClassId);
+
+			bool changed;
+			lock (room.Lock)
+			{
+				changed = room.HandQueue.All(h => h.StudentId != member.UserId);
+				if (changed)
+					room.HandQueue.Add(new HandEntry(member.UserId, member.Name));
+			}
+			if (changed)
+				await BroadcastHandQueue(liveClassId, room);
+		}
+
+		/// <summary>Student only. Leaves the queue (nothing happens if not in it).</summary>
+		public async Task LowerHand(Guid liveClassId)
+		{
+			var member = RequireMember(liveClassId);
+			if (member.IsTeacher)
+				throw new HubException("Only a student can lower their own hand");
+			var room = RequireRoom(liveClassId);
+			if (RemoveHand(room, member.UserId))
+				await BroadcastHandQueue(liveClassId, room);
+		}
+
+		/// <summary>Teacher only. Takes a student out of the queue, for example after they have spoken.</summary>
+		public async Task LowerStudentHand(Guid liveClassId, Guid studentId)
+		{
+			var (room, _) = RequireTeacher(liveClassId);
+			if (RemoveHand(room, studentId))
+				await BroadcastHandQueue(liveClassId, room);
+		}
+
+		private static bool RemoveHand(LiveBoardState.Room room, Guid studentId)
+		{
+			lock (room.Lock)
+				return room.HandQueue.RemoveAll(h => h.StudentId == studentId) > 0;
+		}
+
+		/// <summary>Sends the whole ordered queue (never a delta) to the teacher and every student.</summary>
+		private Task BroadcastHandQueue(Guid liveClassId, LiveBoardState.Room room)
+		{
+			List<HandEntry> queue;
+			lock (room.Lock)
+				queue = room.HandQueue.ToList();
+			return Clients.Group(GroupName(liveClassId)).SendAsync("HandQueueChanged", new { queue });
+		}
+
 		// ── Leaving ───────────────────────────────────────────────────────────
 
 		public override async Task OnDisconnectedAsync(Exception? exception)
@@ -269,7 +325,14 @@ namespace TechhubMS.Hubs
 					.SendAsync("Presence", new { userId = member.UserId, role = member.IsTeacher ? "Teacher" : "Student", joined = false });
 
 				if (!member.IsTeacher)
+				{
+					// A student who reconnected has a newer connection; only a real leave drops their hand.
+					var stillHere = _state.ConnectionsOf(member.LiveClassId).Any(c => c.Member.UserId == member.UserId);
+					if (!stillHere && _state.TryGetRoom(member.LiveClassId, out var room) && RemoveHand(room, member.UserId))
+						await BroadcastHandQueue(member.LiveClassId, room);
+
 					await _service.RecordStudentLeftAsync(member.LiveClassId, member.UserId);
+				}
 			}
 			await base.OnDisconnectedAsync(exception);
 		}

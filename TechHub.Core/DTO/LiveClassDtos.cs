@@ -36,6 +36,8 @@ namespace TechHub.Core.DTO
 		/// <summary>Scheduled classes: the slot (UTC). Null for a class that is started on the spot.</summary>
 		public DateTime? ScheduledStart { get; set; }
 		public DateTime? ScheduledEnd { get; set; }
+		/// <summary>Practice quiz attached when the class was scheduled (a normal quiz code); null if none.</summary>
+		public string? QuizCode { get; set; }
 		/// <summary>Status of the lesson behind the class (PendingApproval | Approved | Rejected | Published).</summary>
 		public string? LessonStatus { get; set; }
 		/// <summary>Teacher: the Start button may be pressed now (approved, and inside the slot). Ignore for students.</summary>

@@ -36,6 +36,8 @@ namespace TechHub.Core.Entities
 		public DateTime? ScheduledEnd { get; set; }
 		/// <summary>When the picked students were told about the slot (after the lesson was approved). Null = not yet.</summary>
 		public DateTime? ScheduleNotifiedAt { get; set; }
+		/// <summary>Optional practice quiz (a normal quiz code) the teacher attached when scheduling. Null = none.</summary>
+		public string? QuizCode { get; set; }
 	}
 
 	/// <summary>One of the (at most three) students the teacher picked. Only these students can ever join.</summary>
