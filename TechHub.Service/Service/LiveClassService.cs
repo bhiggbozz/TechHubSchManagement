@@ -1,4 +1,5 @@
 using Dapper;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Serilog;
 using Serilog.Context;
@@ -40,6 +41,7 @@ namespace TechHub.Service.Service
 		private readonly ISchoolFeatureService _features;
 		private readonly INotificationService _notifications;
 		private readonly LiveClassSettings _settings;
+		private readonly IConfiguration _configuration;
 		private readonly ILogger _logger;
 
 		public LiveClassService(
@@ -50,6 +52,7 @@ namespace TechHub.Service.Service
 			ISchoolFeatureService features,
 			INotificationService notifications,
 			IOptions<LiveClassSettings> settings,
+			IConfiguration configuration,
 			ILogger logger)
 		{
 			_query = query;
@@ -59,6 +62,7 @@ namespace TechHub.Service.Service
 			_features = features;
 			_notifications = notifications;
 			_settings = settings.Value;
+			_configuration = configuration;
 			_logger = logger;
 		}
 
@@ -181,6 +185,187 @@ namespace TechHub.Service.Service
 			}
 		}
 
+		/// <summary>
+		/// One call that schedules a live class end to end: its own lesson (DeliveryMode = Live), media, the picked
+		/// students, an optional practice quiz and the slot - in one transaction. Written as a copy of the recorded
+		/// SubmitLesson rules (auto-approve for a head teacher or a teacher with no line manager, otherwise an approval
+		/// request to the line manager) so the two flows can change independently.
+		/// </summary>
+		public async Task<BaseResponse> ScheduleAsync(ScheduleLiveClassViewModel model, AuthenticatedUserClaims claims)
+		{
+			using (LogContext.PushProperty("RequestedBy", claims?.UserId))
+			{
+				try
+				{
+					if (!TryCaller(claims, out var userId, out var schoolId, out var role))
+						return Fail(ResponseCode.Unauthorized, "Invalid user context");
+					if (!TeacherRoles.Contains(role))
+						return Fail(ResponseCode.Forbidden, "Only teachers can schedule live classes");
+					if (model == null || !model.ScheduledStart.HasValue)
+						return Fail(ResponseCode.BadRequest, "A start time is required");
+
+					var gate = await CheckFeatureAsync(schoolId);
+					if (gate != null) return gate;
+
+					var studentIds = (model.StudentIds ?? new List<Guid>()).Where(x => x != Guid.Empty).Distinct().ToList();
+					if (studentIds.Count < 1)
+						return Fail(ResponseCode.BadRequest, "Pick at least one student");
+					if (studentIds.Count > LiveClassSettings.AbsoluteMaxStudents)
+						return Fail(ResponseCode.BadRequest, $"A live class can have at most {LiveClassSettings.AbsoluteMaxStudents} students");
+
+					foreach (var file in model.MediaFiles ?? new List<LiveClassMediaViewModel>())
+						if (string.IsNullOrWhiteSpace(file.CloudinaryUrl) || string.IsNullOrWhiteSpace(file.PublicId))
+							return Fail(ResponseCode.BadRequest, $"Invalid media file data for {file.OriginalFileName}");
+
+					var teacher = (await _query.QueryAsync<TeacherRow>(
+						"SELECT IsActive, LineManagerId FROM Users WHERE Id = @Id AND SchoolId = @SchoolId",
+						new Dictionary<string, object> { { "Id", userId }, { "SchoolId", schoolId } })).FirstOrDefault();
+					if (teacher is null || !teacher.IsActive)
+						return Fail(ResponseCode.Forbidden, "Your account is not active");
+
+					var classroomOk = (await _query.QueryAsync<int>(
+						"SELECT COUNT(*) FROM Classroom WHERE Id = @Id AND SchoolId = @SchoolId",
+						new Dictionary<string, object> { { "Id", model.ClassroomId }, { "SchoolId", schoolId } })).FirstOrDefault();
+					if (classroomOk == 0)
+						return Fail(ResponseCode.NotFound, "Classroom not found");
+
+					var valid = (await _query.QueryAsync<int>(
+						$@"SELECT COUNT(*) FROM Users u
+						   WHERE u.SchoolId = @SchoolId AND u.IsActive = 1 AND u.RoleId = 0 AND u.Id IN ({GuidList(studentIds)})
+						   AND EXISTS (SELECT 1 FROM StudentClassroom sc WHERE sc.StudentId = u.Id AND sc.ClassroomId = @ClassroomId AND sc.SchoolId = @SchoolId AND sc.IsActive = 1)",
+						new Dictionary<string, object> { { "SchoolId", schoolId }, { "ClassroomId", model.ClassroomId } })).FirstOrDefault();
+					if (valid != studentIds.Count)
+						return Fail(ResponseCode.BadRequest, "Every picked student must be an active student in this class");
+
+					string? quizCode = string.IsNullOrWhiteSpace(model.QuizCode) ? null : model.QuizCode.Trim();
+					if (quizCode != null)
+					{
+						var quizOwner = (await _query.QueryAsync<Guid?>(
+							"SELECT TOP 1 CreatedBy FROM Quiz WHERE Code = @Code AND SchoolId = @SchoolId AND IsActive = 1",
+							new Dictionary<string, object> { { "Code", quizCode }, { "SchoolId", schoolId } })).FirstOrDefault();
+						if (quizOwner is null)
+							return Fail(ResponseCode.BadRequest, "Quiz not found in your school");
+						if (role != "HeadTeacher" && quizOwner != userId)
+							return Fail(ResponseCode.Forbidden, "You can only attach a quiz you created");
+					}
+
+					var slotError = ResolveSlot(model.ScheduledStart.Value, model.DurationMinutes, ClassMinutes, out var slotStart, out var slotEnd, out var minutes);
+					if (slotError != null)
+						return Fail(ResponseCode.BadRequest, slotError);
+
+					var clash = await FindClashAsync(userId, studentIds, slotStart, slotEnd, null);
+					if (clash != null)
+						return Fail(ResponseCode.Conflict, clash);
+
+					var autoPublish = role == "HeadTeacher" || !teacher.LineManagerId.HasValue;
+					var now = DateTime.UtcNow;
+					var lessonId = Guid.NewGuid();
+					var liveClassId = Guid.NewGuid();
+					var title = string.IsNullOrWhiteSpace(model.Title) ? Truncate(model.Aim.Trim(), 200) : Truncate(model.Title.Trim(), 200);
+
+					using (var scope = _scopeFactory.Create("DbConnectionString"))
+					{
+						try
+						{
+							await scope.Connection.ExecuteAsync(
+								@"INSERT INTO LessonContent (Id, SchoolId, ClassroomId, SubjectId, TopicId, SubTopicId, SubTopic, Aim, Description, Status,
+								        CreatedBy, ApprovedBy, CreatedAt, ModifiedAt, ApprovedAt, ShouldGenerateImage, ImageCount, DeliveryMode)
+								  VALUES (@Id, @SchoolId, @ClassroomId, @SubjectId, @TopicId, @SubTopicId, '', @Aim, @Description, @Status,
+								        @CreatedBy, @ApprovedBy, @Now, @Now, @ApprovedAt, 0, 1, 'Live')",
+								new
+								{
+									Id = lessonId, SchoolId = schoolId, model.ClassroomId, model.SubjectId, model.TopicId, model.SubTopicId,
+									Aim = model.Aim.Trim(), Description = model.Description.Trim(),
+									Status = autoPublish ? LessonStatus.Approved : LessonStatus.PendingApproval,
+									CreatedBy = userId, ApprovedBy = autoPublish ? userId : (Guid?)null,
+									Now = now, ApprovedAt = autoPublish ? now : (DateTime?)null
+								}, scope.Transaction);
+
+							var media = (model.MediaFiles ?? new List<LiveClassMediaViewModel>()).Select((f, i) => new
+							{
+								Id = Guid.NewGuid(), LessonContentId = lessonId, SchoolId = schoolId,
+								f.FileName, f.OriginalFileName, f.FileExtension,
+								MediaType = MediaTypes.Resolve(f.FileExtension),
+								f.FileSizeBytes, f.CloudinaryUrl, f.PublicId, f.Duration,
+								Status = "Ready", DisplayOrder = f.DisplayOrder > 0 ? f.DisplayOrder : i + 1,
+								CreatedAt = now, IsActive = true, f.MetaData
+							}).ToList();
+							if (media.Count > 0)
+								await scope.Connection.ExecuteAsync(
+									@"INSERT INTO LessonMedia (Id, LessonContentId, SchoolId, FileName, OriginalFileName, FileExtension, MediaType, FileSizeBytes,
+									        CloudinaryUrl, PublicId, Duration, Status, DisplayOrder, CreatedAt, IsActive, MetaData)
+									  VALUES (@Id, @LessonContentId, @SchoolId, @FileName, @OriginalFileName, @FileExtension, @MediaType, @FileSizeBytes,
+									        @CloudinaryUrl, @PublicId, @Duration, @Status, @DisplayOrder, @CreatedAt, @IsActive, @MetaData)",
+									media, scope.Transaction);
+
+							if (!autoPublish)
+							{
+								var expiryDays = int.TryParse(_configuration["Approvals:ExpiryDays"], out var d) ? d : 5;
+								var names = await scope.Connection.QuerySingleAsync<NamesRow>(
+									@"SELECT ISNULL((SELECT TOP 1 Subject FROM Subjects WHERE Id = @SubjectId), 'Unknown') AS SubjectName,
+									         ISNULL((SELECT TOP 1 Name FROM Topic WHERE Id = @TopicId), 'Unknown') AS TopicName,
+									         ISNULL((SELECT TOP 1 Name FROM Classroom WHERE Id = @ClassroomId), 'Unknown') AS ClassName",
+									new { model.SubjectId, model.TopicId, model.ClassroomId }, scope.Transaction);
+								var payload = System.Text.Json.JsonSerializer.Serialize(new LessonApprovalPayload
+								{
+									LessonId = lessonId, Aim = model.Aim, Description = model.Description,
+									SubjectName = names.SubjectName, TopicName = names.TopicName, SubTopic = string.Empty,
+									ClassName = names.ClassName, MediaCount = media.Count, HasRecording = false
+								});
+								await scope.Connection.ExecuteAsync(
+									@"INSERT INTO ApprovalRequests (Id, SchoolId, RequestedBy, ApproverId, OperationType, EntityType, EntityId, Payload, Status, CreatedAt, ExpiresAt)
+									  VALUES (@Id, @SchoolId, @RequestedBy, @ApproverId, @OperationType, 'LessonContent', @EntityId, @Payload, @Status, @CreatedAt, @ExpiresAt)",
+									new
+									{
+										Id = Guid.NewGuid(), SchoolId = schoolId, RequestedBy = userId, ApproverId = teacher.LineManagerId!.Value,
+										OperationType = OperationType.SubmitLesson, EntityId = lessonId, Payload = payload,
+										Status = ApprovalStatus.Pending, CreatedAt = now, ExpiresAt = now.AddDays(expiryDays)
+									}, scope.Transaction);
+							}
+
+							await scope.Connection.ExecuteAsync(
+								@"INSERT INTO LiveClass (Id, SchoolId, LessonId, ClassroomId, SubjectId, TeacherId, Title, Status, DurationMinutes, MaxStudents,
+								        BoardSessionId, RoomName, ScheduledStart, ScheduledEnd, QuizCode)
+								  VALUES (@Id, @SchoolId, @LessonId, @ClassroomId, @SubjectId, @TeacherId, @Title, 'Scheduled', @Minutes, @MaxStudents,
+								        @BoardSessionId, @RoomName, @ScheduledStart, @ScheduledEnd, @QuizCode)",
+								new
+								{
+									Id = liveClassId, SchoolId = schoolId, LessonId = lessonId, model.ClassroomId, model.SubjectId,
+									TeacherId = userId, Title = title, Minutes = minutes, MaxStudents = LiveClassSettings.AbsoluteMaxStudents,
+									BoardSessionId = Guid.NewGuid(), RoomName = $"lc-{liveClassId:N}",
+									ScheduledStart = slotStart, ScheduledEnd = slotEnd, QuizCode = quizCode
+								}, scope.Transaction);
+
+							await scope.Connection.ExecuteAsync(
+								"INSERT INTO LiveClassStudent (Id, LiveClassId, StudentId, SchoolId) VALUES (NEWID(), @LiveClassId, @StudentId, @SchoolId)",
+								studentIds.Select(x => new { LiveClassId = liveClassId, StudentId = x, SchoolId = schoolId }), scope.Transaction);
+
+							await scope.CommitAsync();
+						}
+						catch
+						{
+							try { await scope.RollbackAsync(); } catch { }
+							throw;
+						}
+					}
+
+					_logger.Information("LiveClass: {LiveClassId} scheduled by {TeacherId} with new lesson {LessonId}, {Count} student(s), quiz {QuizCode}, auto-approved {Auto}",
+						liveClassId, userId, lessonId, studentIds.Count, quizCode, autoPublish);
+
+					if (autoPublish)
+						await SendScheduleNotificationsAsync(liveClassId, rescheduled: false);
+
+					return Ok(autoPublish ? "Live class scheduled" : "Live class scheduled; waiting for your line manager to approve the lesson",
+						await LoadOneAsync(liveClassId, schoolId));
+				}
+				catch (Exception ex)
+				{
+					_logger.Error(ex, "LiveClass: error scheduling a live class");
+					return ErrorFail(ex, "An error occurred while scheduling the live class");
+				}
+			}
+		}
+
 		public async Task<BaseResponse> StartAsync(Guid liveClassId, AuthenticatedUserClaims claims)
 		{
 			using (LogContext.PushProperty("RequestedBy", claims?.UserId))
@@ -218,7 +403,8 @@ namespace TechHub.Service.Service
 							await ExpireSlotAsync(lc.Id);
 							return Fail(ResponseCode.Conflict, "The scheduled time for this class has passed");
 						}
-						if (!string.Equals(lessonState, "Approved", StringComparison.OrdinalIgnoreCase))
+						// Published = approved and already recorded once, so a reused class must still start.
+						if (!string.Equals(lessonState, "Approved", StringComparison.OrdinalIgnoreCase) && !string.Equals(lessonState, "Published", StringComparison.OrdinalIgnoreCase))
 							return Fail(ResponseCode.Conflict, "Your lesson has not been approved yet. You can start this class once it is approved.");
 						if (checkedAt < slotBegins)
 							return Fail(ResponseCode.BadRequest, $"This class is scheduled for {FormatWat(slotBegins)}. You can start it then.");
@@ -570,6 +756,7 @@ namespace TechHub.Service.Service
 		{
 			var row = (await _query.QueryAsync<AccessRow>(
 				@"SELECT lc.Status, lc.EndsAt,
+				         (SELECT TOP 1 u.FirstName + ' ' + u.LastName FROM Users u WHERE u.Id = @UserId) AS DisplayName,
 				         CASE WHEN lc.TeacherId = @UserId THEN 1 ELSE 0 END AS IsTeacher,
 				         CASE WHEN EXISTS (SELECT 1 FROM LiveClassStudent ls WHERE ls.LiveClassId = lc.Id AND ls.StudentId = @UserId) THEN 1 ELSE 0 END AS IsStudent
 				  FROM LiveClass lc WHERE lc.Id = @Id AND lc.SchoolId = @SchoolId AND lc.IsActive = 1",
@@ -581,7 +768,7 @@ namespace TechHub.Service.Service
 			return new LiveClassAccess
 			{
 				LiveClassId = liveClassId, SchoolId = schoolId, Status = row.Status,
-				IsTeacher = row.IsTeacher, IsStudent = row.IsStudent, EndsAt = row.EndsAt
+				IsTeacher = row.IsTeacher, IsStudent = row.IsStudent, EndsAt = row.EndsAt, DisplayName = row.DisplayName ?? string.Empty
 			};
 		}
 
@@ -821,7 +1008,7 @@ namespace TechHub.Service.Service
 				$@"SELECT lc.Id, lc.LessonId, lc.Title, lc.ClassroomId, c.Name AS ClassroomName, lc.SubjectId, s.Subject AS SubjectName,
 				          lc.TeacherId, (u.FirstName + ' ' + u.LastName) AS TeacherName, lc.Status, lc.DurationMinutes, lc.MaxStudents,
 				          lc.BoardSessionId, lc.CreatedAt, lc.StartedAt, lc.EndsAt, lc.EndedAt, lc.EndReason,
-					          lc.ScheduledStart, lc.ScheduledEnd, l.Status AS LessonStatus
+					          lc.ScheduledStart, lc.ScheduledEnd, lc.QuizCode, l.Status AS LessonStatus
 				   FROM LiveClass lc
 				   LEFT JOIN Classroom c ON c.Id = lc.ClassroomId
 				   LEFT JOIN Subjects  s ON s.Id = lc.SubjectId
@@ -898,6 +1085,19 @@ namespace TechHub.Service.Service
 		private static BaseResponse Fail(string code, string message)
 			=> new BaseResponse { ResponseCode = code, ResponseMessage = message, Status = "failed" };
 
+		public class TeacherRow
+		{
+			public bool IsActive { get; set; }
+			public Guid? LineManagerId { get; set; }
+		}
+
+		public class NamesRow
+		{
+			public string SubjectName { get; set; } = string.Empty;
+			public string TopicName { get; set; } = string.Empty;
+			public string ClassName { get; set; } = string.Empty;
+		}
+
 		public class LessonRow
 		{
 			public Guid Id { get; set; }
@@ -914,6 +1114,7 @@ namespace TechHub.Service.Service
 			public DateTime? EndsAt { get; set; }
 			public bool IsTeacher { get; set; }
 			public bool IsStudent { get; set; }
+			public string? DisplayName { get; set; }
 		}
 
 		public class TimerRow

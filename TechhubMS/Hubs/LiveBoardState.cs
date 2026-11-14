@@ -44,7 +44,12 @@ namespace TechhubMS.Hubs
 		public LiveBoardSnapshot? MyBoard { get; set; }
 		/// <summary>Teacher only: a line per student board, so the teacher can see who has been working.</summary>
 		public List<StudentBoardSummary>? StudentBoards { get; set; }
+		/// <summary>Students with a raised hand, in the order they raised it (index 0 is first). Everyone gets it, so a reconnect shows the queue straight away.</summary>
+		public List<HandEntry> HandQueue { get; set; } = new();
 	}
+
+	/// <summary>One raised hand in the queue.</summary>
+	public sealed record HandEntry(Guid StudentId, string StudentName);
 
 	/// <summary>A set of numbered boards with one current board — the teacher's, or one student's private set.</summary>
 	public sealed class BoardSet
@@ -73,9 +78,11 @@ namespace TechhubMS.Hubs
 			public readonly Dictionary<Guid, BoardSet> Students = new();
 			/// <summary>The student whose board the teacher is showing to the whole class, if any.</summary>
 			public Guid? SharedStudentId;
+			/// <summary>Raised hands, oldest first. Guarded by <see cref="Lock"/>. Dropped with the room when the class ends.</summary>
+			public readonly List<HandEntry> HandQueue = new();
 		}
 
-		public sealed record Member(Guid LiveClassId, Guid UserId, Guid SchoolId, bool IsTeacher);
+		public sealed record Member(Guid LiveClassId, Guid UserId, Guid SchoolId, bool IsTeacher, string Name = "");
 
 		private readonly ConcurrentDictionary<Guid, Room> _rooms = new();
 		private readonly ConcurrentDictionary<string, Member> _connections = new();

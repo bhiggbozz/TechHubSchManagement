@@ -15,6 +15,8 @@ namespace TechHub.Service.Interface
 		public bool IsTeacher { get; set; }
 		public bool IsStudent { get; set; }
 		public DateTime? EndsAt { get; set; }
+		/// <summary>The caller's own name, shown in the raised-hand queue.</summary>
+		public string DisplayName { get; set; } = string.Empty;
 	}
 
 	/// <summary>
@@ -26,6 +28,9 @@ namespace TechHub.Service.Interface
 	{
 		// ── Teacher ───────────────────────────────────────────────────────────
 		Task<BaseResponse> CreateAsync(CreateLiveClassViewModel model, AuthenticatedUserClaims claims);
+
+		/// <summary>Creates the live lesson, media, students, optional quiz and the slot in one transaction.</summary>
+		Task<BaseResponse> ScheduleAsync(ScheduleLiveClassViewModel model, AuthenticatedUserClaims claims);
 		Task<BaseResponse> StartAsync(Guid liveClassId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> EndAsync(Guid liveClassId, AuthenticatedUserClaims claims);
 		Task<BaseResponse> CancelAsync(Guid liveClassId, AuthenticatedUserClaims claims);

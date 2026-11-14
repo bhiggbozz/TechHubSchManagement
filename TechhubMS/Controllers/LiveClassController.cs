@@ -45,6 +45,15 @@ namespace TechhubMS.Controllers
 		public async Task<IActionResult> Create([FromBody] CreateLiveClassViewModel model)
 			=> Map(await _service.CreateAsync(model, User.GetAuthenticatedUserClaims()));
 
+		/// <summary>
+		/// Schedule a live class in one call (its own lesson + media + 1–3 students + optional practice quiz + slot).
+		/// Separate from POST /api/lessons/submit on purpose. The lesson follows the same approval rule as a recorded one.
+		/// </summary>
+		[HttpPost("schedule")]
+		[Authorize(Roles = TeacherRoles)]
+		public async Task<IActionResult> Schedule([FromBody] ScheduleLiveClassViewModel model)
+			=> Map(await _service.ScheduleAsync(model, User.GetAuthenticatedUserClaims()));
+
 		/// <summary>Live and upcoming classes (and those finished in the last 7 days) for the signed-in teacher or student.</summary>
 		[HttpGet("mine")]
 		[Authorize(Roles = AllRoles)]
